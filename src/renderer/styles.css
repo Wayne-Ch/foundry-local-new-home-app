@@ -165,6 +165,16 @@ h3 {
   box-shadow: 0 0 0 5px rgb(53 198 138 / 14%);
 }
 
+.runtime-badge.is-ready.is-override {
+  border-color: rgb(245 165 36 / 55%);
+  color: #ffe0a6;
+}
+
+.runtime-badge.is-ready.is-override .status-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 5px rgb(245 165 36 / 14%);
+}
+
 .runtime-badge.is-error {
   border-color: rgb(255 82 99 / 55%);
   color: #ffd1d6;

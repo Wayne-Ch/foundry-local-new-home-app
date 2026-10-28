@@ -11,7 +11,9 @@ npm run probe:foundry
 npm run typecheck
 npm run lint
 npm test
-$env:FOUNDRY_MODEL_ALIAS = "qwen2.5-1.5b"
+Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run build
 npm run smoke:electron
@@ -21,11 +23,13 @@ npm run start:built
 In the app:
 
 1. Select **Load local model**.
-2. Confirm the green badge reads `qwen2.5-1.5b · GPU`.
+2. Confirm the green badge reads
+   `qwen2.5-1.5b · GPU · WebGPUExecutionProvider`.
 3. Open **Developer trace** and confirm:
    - SDK `2.2.1`;
    - exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4`;
    - `WebGPUExecutionProvider`;
+   - target source `built_in_default` and `stageValidated: true`;
    - model cached, EP registered, local inference ready;
    - external endpoint used: `false`;
    - planning mode: runtime-guided JSON Schema to app tool invocation.
@@ -147,7 +151,10 @@ Expected live result:
 - compact desk and crib retained;
 - two bounded alternatives evaluated;
 - no feasible option;
-- typed furniture-clearance and door-swing conflicts;
+- the visible east-option preview shows only its own furniture-clearance failures and keeps the
+  door-open check at `PASS`;
+- Developer trace separately labels aggregate reasons across both rejected alternatives, including
+  the south option's door-swing conflict;
 - prior accepted Queen + compact desk + crib layout remains active;
 - response asks which preference may change.
 
@@ -211,7 +218,7 @@ alone—is the offline readiness gate.
 | No feasible layout | This is the controlled story. Ask which preference may change. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |
-| GPU/EP issue | Set `FOUNDRY_MODEL_ID` to a validated cached CPU variant only after testing it before the talk. Do not improvise a new model on stage. |
+| GPU/EP issue | Only use a pretested alternate by setting both exact `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`. The badge will identify it as an override and, unless it is the exact default pair, as not stage-validated. Do not improvise a new target on stage. |
 
 There is no canned natural-language fallback. The visible response is explicitly labeled
 **Application evidence**.

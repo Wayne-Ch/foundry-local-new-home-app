@@ -19,7 +19,9 @@ Put on screen:
 - `FoundryLocalManager.create`;
 - `modelCacheDir`;
 - `disableNonessentialTelemetry: true`;
-- cached model selection;
+- exact public-catalog lookup for `qwen2.5-1.5b-instruct-generic-gpu:4`;
+- one-time exact-model download when the cache is empty;
+- exact `WebGPUExecutionProvider` matching and registration;
 - `downloadAndRegisterEps`;
 - `model.load()` / `model.unload()` / `manager.dispose()`.
 
@@ -89,7 +91,8 @@ Put on screen:
 - rectangle overlap;
 - quarter-circle door swing;
 - 250 mm pair clearance;
-- `feasibleOptions`, `rejectedOptions`, `conflicts`, `noResultReason`, `provenance`.
+- `feasibleOptions`, `rejectedOptions`, `evidenceOptionId`, option-scoped `conflicts`,
+  separately labeled `aggregateConflicts`, `noResultReason`, and `provenance`.
 
 Message:
 
@@ -104,7 +107,8 @@ Message:
 
 Put on screen:
 
-- rejected-option conflict preview;
+- rejected-option preview whose placements, checks, and conflicts all come from one exact option;
+- retained accepted-layout labeling when no option was evaluated;
 - current accepted layout preservation;
 - structured tool plan;
 - app validation;
@@ -127,6 +131,7 @@ Show only:
 - closet conflict assertion;
 - no-feasible assertion;
 - negation/correction assertion;
+- exact default model-ID and WebGPU-EP assertions;
 - `externalEndpointUsed === false`.
 
 Then return to the app for the single fresh offline controlled-failure input. Do not attempt to run

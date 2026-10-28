@@ -4,6 +4,7 @@ import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { createPlannerJsonSchema, parseAndValidateToolInput } from "../src/domain/tool-contract";
 import { resolveFoundryPaths } from "../src/foundry/paths";
 import { formatTurnPrompt, stageTurns, systemPrompt } from "../src/foundry/prompt";
+import { canonicalExecutionProvider, resolveRuntimeTarget } from "../src/foundry/runtime-config";
 
 function responseText(response: Response): string {
   return response.output
@@ -35,16 +36,38 @@ const manager = FoundryLocalManager.create({
   disableNonessentialTelemetry: true,
 });
 
-const requestedModelId = process.env.FOUNDRY_MODEL_ID?.trim() || "qwen3-1.7b-generic-gpu:2";
-const model = (await manager.catalog.getCachedModels()).find(
-  (candidate) => candidate.id === requestedModelId && candidate.supportsToolCalling === true,
+const target = resolveRuntimeTarget();
+const model = await manager.catalog.getModelVariant(target.modelId);
+const modelProvider = canonicalExecutionProvider(
+  model.info.runtime?.executionProvider ?? model.info.executionProvider ?? "CPUExecutionProvider",
 );
-if (model === undefined) {
-  throw new Error(`Cached tool-capable model ${requestedModelId} not found.`);
+if (model.id !== target.modelId || modelProvider !== target.executionProvider) {
+  throw new Error(
+    `Configured runtime mismatch: resolved ${model.id} through ${modelProvider}, expected ${target.modelId} through ${target.executionProvider}.`,
+  );
+}
+if (model.supportsToolCalling !== true) {
+  throw new Error(`Configured exact model ${model.id} does not advertise tool calling.`);
 }
 
 try {
-  await manager.downloadAndRegisterEps(["WebGpuExecutionProvider"]);
+  if (!model.isCached) {
+    await model.download();
+  }
+  const provider = manager
+    .discoverEps()
+    .find((candidate) => canonicalExecutionProvider(candidate.name) === target.executionProvider);
+  if (target.executionProvider !== "CPUExecutionProvider" && provider === undefined) {
+    throw new Error(`Configured execution provider ${target.executionProvider} is not discoverable.`);
+  }
+  if (provider !== undefined && !provider.isRegistered) {
+    const registration = await manager.downloadAndRegisterEps([provider.name]);
+    if (!registration.success || registration.failedEps.length > 0) {
+      throw new Error(
+        `Configured execution provider ${target.executionProvider} failed registration: ${registration.status}`,
+      );
+    }
+  }
   await model.load();
   const session = new ChatSession(model);
   let state = createInitialDemoState();

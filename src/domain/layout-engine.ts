@@ -12,20 +12,13 @@ import {
 } from "./fixture";
 import { evaluateLayoutOption } from "./geometry";
 import { type CompareLayoutOptionsInput, expandCandidateFurnitureIds } from "./tool-contract";
-import type { CheckedRoomState, DemoStateSnapshot, LayoutConflict, LayoutToolResult } from "./types";
+import type { DemoStateSnapshot, EvaluatedLayoutOption, LayoutConflict, LayoutToolResult } from "./types";
 
-function aggregateCheckedStates(
-  selected: LayoutToolResult["feasibleOptions"][number] | undefined,
-  rejected: LayoutToolResult["rejectedOptions"],
-): readonly CheckedRoomState[] {
-  if (selected !== undefined) {
-    return selected.checkedStates;
-  }
-  if (rejected.length === 0) {
-    return [];
-  }
-
-  return rejected[0]?.checkedStates ?? [];
+function evidenceOption(
+  selected: EvaluatedLayoutOption | undefined,
+  rejected: readonly EvaluatedLayoutOption[],
+): EvaluatedLayoutOption | undefined {
+  return selected ?? rejected[0];
 }
 
 function uniqueConflicts(conflicts: readonly LayoutConflict[]): readonly LayoutConflict[] {
@@ -68,9 +61,11 @@ export function compareKnownLayoutOptions(
       stateRef: state.stateRef,
       changedPreference: input.changedPreference,
       selectedOptionId: null,
+      evidenceOptionId: null,
       feasibleOptions: [],
       rejectedOptions: [],
       conflicts: [],
+      aggregateConflicts: [],
       checkedStates: [],
       unknowns: input.unknowns,
       noResultReason: null,
@@ -88,7 +83,8 @@ export function compareKnownLayoutOptions(
   const feasibleOptions = evaluated.filter((option) => option.status === "feasible");
   const rejectedOptions = evaluated.filter((option) => option.status === "rejected");
   const selected = feasibleOptions[0];
-  const conflicts = uniqueConflicts(rejectedOptions.flatMap((option) => option.conflicts));
+  const evidence = evidenceOption(selected, rejectedOptions);
+  const aggregateConflicts = uniqueConflicts(rejectedOptions.flatMap((option) => option.conflicts));
 
   if (selected !== undefined) {
     return {
@@ -97,10 +93,12 @@ export function compareKnownLayoutOptions(
       stateRef: state.stateRef,
       changedPreference: input.changedPreference,
       selectedOptionId: selected.id,
+      evidenceOptionId: selected.id,
       feasibleOptions,
       rejectedOptions,
-      conflicts,
-      checkedStates: aggregateCheckedStates(selected, rejectedOptions),
+      conflicts: selected.conflicts,
+      aggregateConflicts,
+      checkedStates: selected.checkedStates,
       unknowns: [],
       noResultReason: null,
       summary: `${selected.label} passes all ${selected.checkedStates.length} deterministic checks.`,
@@ -115,10 +113,12 @@ export function compareKnownLayoutOptions(
     stateRef: state.stateRef,
     changedPreference: input.changedPreference,
     selectedOptionId: null,
+    evidenceOptionId: evidence?.id ?? null,
     feasibleOptions: [],
     rejectedOptions,
-    conflicts,
-    checkedStates: aggregateCheckedStates(undefined, rejectedOptions),
+    conflicts: evidence?.conflicts ?? [],
+    aggregateConflicts,
+    checkedStates: evidence?.checkedStates ?? [],
     unknowns: [],
     noResultReason: {
       code: hasKnownOptions ? "NO_KNOWN_FEASIBLE_OPTION" : "NO_KNOWN_OPTION_SET",

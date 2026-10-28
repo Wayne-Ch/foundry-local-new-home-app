@@ -148,9 +148,11 @@ export interface LayoutToolResult {
   readonly stateRef: string;
   readonly changedPreference: string;
   readonly selectedOptionId: string | null;
+  readonly evidenceOptionId: string | null;
   readonly feasibleOptions: readonly EvaluatedLayoutOption[];
   readonly rejectedOptions: readonly EvaluatedLayoutOption[];
   readonly conflicts: readonly LayoutConflict[];
+  readonly aggregateConflicts: readonly LayoutConflict[];
   readonly checkedStates: readonly CheckedRoomState[];
   readonly unknowns: readonly string[];
   readonly noResultReason: {
@@ -194,11 +196,19 @@ export interface ModelIdentity {
   readonly fileSizeMb: number | null;
 }
 
+export interface RuntimeTargetIdentity {
+  readonly modelId: string;
+  readonly executionProvider: string;
+  readonly source: "built_in_default" | "environment_override";
+  readonly stageValidated: boolean;
+}
+
 export interface RuntimeReadiness {
   readonly sdkVersion: "2.2.1";
   readonly provider: "Foundry Local in-process SDK";
   readonly planningMode: "Runtime-guided JSON schema -> app tool invocation";
   readonly responseMode: "Application-rendered typed evidence";
+  readonly target: RuntimeTargetIdentity;
   readonly model: ModelIdentity | null;
   readonly modelCached: boolean;
   readonly executionProviderRegistered: boolean;
@@ -213,6 +223,7 @@ export interface RuntimeReadiness {
     | "ready"
     | "model_unavailable"
     | "provider_unavailable"
+    | "preparation_required"
     | "loading"
     | "error";
   readonly detail: string;

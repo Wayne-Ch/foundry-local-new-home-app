@@ -6,6 +6,7 @@ import { expandCandidateFurnitureIds } from "../src/domain/tool-contract";
 import type { DemoState, FurnitureId, LayoutToolResult } from "../src/domain/types";
 import { FoundryLayoutService } from "../src/foundry/foundry-service";
 import { stageTurns } from "../src/foundry/prompt";
+import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry/runtime-config";
 
 interface TurnEvidence {
   readonly label: string;
@@ -13,7 +14,9 @@ interface TurnEvidence {
   readonly toolArguments: unknown;
   readonly toolStatus: LayoutToolResult["status"];
   readonly selectedOptionId: string | null;
+  readonly evidenceOptionId: string | null;
   readonly conflicts: readonly string[];
+  readonly aggregateConflicts: readonly string[];
   readonly assistantText: string;
   readonly validationAttempts: number;
   readonly durationMs: number;
@@ -53,7 +56,9 @@ async function runAndCommit(
       toolArguments: outcome.validatedInput,
       toolStatus: outcome.toolResult.status,
       selectedOptionId: outcome.toolResult.selectedOptionId,
+      evidenceOptionId: outcome.toolResult.evidenceOptionId,
       conflicts: outcome.toolResult.conflicts.map((conflict) => conflict.message),
+      aggregateConflicts: outcome.toolResult.aggregateConflicts.map((conflict) => conflict.message),
       assistantText: outcome.assistantText,
       validationAttempts: outcome.validationAttempts,
       durationMs: Math.round(performance.now() - started),
@@ -75,7 +80,19 @@ try {
   assert.equal(readiness.localInferenceReady, true, readiness.detail);
   assert.equal(readiness.externalEndpointUsed, false);
   assert.equal(readiness.nonessentialTelemetryDisabled, true);
-  assert.ok(readiness.model?.supportsToolCalling, "Selected model must advertise tool calling.");
+  assert.equal(
+    readiness.target.source,
+    "built_in_default",
+    "Integration must run with the built-in stage configuration; clear runtime override variables.",
+  );
+  assert.equal(readiness.target.stageValidated, true);
+  assert.equal(readiness.target.modelId, VALIDATED_MODEL_ID);
+  assert.equal(readiness.target.executionProvider, VALIDATED_EXECUTION_PROVIDER);
+  assert.equal(readiness.model?.id, VALIDATED_MODEL_ID);
+  assert.equal(readiness.model?.executionProvider, VALIDATED_EXECUTION_PROVIDER);
+  assert.equal(readiness.modelCached, true);
+  assert.equal(readiness.executionProviderRegistered, true);
+  assert.equal(readiness.model?.supportsToolCalling, true);
 
   const turnA = await runAndCommit(
     service,
@@ -128,6 +145,15 @@ try {
   state = failureTurn.state;
   turns.push(failureTurn.evidence);
   assert.ok(failureTurn.evidence.conflicts.length > 0);
+  assert.ok(failureTurn.evidence.evidenceOptionId);
+  assert.ok(
+    failureTurn.evidence.aggregateConflicts.some((conflict) => conflict.toLowerCase().includes("door swing")),
+    "Controlled failure aggregate reasons must include the alternate door-swing rejection.",
+  );
+  assert.ok(
+    failureTurn.evidence.conflicts.every((conflict) => !conflict.toLowerCase().includes("door swing")),
+    "The displayed east-option preview must not inherit the south-option door-swing conflict.",
+  );
   assert.ok(
     failureTurn.evidence.assistantText.includes("?"),
     "Controlled failure must ask which preference may change.",
@@ -151,11 +177,15 @@ try {
     generatedAt: new Date().toISOString(),
     provider: readiness.provider,
     sdkVersion: readiness.sdkVersion,
+    target: readiness.target,
     model: readiness.model,
+    modelCached: readiness.modelCached,
+    executionProviderRegistered: readiness.executionProviderRegistered,
     cachePath: readiness.cachePath,
     appDataPath: readiness.appDataPath,
     localInferenceReady: readiness.localInferenceReady,
     externalEndpointUsed: readiness.externalEndpointUsed,
+    nonessentialTelemetryDisabled: readiness.nonessentialTelemetryDisabled,
     finalState: state,
     turns,
   };

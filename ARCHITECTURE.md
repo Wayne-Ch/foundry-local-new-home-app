@@ -138,7 +138,12 @@ The app deliberately evaluates a small fixture set rather than claiming global o
 | Queen + compact desk | Crib removed | Feasible |
 
 If the exact combination has no verified option set, the tool returns
-`NO_KNOWN_OPTION_SET`; it never invents coordinates.
+`NO_KNOWN_OPTION_SET`; it never invents coordinates. If an accepted layout already exists, the UI
+labels it as the retained accepted layout rather than misrepresenting it as a rejected option.
+
+For rejected alternatives, top-level checks and conflicts are tied to `evidenceOptionId`, the exact
+option rendered in the SVG. Deduplicated reasons across all rejected alternatives live in
+`aggregateConflicts` and are labeled as aggregate evidence in the trace and application response.
 
 ## Why not native `ToolCallItem` for this milestone
 
@@ -166,19 +171,22 @@ path, not a hidden fake.
 ## Process and cleanup
 
 1. Create one `FoundryLocalManager`.
-2. Select an exact cached variant.
-3. Register only its required EP.
-4. Load the model once.
-5. Keep one planning `ChatSession` per conversation.
-6. Dispose the session.
-7. Unload the model.
-8. Dispose the manager.
+2. Resolve exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4` from the public catalog.
+3. Download that exact model once if the cache is empty.
+4. Match and register only `WebGPUExecutionProvider`.
+5. Load the model once and verify the loaded model/EP still match the configured target.
+6. Keep one planning `ChatSession` per conversation.
+7. Dispose the session.
+8. Unload the model.
+9. Dispose the manager.
 
 Electron's `before-quit` handler waits for cleanup before exiting.
 
 ## Cross-platform status
 
-The code uses Electron, Node paths, and the cross-platform JavaScript SDK. The model selector asks the
-catalog for the best cached variant and supports environment overrides. No Apple-silicon Mac was
-available, so macOS packaging, model variant selection, EP registration, layout fidelity, and
-performance remain unvalidated.
+The code uses Electron, Node paths, and the cross-platform JavaScript SDK. The built-in stage target
+is exact and has no best-cached fallback. Alternate targets require both an exact
+`FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`; readiness and the UI identify them as
+environment overrides and do not imply stage validation. No Apple-silicon Mac was available, so
+macOS packaging, model variant selection, EP registration, layout fidelity, and performance remain
+unvalidated.

@@ -10,7 +10,7 @@ room plan.
 ## What is real
 
 - **Inference:** `foundry-local-sdk@2.2.1`, in-process through `ChatSession`.
-- **Model:** `qwen2.5-1.5b-instruct-generic-gpu:4`, cached locally.
+- **Default model target:** exact catalog ID `qwen2.5-1.5b-instruct-generic-gpu:4`.
 - **Execution provider:** `WebGPUExecutionProvider`, registered from the Foundry Local
   `webgpu-ep-0.2.1-win-x64` bundle.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output. The application then
@@ -18,6 +18,8 @@ room plan.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
+- **Failure evidence:** one rejected preview is always rendered with checks and conflicts from that
+  same option. Cross-option rejection reasons are separate in the typed result and developer trace.
 
 There is no cloud inference endpoint, CLI subprocess, image-generation pipeline, hidden canned
 model response, or success-shaped fallback.
@@ -48,7 +50,8 @@ Prerequisites:
   v2.2.1. Only Windows x64 was validated here.
 - Node.js 20 or newer. The validated machine used Node `24.22.1`.
 - npm with install scripts approved for `foundry-local-sdk` and `esbuild`.
-- A cached tool-capable model, or network access for the one-time model/EP preparation.
+- Network access for the first exact-model/EP preparation, unless both are already cached and
+  registered.
 
 ```powershell
 npm install --no-audit --no-fund
@@ -61,20 +64,27 @@ npm run start:built
 In the app:
 
 1. Select **Load local model**.
-2. Wait for the green local-runtime badge.
+2. Wait for the green local-runtime badge. The app turns ready only after the exact configured model
+   and configured EP are loaded and registered.
 3. Select **Run next scripted turn** four times.
 4. Open **Developer trace** to show the model plan, app validation, geometry evidence, model/EP
    identity, and offline readiness.
 
-The model can be overridden without changing code:
+The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
+exact default from the public catalog and can download it into an empty cache.
+
+An alternate runtime requires both exact override variables:
 
 ```powershell
-$env:FOUNDRY_MODEL_ALIAS = "qwen2.5-1.5b"
+$env:FOUNDRY_MODEL_ID = "alternate-exact-model-id:version"
+$env:FOUNDRY_EXECUTION_PROVIDER = "CPUExecutionProvider"
 npm run start:built
 ```
 
-Use `FOUNDRY_MODEL_ID` for an exact catalog variant and `FOUNDRY_MODEL_CACHE_DIR` to override the
-shared cache directory.
+The UI and trace label an alternate target as **Override (not stage-validated)**. An override may be
+locally ready, but it is never presented as the validated Ignite configuration.
+`FOUNDRY_MODEL_ALIAS` is intentionally rejected because an alias can resolve to multiple variants.
+Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 
 ## Verification commands
 
@@ -83,7 +93,9 @@ npm run probe:foundry
 npm run typecheck
 npm run lint
 npm test
-$env:FOUNDRY_MODEL_ALIAS = "qwen2.5-1.5b"
+Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run build
 npm run smoke:electron

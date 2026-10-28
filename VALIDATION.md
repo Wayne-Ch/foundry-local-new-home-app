@@ -15,6 +15,7 @@
 | Electron | `42.3.3` |
 | Model alias | `qwen2.5-1.5b` |
 | Exact model ID | `qwen2.5-1.5b-instruct-generic-gpu:4` |
+| Target source | Built-in stage default; no model alias fallback |
 | Model cache size | 1,546 MB |
 | Device | GPU |
 | Execution provider | `WebGPUExecutionProvider` |
@@ -36,7 +37,9 @@ npm run probe:foundry
 npm run typecheck
 npm run lint
 npm test
-$env:FOUNDRY_MODEL_ALIAS = "qwen2.5-1.5b"
+Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
+Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run build
 npm run smoke:electron
@@ -49,7 +52,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 17/17 pass |
+| Unit tests | 27/27 pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Turn A Queen + desk | Feasible |
@@ -57,6 +60,9 @@ npm run capture:ui
 | Turn C Queen + crib + compact desk | Feasible |
 | King + desk + crib | No feasible bounded option |
 | Adversarial negation/correction | Feasible Queen + compact desk |
+| Exact default model/EP enforced | Pass; integration asserts exact ID and canonical WebGPU EP |
+| Empty-cache preparation path | Pass; direct regression covers catalog lookup, model download, EP registration, and load |
+| Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
@@ -66,10 +72,10 @@ Observed turn durations on this machine:
 | Turn | Duration |
 |---|---:|
 | Queen + desk | 10.4 s |
-| King replacement | 18.5 s |
-| Add crib | 21.9 s |
-| Controlled failure | 25.6 s |
-| Adversarial correction | 28.8 s |
+| King replacement | 18.0 s |
+| Add crib | 21.6 s |
+| Controlled failure | 25.8 s |
+| Adversarial correction | 28.7 s |
 
 The longer turns include one bounded correction request.
 
@@ -87,6 +93,13 @@ The longer turns include one bounded correction request.
 
 - The selected model is in the shared local cache.
 - The required WebGPU EP bundle is installed and registered in the app data directory.
+- The default target is resolved by exact model ID from the full public catalog; cache-only alias
+  fallback is not used.
+- `WebGpuExecutionProvider` from SDK discovery is normalized only to the documented
+  `WebGPUExecutionProvider` spelling.
+- Alternate model/EP pairs require both `FOUNDRY_MODEL_ID` and
+  `FOUNDRY_EXECUTION_PROVIDER`; readiness marks them as environment overrides and does not imply
+  stage validation.
 - A fresh process loaded the model and completed five turns.
 - The app does not configure `serviceEndpoint`, call `startWebService`, or make inference HTTP
   requests.

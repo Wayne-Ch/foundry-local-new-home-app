@@ -15,7 +15,9 @@ import type {
   StageTurnId,
   TraceEntry,
 } from "../shared/contracts";
+import { createLayoutPresentation } from "./layout-presentation";
 import { createPreviewApi } from "./preview-api";
+import { runtimeBadgeLabel } from "./runtime-presentation";
 import "./styles.css";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -45,7 +47,9 @@ const layoutNotice = requiredElement("layoutNotice");
 const roomSvg = requiredSvg("roomSvg");
 const verdictTitle = requiredElement("verdictTitle");
 const verdictSummary = requiredElement("verdictSummary");
+const checksLabel = requiredElement("checksLabel");
 const constraintChecks = requiredElement("constraintChecks");
+const conflictsLabel = requiredElement("conflictsLabel");
 const conflictList = requiredElement("conflictList");
 const progressBar = requiredElement("progressBar");
 const progressPhase = requiredElement("progressPhase");
@@ -191,19 +195,22 @@ function renderRuntime(readiness: RuntimeReadiness): void {
   runtimeBadge.className = "runtime-badge";
   if (readiness.localInferenceReady) {
     runtimeBadge.classList.add("is-ready");
-    runtimeLabel.textContent = `${readiness.model?.alias ?? "Local model"} · ${readiness.model?.deviceType ?? ""}`;
-    prepareButton.textContent = "Local model ready";
+    if (!readiness.target.stageValidated) {
+      runtimeBadge.classList.add("is-override");
+    }
+    runtimeLabel.textContent = runtimeBadgeLabel(readiness);
+    prepareButton.textContent = readiness.target.stageValidated ? "Local model ready" : "Override ready";
     prepareButton.disabled = true;
   } else if (readiness.status === "error" || readiness.status === "model_unavailable") {
     runtimeBadge.classList.add("is-error");
-    runtimeLabel.textContent = "Local model unavailable";
+    runtimeLabel.textContent = readiness.target.stageValidated
+      ? "Configured local model unavailable"
+      : "Runtime override unavailable";
     prepareButton.textContent = "Retry local setup";
     prepareButton.disabled = isBusy;
   } else {
     runtimeBadge.classList.add("is-checking");
-    runtimeLabel.textContent = readiness.model
-      ? `${readiness.model.alias} · ${readiness.status.replaceAll("_", " ")}`
-      : "Checking local runtime";
+    runtimeLabel.textContent = `${runtimeBadgeLabel(readiness)} · ${readiness.status.replaceAll("_", " ")}`;
     prepareButton.textContent = readiness.modelCached ? "Load local model" : "Prepare offline";
     prepareButton.disabled = isBusy;
   }
@@ -258,56 +265,21 @@ function renderMessages(messages: readonly ConversationMessage[]): void {
 }
 
 function renderLayout(): void {
-  const displayLayout = layoutForDisplay();
-  renderRoomSvg(displayLayout);
-
-  if (latestToolResult === null) {
-    resultBadge.className = "result-badge is-neutral";
-    resultBadge.textContent = "Waiting for a request";
-    layoutTitle.textContent = "Verified room plan";
-    layoutNotice.textContent = "Verified dimensions only. Select the first scripted turn to begin.";
-    verdictTitle.textContent = "No layout evaluated";
-    verdictSummary.textContent = "The model has not proposed a tool call yet.";
-    renderChecks([]);
-    renderConflicts([]);
-    return;
-  }
-
-  if (latestToolResult.status === "feasible") {
-    resultBadge.className = "result-badge is-success";
-    resultBadge.textContent = "Feasible known option";
-    layoutTitle.textContent = displayLayout?.label ?? "Verified feasible layout";
-    layoutNotice.textContent =
-      "Rendered from deterministic tool output. Exact dimensions remain application-owned.";
-    verdictTitle.textContent = "All locked checks pass";
-  } else if (latestToolResult.status === "no_feasible_option") {
-    resultBadge.className = "result-badge is-error";
-    resultBadge.textContent = "No feasible known option";
-    layoutTitle.textContent = `${displayLayout?.label ?? "Rejected option"} · conflict preview`;
-    layoutNotice.textContent =
-      "Rejected option shown in red. The prior accepted layout remains active; no layout was fabricated.";
-    verdictTitle.textContent = "Deterministic conflict";
-  } else {
-    resultBadge.className = "result-badge is-warning";
-    resultBadge.textContent = "Verified input missing";
-    layoutTitle.textContent = "Clarification required";
-    layoutNotice.textContent = "Geometry did not run because verified facts are missing.";
-    verdictTitle.textContent = "No geometry executed";
-  }
-
-  verdictSummary.textContent = latestToolResult.summary;
-  renderChecks(latestToolResult.checkedStates);
-  renderConflicts(latestToolResult.conflicts);
+  const presentation = createLayoutPresentation(latestToolResult, viewState.selectedLayout);
+  renderRoomSvg(presentation.displayLayout, presentation.conflicts);
+  resultBadge.className = presentation.resultBadgeClass;
+  resultBadge.textContent = presentation.resultBadgeText;
+  layoutTitle.textContent = presentation.layoutTitle;
+  layoutNotice.textContent = presentation.layoutNotice;
+  verdictTitle.textContent = presentation.verdictTitle;
+  verdictSummary.textContent = latestToolResult?.summary ?? "The model has not proposed a tool call yet.";
+  checksLabel.textContent = presentation.checksLabel;
+  conflictsLabel.textContent = presentation.conflictsLabel;
+  renderChecks(presentation.checks);
+  renderConflicts(presentation.conflicts);
 }
 
-function layoutForDisplay(): EvaluatedLayoutOption | null {
-  if (latestToolResult?.status === "no_feasible_option") {
-    return latestToolResult.rejectedOptions[0] ?? viewState.selectedLayout;
-  }
-  return viewState.selectedLayout;
-}
-
-function renderRoomSvg(layout: EvaluatedLayoutOption | null): void {
+function renderRoomSvg(layout: EvaluatedLayoutOption | null, conflicts: readonly LayoutConflict[]): void {
   roomSvg.replaceChildren();
   const defs = svgElement("defs");
   const pattern = svgElement("pattern", {
@@ -376,9 +348,7 @@ function renderRoomSvg(layout: EvaluatedLayoutOption | null): void {
   );
   appendSvgLabel("Door swing", 430, 3290, "#FFD6D6");
 
-  const conflictObjects = new Set(
-    latestToolResult?.conflicts.flatMap((conflict) => conflict.objectIds) ?? [],
-  );
+  const conflictObjects = new Set(conflicts.flatMap((conflict) => conflict.objectIds));
   for (const placement of layout?.placements ?? []) {
     const conflicted = conflictObjects.has(placement.instanceId);
     roomSvg.append(

@@ -11,6 +11,12 @@ const readiness: RuntimeReadiness = {
   provider: "Foundry Local in-process SDK",
   planningMode: "Runtime-guided JSON schema -> app tool invocation",
   responseMode: "Application-rendered typed evidence",
+  target: {
+    modelId: "qwen2.5-1.5b-instruct-generic-gpu:4",
+    executionProvider: "WebGPUExecutionProvider",
+    source: "built_in_default",
+    stageValidated: true,
+  },
   model: {
     alias: "qwen2.5-1.5b",
     id: "qwen2.5-1.5b-instruct-generic-gpu:4",
@@ -58,6 +64,14 @@ function buildPreview(): BootstrapPayload {
   const turnC = compareKnownLayoutOptions(turnCInput, state);
   state = applyToolResult(state, turnC);
   const selectedLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+  const failureInput = createToolInputForTests({
+    state,
+    candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+    retainFurnitureIds: ["desk-compact", "crib-standard"],
+    changedPreference: stageTurns[3]?.prompt ?? "",
+  });
+  const controlledFailure = compareKnownLayoutOptions(failureInput, state);
+  state = applyToolResult(state, controlledFailure);
 
   return {
     roomPlan,
@@ -65,7 +79,7 @@ function buildPreview(): BootstrapPayload {
     readiness,
     stageTurns,
     selectedLayout,
-    lastToolResult: turnC,
+    lastToolResult: controlledFailure,
     messages: [
       {
         id: "preview-system",
@@ -92,6 +106,16 @@ function buildPreview(): BootstrapPayload {
         role: "application",
         text: "Application evidence: Queen + crib + rotated compact desk passes every locked deterministic check.",
       },
+      {
+        id: "preview-user-failure",
+        role: "user",
+        text: stageTurns[3]?.prompt ?? "",
+      },
+      {
+        id: "preview-app-failure",
+        role: "application",
+        text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
+      },
     ],
     trace: [
       {
@@ -106,7 +130,7 @@ function buildPreview(): BootstrapPayload {
         timestamp: new Date().toISOString(),
         kind: "model-tool-call",
         title: "Schema-guided model plan",
-        payload: turnCInput,
+        payload: failureInput,
       },
       {
         id: "preview-validation",
@@ -120,7 +144,7 @@ function buildPreview(): BootstrapPayload {
         timestamp: new Date().toISOString(),
         kind: "geometry",
         title: "Deterministic geometry result",
-        payload: turnC,
+        payload: controlledFailure,
       },
     ],
   };

@@ -61,6 +61,18 @@ describe("bounded layout tool", () => {
     expect(controlledFailure.rejectedOptions).toHaveLength(2);
     expect(controlledFailure.noResultReason?.code).toBe("NO_KNOWN_FEASIBLE_OPTION");
     expect(controlledFailure.feasibleOptions).toEqual([]);
+    const previewOption = controlledFailure.rejectedOptions.find(
+      (option) => option.id === controlledFailure.evidenceOptionId,
+    );
+    expect(previewOption?.id).toBe("king-crib-compact-east-v1");
+    expect(controlledFailure.conflicts).toEqual(previewOption?.conflicts);
+    expect(controlledFailure.checkedStates).toEqual(previewOption?.checkedStates);
+    expect(controlledFailure.conflicts.some((conflict) => conflict.code === "DOOR_SWING_OVERLAP")).toBe(
+      false,
+    );
+    expect(
+      controlledFailure.aggregateConflicts.some((conflict) => conflict.code === "DOOR_SWING_OVERLAP"),
+    ).toBe(true);
   });
 
   it("returns an honest no-known-set result instead of fabricating geometry", () => {
@@ -76,5 +88,10 @@ describe("bounded layout tool", () => {
     expect(result.status).toBe("no_feasible_option");
     expect(result.noResultReason?.code).toBe("NO_KNOWN_OPTION_SET");
     expect(result.provenance.evaluatedLayoutIds).toEqual([]);
+    expect(result.rejectedOptions).toEqual([]);
+    expect(result.evidenceOptionId).toBeNull();
+    expect(result.conflicts).toEqual([]);
+    expect(result.aggregateConflicts).toEqual([]);
+    expect(result.checkedStates).toEqual([]);
   });
 });

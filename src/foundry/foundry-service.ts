@@ -1,4 +1,4 @@
-import type { IModel, ModelInfo } from "foundry-local-sdk";
+import type { EpDownloadResult, EpInfo, FoundryLocalConfig, IModel, ModelInfo } from "foundry-local-sdk";
 import {
   ChatSession,
   FoundryLocalManager,
@@ -14,12 +14,54 @@ import {
   parseAndValidateToolInput,
   type ToolValidationError,
 } from "../domain/tool-contract";
-import type { DemoStateSnapshot, LayoutToolResult, ModelIdentity, RuntimeReadiness } from "../domain/types";
+import type {
+  DemoStateSnapshot,
+  LayoutToolResult,
+  ModelIdentity,
+  RuntimeReadiness,
+  RuntimeTargetIdentity,
+} from "../domain/types";
 import { type FoundryPaths, resolveFoundryPaths } from "./paths";
 import { formatTurnPrompt, systemPrompt } from "./prompt";
+import {
+  canonicalExecutionProvider,
+  RuntimeConfigurationError,
+  resolveRuntimeTarget,
+  VALIDATED_EXECUTION_PROVIDER,
+  VALIDATED_MODEL_ID,
+} from "./runtime-config";
 
-const DEFAULT_MODEL_ALIASES = ["qwen2.5-1.5b", "qwen3-1.7b", "qwen3-0.6b", "qwen2.5-0.5b"] as const;
 const MAX_TOOL_ATTEMPTS = 3;
+
+interface FoundryCatalogHandle {
+  getCachedModels(): Promise<IModel[]>;
+  getModelVariant(modelId: string): Promise<IModel>;
+}
+
+interface FoundryManagerHandle {
+  readonly catalog: FoundryCatalogHandle;
+  discoverEps(): EpInfo[];
+  downloadAndRegisterEps(
+    names: string[],
+    progressCallback: (epName: string, percent: number) => void,
+  ): Promise<EpDownloadResult>;
+  dispose(): void;
+}
+
+interface FoundrySessionHandle {
+  readonly turnCount: number;
+  preflightRequest(request: Request): Promise<RequestPreflightResult>;
+  processRequest(request: Request): Promise<Response>;
+  undoTurns(count: number): void;
+  dispose(): void;
+}
+
+export interface FoundryLayoutServiceOptions {
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly resolvePaths?: () => Promise<FoundryPaths>;
+  readonly createManager?: (config: FoundryLocalConfig) => FoundryManagerHandle;
+  readonly createSession?: (model: IModel) => FoundrySessionHandle;
+}
 
 export interface FoundryTurnOutcome {
   readonly toolCall: {
@@ -43,12 +85,15 @@ export class FoundryRuntimeError extends Error {
     message: string,
     readonly code:
       | "MODEL_UNAVAILABLE"
+      | "MODEL_DOWNLOAD_FAILED"
       | "PROVIDER_UNAVAILABLE"
+      | "PROVIDER_REGISTRATION_FAILED"
       | "MODEL_LOAD_FAILED"
       | "INVALID_TOOL_CALL"
       | "MODEL_RESPONSE_INVALID"
       | "CONTEXT_LIMIT"
-      | "RUNTIME_NOT_READY",
+      | "RUNTIME_NOT_READY"
+      | "CONFIGURATION_INVALID",
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -57,15 +102,13 @@ export class FoundryRuntimeError extends Error {
 }
 
 function executionProvider(model: IModel): string {
-  return model.info.runtime?.executionProvider ?? model.info.executionProvider ?? "CPUExecutionProvider";
+  return canonicalExecutionProvider(
+    model.info.runtime?.executionProvider ?? model.info.executionProvider ?? "CPUExecutionProvider",
+  );
 }
 
-function isCpuModel(model: IModel): boolean {
-  return (
-    model.info.deviceType.toLowerCase() === "cpu" ||
-    model.info.runtime?.deviceType.toLowerCase() === "cpu" ||
-    executionProvider(model).toLowerCase() === "cpuexecutionprovider"
-  );
+function isCpuExecutionProvider(name: string): boolean {
+  return canonicalExecutionProvider(name) === "CPUExecutionProvider";
 }
 
 function modelIdentity(model: IModel): ModelIdentity {
@@ -77,10 +120,6 @@ function modelIdentity(model: IModel): ModelIdentity {
     supportsToolCalling: model.supportsToolCalling === true,
     fileSizeMb: model.info.fileSizeMb ?? null,
   };
-}
-
-function normalizedProviderName(name: string): string {
-  return name.replaceAll(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 function extractDefaultText(response: Response): string {
@@ -105,56 +144,25 @@ function extractDefaultText(response: Response): string {
   return parts.join("").trim();
 }
 
-function compareModelVariants(left: IModel, right: IModel): number {
-  const deviceOrder = { GPU: 0, NPU: 1, CPU: 2, Invalid: 3 } as const;
-  const leftDevice = left.info.runtime?.deviceType ?? left.info.deviceType;
-  const rightDevice = right.info.runtime?.deviceType ?? right.info.deviceType;
-  const deviceDifference = deviceOrder[leftDevice] - deviceOrder[rightDevice];
-  if (deviceDifference !== 0) {
-    return deviceDifference;
-  }
-  return (
-    (left.info.fileSizeMb ?? Number.POSITIVE_INFINITY) - (right.info.fileSizeMb ?? Number.POSITIVE_INFINITY)
-  );
+function defaultRuntimeTarget(): RuntimeTargetIdentity {
+  return {
+    modelId: VALIDATED_MODEL_ID,
+    executionProvider: VALIDATED_EXECUTION_PROVIDER,
+    source: "built_in_default",
+    stageValidated: true,
+  };
 }
 
-function selectCachedModel(models: readonly IModel[]): IModel | null {
-  const requestedId = process.env.FOUNDRY_MODEL_ID?.trim();
-  if (requestedId) {
-    return models.find((model) => model.id === requestedId && model.supportsToolCalling === true) ?? null;
-  }
-
-  const requestedAlias = process.env.FOUNDRY_MODEL_ALIAS?.trim();
-  const aliases = requestedAlias ? [requestedAlias] : [...DEFAULT_MODEL_ALIASES];
-  for (const alias of aliases) {
-    const candidates = models
-      .filter(
-        (model) =>
-          model.alias === alias &&
-          model.isCached &&
-          model.supportsToolCalling === true &&
-          ["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? ""),
-      )
-      .sort(compareModelVariants);
-    const selected = candidates[0];
-    if (selected !== undefined) {
-      return selected;
-    }
-  }
-  return null;
-}
-
-export class FoundryLayoutService {
-  #paths: FoundryPaths | null = null;
-  #manager: FoundryLocalManager | null = null;
-  #model: IModel | null = null;
-  #session: ChatSession | null = null;
-  #systemPromptPending = true;
-  #readiness: RuntimeReadiness = {
+function initialReadiness(
+  target: RuntimeTargetIdentity,
+  configurationError: string | null,
+): RuntimeReadiness {
+  return {
     sdkVersion: "2.2.1",
     provider: "Foundry Local in-process SDK",
     planningMode: "Runtime-guided JSON schema -> app tool invocation",
     responseMode: "Application-rendered typed evidence",
+    target,
     model: null,
     modelCached: false,
     executionProviderRegistered: false,
@@ -163,16 +171,66 @@ export class FoundryLayoutService {
     nonessentialTelemetryDisabled: true,
     cachePath: "",
     appDataPath: "",
-    status: "not_initialized",
-    detail: "Foundry Local has not been initialized.",
+    status: configurationError === null ? "not_initialized" : "error",
+    detail: configurationError ?? "Foundry Local has not been initialized.",
   };
+}
+
+export class FoundryLayoutService {
+  readonly #target: RuntimeTargetIdentity;
+  readonly #configurationError: string | null;
+  readonly #resolvePaths: () => Promise<FoundryPaths>;
+  readonly #createManager: (config: FoundryLocalConfig) => FoundryManagerHandle;
+  readonly #sessionFactory: (model: IModel) => FoundrySessionHandle;
+  #paths: FoundryPaths | null = null;
+  #manager: FoundryManagerHandle | null = null;
+  #model: IModel | null = null;
+  #session: FoundrySessionHandle | null = null;
+  #systemPromptPending = true;
+  #readiness: RuntimeReadiness;
+
+  constructor(options: FoundryLayoutServiceOptions = {}) {
+    let target = defaultRuntimeTarget();
+    let configurationError: string | null = null;
+    try {
+      target = resolveRuntimeTarget(options.environment ?? process.env);
+    } catch (error) {
+      configurationError =
+        error instanceof RuntimeConfigurationError
+          ? error.message
+          : `Invalid Foundry runtime configuration: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    this.#target = target;
+    this.#configurationError = configurationError;
+    this.#resolvePaths = options.resolvePaths ?? resolveFoundryPaths;
+    this.#createManager = options.createManager ?? ((config) => FoundryLocalManager.create(config));
+    this.#sessionFactory = options.createSession ?? ((model) => new ChatSession(model));
+    this.#readiness = initialReadiness(target, configurationError);
+  }
 
   get readiness(): RuntimeReadiness {
     return this.#readiness;
   }
 
   async initialize(): Promise<RuntimeReadiness> {
-    if (this.#manager !== null && this.#model !== null) {
+    if (this.#configurationError !== null) {
+      return this.#readiness;
+    }
+    if (this.#manager !== null) {
+      if (this.#model !== null) {
+        return this.#refreshReadiness();
+      }
+      const retryResolution = await this.#resolveConfiguredModel();
+      this.#model = retryResolution.model;
+      if (this.#model === null) {
+        this.#readiness = {
+          ...this.#readiness,
+          status: "model_unavailable",
+          detail: retryResolution.detail,
+        };
+        return this.#readiness;
+      }
       return this.#refreshReadiness();
     }
 
@@ -182,26 +240,36 @@ export class FoundryLayoutService {
       detail: "Inspecting the local SDK catalog and execution providers.",
     };
 
-    this.#paths = await resolveFoundryPaths();
-    this.#manager = FoundryLocalManager.create({
-      appName: "FoundryLocalNewHomeLayoutDemo",
-      appDataDir: this.#paths.appDataDir,
-      modelCacheDir: this.#paths.modelCacheDir,
-      logsDir: this.#paths.logsDir,
-      logLevel: "info",
-      disableNonessentialTelemetry: true,
-    });
+    this.#paths = await this.#resolvePaths();
+    try {
+      this.#manager = this.#createManager({
+        appName: "FoundryLocalNewHomeLayoutDemo",
+        appDataDir: this.#paths.appDataDir,
+        modelCacheDir: this.#paths.modelCacheDir,
+        logsDir: this.#paths.logsDir,
+        logLevel: "info",
+        disableNonessentialTelemetry: true,
+      });
+    } catch (error) {
+      this.#readiness = {
+        ...this.#readiness,
+        cachePath: this.#paths.modelCacheDir,
+        appDataPath: this.#paths.appDataDir,
+        status: "error",
+        detail: `Foundry Local manager initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      throw new FoundryRuntimeError(this.#readiness.detail, "RUNTIME_NOT_READY", { cause: error });
+    }
 
-    const cachedModels = await this.#manager.catalog.getCachedModels();
-    this.#model = selectCachedModel(cachedModels);
+    const resolution = await this.#resolveConfiguredModel();
+    this.#model = resolution.model;
     if (this.#model === null) {
       this.#readiness = {
         ...this.#readiness,
         cachePath: this.#paths.modelCacheDir,
         appDataPath: this.#paths.appDataDir,
         status: "model_unavailable",
-        detail:
-          "No cached, tool-capable candidate model was found. Set FOUNDRY_MODEL_ALIAS or cache a supported model.",
+        detail: resolution.detail,
       };
       return this.#readiness;
     }
@@ -211,39 +279,83 @@ export class FoundryLayoutService {
 
   async prepareOffline(onProgress?: (detail: string) => void): Promise<RuntimeReadiness> {
     await this.initialize();
+    if (this.#configurationError !== null) {
+      throw new FoundryRuntimeError(this.#configurationError, "CONFIGURATION_INVALID");
+    }
     const manager = this.#requireManager();
     const model = this.#requireModel();
+    this.#assertModelMatchesTarget(model);
 
     if (!model.isCached) {
-      onProgress?.(`Downloading ${model.alias} for offline use.`);
-      await model.download((percent) => onProgress?.(`Model download ${percent.toFixed(1)}%`));
+      onProgress?.(`Downloading exact model ${this.#target.modelId} for offline use.`);
+      try {
+        await model.download((percent) => onProgress?.(`Model download ${percent.toFixed(1)}%`));
+      } catch (error) {
+        this.#readiness = {
+          ...this.#readiness,
+          status: "error",
+          detail: `Failed to download exact model ${this.#target.modelId}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+        throw new FoundryRuntimeError(this.#readiness.detail, "MODEL_DOWNLOAD_FAILED", {
+          cause: error,
+        });
+      }
+      if (!model.isCached) {
+        this.#readiness = {
+          ...this.#readiness,
+          status: "error",
+          detail: `Model download completed without caching exact model ${this.#target.modelId}.`,
+        };
+        throw new FoundryRuntimeError(this.#readiness.detail, "MODEL_DOWNLOAD_FAILED");
+      }
     }
 
-    const providerInfo = this.#findProviderInfo(model);
-    if (!isCpuModel(model) && providerInfo?.isRegistered !== true) {
+    const providerInfo = this.#findProviderInfo();
+    if (!isCpuExecutionProvider(this.#target.executionProvider) && providerInfo?.isRegistered !== true) {
       if (providerInfo === undefined) {
         this.#readiness = {
           ...this.#readiness,
           status: "provider_unavailable",
-          detail: `Execution provider ${executionProvider(model)} is not discoverable on this device.`,
+          detail: `Configured execution provider ${this.#target.executionProvider} is not discoverable on this device.`,
         };
         throw new FoundryRuntimeError(this.#readiness.detail, "PROVIDER_UNAVAILABLE");
       }
 
       onProgress?.(`Registering ${providerInfo.name} for offline inference.`);
-      const result = await manager.downloadAndRegisterEps([providerInfo.name], (name, percent) => {
-        onProgress?.(`${name} ${percent.toFixed(1)}%`);
-      });
+      let result: EpDownloadResult;
+      try {
+        result = await manager.downloadAndRegisterEps([providerInfo.name], (name, percent) => {
+          onProgress?.(`${name} ${percent.toFixed(1)}%`);
+        });
+      } catch (error) {
+        this.#readiness = {
+          ...this.#readiness,
+          status: "provider_unavailable",
+          detail: `Execution provider ${this.#target.executionProvider} registration failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+        throw new FoundryRuntimeError(this.#readiness.detail, "PROVIDER_REGISTRATION_FAILED", {
+          cause: error,
+        });
+      }
       if (!result.success || result.failedEps.length > 0) {
-        throw new FoundryRuntimeError(
-          `Execution provider registration failed: ${result.status}`,
-          "PROVIDER_UNAVAILABLE",
-        );
+        this.#readiness = {
+          ...this.#readiness,
+          status: "provider_unavailable",
+          detail: `Execution provider ${this.#target.executionProvider} registration failed: ${result.status}`,
+        };
+        throw new FoundryRuntimeError(this.#readiness.detail, "PROVIDER_REGISTRATION_FAILED");
       }
     }
 
     await this.#loadModel();
-    return this.#refreshReadiness();
+    const readiness = await this.#refreshReadiness();
+    if (!readiness.localInferenceReady) {
+      throw new FoundryRuntimeError(
+        `Configured runtime did not become ready: ${readiness.detail}`,
+        "RUNTIME_NOT_READY",
+      );
+    }
+    return readiness;
   }
 
   async runTurn(
@@ -441,13 +553,81 @@ export class FoundryLayoutService {
     this.#readiness = {
       ...this.#readiness,
       localInferenceReady: false,
-      status: "not_initialized",
-      detail: "Foundry Local was shut down.",
+      status: this.#configurationError === null ? "not_initialized" : "error",
+      detail: this.#configurationError ?? "Foundry Local was shut down.",
     };
+  }
+
+  async #resolveConfiguredModel(): Promise<{
+    readonly model: IModel | null;
+    readonly detail: string;
+  }> {
+    const manager = this.#requireManager();
+    let publicCatalogError = "";
+    try {
+      const model = await manager.catalog.getModelVariant(this.#target.modelId);
+      return {
+        model,
+        detail: `Resolved exact configured model ${this.#target.modelId} from the public catalog.`,
+      };
+    } catch (error) {
+      publicCatalogError = error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+      const cachedModel = (await manager.catalog.getCachedModels()).find(
+        (model) => model.id === this.#target.modelId,
+      );
+      if (cachedModel !== undefined) {
+        return {
+          model: cachedModel,
+          detail: `Resolved exact configured model ${this.#target.modelId} from the local cache after the public catalog lookup failed.`,
+        };
+      }
+    } catch (error) {
+      return {
+        model: null,
+        detail: `Exact configured model ${this.#target.modelId} could not be resolved. Public catalog error: ${publicCatalogError}. Local cache error: ${error instanceof Error ? error.message : String(error)}.`,
+      };
+    }
+
+    return {
+      model: null,
+      detail: `Exact configured model ${this.#target.modelId} is absent from both the public catalog and local cache. Public catalog error: ${publicCatalogError}.`,
+    };
+  }
+
+  #assertModelMatchesTarget(model: IModel): void {
+    if (model.id !== this.#target.modelId) {
+      throw new FoundryRuntimeError(
+        `Resolved model ${model.id} does not match configured exact model ${this.#target.modelId}.`,
+        "MODEL_UNAVAILABLE",
+      );
+    }
+    if (model.supportsToolCalling !== true) {
+      throw new FoundryRuntimeError(
+        `Configured exact model ${model.id} does not advertise tool calling.`,
+        "MODEL_UNAVAILABLE",
+      );
+    }
+    if (!["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? "")) {
+      throw new FoundryRuntimeError(
+        `Configured exact model ${model.id} does not expose a supported chat task.`,
+        "MODEL_UNAVAILABLE",
+      );
+    }
+    const actualProvider = executionProvider(model);
+    if (actualProvider !== this.#target.executionProvider) {
+      throw new FoundryRuntimeError(
+        `Configured exact model ${model.id} uses ${actualProvider}; expected ${this.#target.executionProvider}.`,
+        "PROVIDER_UNAVAILABLE",
+      );
+    }
   }
 
   async #loadModel(): Promise<void> {
     const model = this.#requireModel();
+    this.#assertModelMatchesTarget(model);
     this.#readiness = {
       ...this.#readiness,
       status: "loading",
@@ -471,14 +651,15 @@ export class FoundryLayoutService {
   #createSession(): void {
     const model = this.#requireModel();
     this.#session?.dispose();
-    this.#session = new ChatSession(model);
+    this.#session = this.#sessionFactory(model);
     this.#systemPromptPending = true;
   }
 
-  #findProviderInfo(model: IModel) {
+  #findProviderInfo(): EpInfo | undefined {
     const manager = this.#requireManager();
-    const expected = normalizedProviderName(executionProvider(model));
-    return manager.discoverEps().find((provider) => normalizedProviderName(provider.name) === expected);
+    return manager
+      .discoverEps()
+      .find((provider) => canonicalExecutionProvider(provider.name) === this.#target.executionProvider);
   }
 
   async #refreshReadiness(): Promise<RuntimeReadiness> {
@@ -488,14 +669,67 @@ export class FoundryLayoutService {
       return this.#readiness;
     }
 
-    const providerRegistered = isCpuModel(model) || this.#findProviderInfo(model)?.isRegistered === true;
+    const actualProvider = executionProvider(model);
+    const idMatches = model.id === this.#target.modelId;
+    const providerMatches = actualProvider === this.#target.executionProvider;
+    const toolCapable = model.supportsToolCalling === true;
+    const taskSupported = ["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? "");
+    const cpuProvider = isCpuExecutionProvider(this.#target.executionProvider);
+    const providerInfo = cpuProvider ? undefined : this.#findProviderInfo();
+    const providerDiscoverable = cpuProvider || providerInfo !== undefined;
+    const providerRegistered = cpuProvider || providerInfo?.isRegistered === true;
     const loaded = await model.isLoaded();
-    const ready = model.isCached && providerRegistered && loaded && this.#session !== null;
+    const ready =
+      idMatches &&
+      providerMatches &&
+      toolCapable &&
+      taskSupported &&
+      model.isCached &&
+      providerRegistered &&
+      loaded &&
+      this.#session !== null;
+
+    let status: RuntimeReadiness["status"];
+    let detail: string;
+    if (!idMatches) {
+      status = "model_unavailable";
+      detail = `Resolved model ${model.id} does not match configured exact model ${this.#target.modelId}.`;
+    } else if (!toolCapable) {
+      status = "model_unavailable";
+      detail = `Configured exact model ${model.id} does not advertise tool calling.`;
+    } else if (!taskSupported) {
+      status = "model_unavailable";
+      detail = `Configured exact model ${model.id} does not expose a supported chat task.`;
+    } else if (!providerMatches) {
+      status = "provider_unavailable";
+      detail = `Configured exact model ${model.id} uses ${actualProvider}; expected ${this.#target.executionProvider}.`;
+    } else if (!providerDiscoverable) {
+      status = "provider_unavailable";
+      detail = `Configured execution provider ${this.#target.executionProvider} is not discoverable on this device.`;
+    } else if (!model.isCached) {
+      status = "preparation_required";
+      detail = `Exact model ${model.id} is available in the public catalog but is not cached. Prepare offline to download it once.`;
+    } else if (!providerRegistered) {
+      status = "preparation_required";
+      detail = `${this.#target.executionProvider} is discoverable but must be registered before offline inference.`;
+    } else if (!loaded || this.#session === null) {
+      status = "loading";
+      detail = `${model.id} is cached with ${this.#target.executionProvider} registered and is ready to load.`;
+    } else {
+      status = "ready";
+      detail = `${model.id} is loaded through ${actualProvider} with no external inference endpoint. Runtime target: ${
+        this.#target.stageValidated
+          ? "stage-validated configuration"
+          : "explicit environment override, not stage-validated"
+      }.`;
+    }
+
     this.#readiness = {
       sdkVersion: "2.2.1",
       provider: "Foundry Local in-process SDK",
       planningMode: "Runtime-guided JSON schema -> app tool invocation",
       responseMode: "Application-rendered typed evidence",
+      target: this.#target,
       model: modelIdentity(model),
       modelCached: model.isCached,
       executionProviderRegistered: providerRegistered,
@@ -504,25 +738,13 @@ export class FoundryLayoutService {
       nonessentialTelemetryDisabled: true,
       cachePath: paths.modelCacheDir,
       appDataPath: paths.appDataDir,
-      status: ready
-        ? "ready"
-        : model.isCached
-          ? providerRegistered
-            ? "loading"
-            : "provider_unavailable"
-          : "model_unavailable",
-      detail: ready
-        ? `${model.id} is loaded through ${executionProvider(model)} with no external inference endpoint.`
-        : !model.isCached
-          ? `${model.id} is not cached.`
-          : !providerRegistered
-            ? `${executionProvider(model)} must be registered before offline inference.`
-            : `${model.id} is cached and ready to load.`,
+      status,
+      detail,
     };
     return this.#readiness;
   }
 
-  #requireManager(): FoundryLocalManager {
+  #requireManager(): FoundryManagerHandle {
     if (this.#manager === null) {
       throw new FoundryRuntimeError("Foundry Local manager is not initialized.", "RUNTIME_NOT_READY");
     }
@@ -531,12 +753,12 @@ export class FoundryLayoutService {
 
   #requireModel(): IModel {
     if (this.#model === null) {
-      throw new FoundryRuntimeError("No compatible local model is selected.", "MODEL_UNAVAILABLE");
+      throw new FoundryRuntimeError(this.#readiness.detail, "MODEL_UNAVAILABLE");
     }
     return this.#model;
   }
 
-  #requireSession(): ChatSession {
+  #requireSession(): FoundrySessionHandle {
     if (this.#session === null) {
       throw new FoundryRuntimeError("Foundry Local chat session is not ready.", "RUNTIME_NOT_READY");
     }
@@ -557,14 +779,25 @@ function renderApplicationEvidence(result: LayoutToolResult): string {
   if (result.status === "clarification_required") {
     return `Application evidence: geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}.`;
   }
+  const evidenceOption = result.rejectedOptions.find((option) => option.id === result.evidenceOptionId);
   const conflictText =
-    result.conflicts.length > 0
-      ? result.conflicts.map((conflict) => conflict.message).join(" ")
+    result.aggregateConflicts.length > 0
+      ? `Across the ${result.rejectedOptions.length} evaluated rejected option${
+          result.rejectedOptions.length === 1 ? "" : "s"
+        }, deterministic reasons included: ${result.aggregateConflicts
+          .map((conflict) => conflict.message)
+          .join(" ")} ${
+          evidenceOption === undefined
+            ? ""
+            : `The UI preview is ${evidenceOption.label} and shows only that option's checks and conflicts.`
+        }`
       : (result.noResultReason?.message ?? "No bounded known option is feasible.");
   const choices = result.noResultReason?.preferencesThatMayChange.join(", ") ?? "a locked preference";
   return `Application evidence: no feasible known option. ${conflictText} Which preference may change: ${choices}?`;
 }
 
 export function summarizeModelInfo(info: ModelInfo): string {
-  return `${info.alias} · ${info.deviceType} · ${info.runtime?.executionProvider ?? info.executionProvider ?? "unknown EP"}`;
+  return `${info.alias} · ${info.deviceType} · ${canonicalExecutionProvider(
+    info.runtime?.executionProvider ?? info.executionProvider ?? "unknown EP",
+  )}`;
 }
