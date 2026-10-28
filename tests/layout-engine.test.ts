@@ -29,6 +29,7 @@ describe("bounded layout tool", () => {
       state,
     );
     expect(turnB.status).toBe("no_feasible_option");
+    expect(turnB.summary).toContain("the prior accepted layout remains active");
     expect(turnB.conflicts).toHaveLength(1);
     expect(turnB.conflicts[0]?.zoneId).toBe("closet-access-zone");
     const acceptedAfterFailure = state.currentLayoutId;
@@ -93,5 +94,23 @@ describe("bounded layout tool", () => {
     expect(result.conflicts).toEqual([]);
     expect(result.aggregateConflicts).toEqual([]);
     expect(result.checkedStates).toEqual([]);
+    expect(result.summary).toContain("no layout has been accepted");
+  });
+
+  it("states that no layout was accepted when the first request has only rejected options", () => {
+    const state = createInitialDemoState();
+    const result = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-king", "desk-standard"],
+        changedPreference: "initial King and desk request",
+      }),
+      state,
+    );
+
+    expect(result.status).toBe("no_feasible_option");
+    expect(result.rejectedOptions.length).toBeGreaterThan(0);
+    expect(result.summary).toContain("no layout has been accepted");
+    expect(result.summary).not.toContain("prior accepted layout");
   });
 });

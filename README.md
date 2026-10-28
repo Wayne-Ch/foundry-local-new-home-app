@@ -84,6 +84,8 @@ npm run start:built
 The UI and trace label an alternate target as **Override (not stage-validated)**. An override may be
 locally ready, but it is never presented as the validated Ignite configuration.
 `FOUNDRY_MODEL_ALIAS` is intentionally rejected because an alias can resolve to multiple variants.
+Incomplete or rejected overrides are shown as **Invalid environment override** and stop before any
+catalog lookup or default-model load; the app never silently falls back to the built-in target.
 Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 
 ## Verification commands

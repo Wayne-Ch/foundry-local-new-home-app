@@ -94,13 +94,17 @@ export function createLayoutPresentation(
       result.rejectedOptions.length > 1
         ? ` Aggregate reasons across ${result.rejectedOptions.length} rejected options are labeled separately in Developer trace.`
         : "";
+    const acceptedLayoutNote =
+      selectedLayout === null
+        ? " No layout has been accepted."
+        : " The prior accepted layout remains active.";
     return {
       mode: "rejected_option",
       displayLayout: rejectedOption,
       resultBadgeClass: "result-badge is-error",
       resultBadgeText: "No feasible known option",
       layoutTitle: `${rejectedOption.label} · rejected option preview`,
-      layoutNotice: `The preview, checks, and conflicts below all belong to this exact rejected option.${aggregateNote} The prior accepted layout remains active.`,
+      layoutNotice: `The preview, checks, and conflicts below all belong to this exact rejected option.${aggregateNote}${acceptedLayoutNote}`,
       verdictTitle: "Deterministic conflict",
       checksLabel: "Preview option checks",
       conflictsLabel: "Preview option conflicts",

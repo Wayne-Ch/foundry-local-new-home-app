@@ -1,6 +1,9 @@
 import type { RuntimeReadiness } from "../domain/types";
 
 export function runtimeBadgeLabel(readiness: RuntimeReadiness): string {
+  if (readiness.target.source === "invalid_environment_override") {
+    return "Invalid environment override";
+  }
   const identity = readiness.model
     ? `${readiness.model.alias} · ${readiness.model.deviceType} · ${readiness.model.executionProvider}`
     : `${readiness.target.modelId} · ${readiness.target.executionProvider}`;

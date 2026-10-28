@@ -25,6 +25,7 @@ import { type FoundryPaths, resolveFoundryPaths } from "./paths";
 import { formatTurnPrompt, systemPrompt } from "./prompt";
 import {
   canonicalExecutionProvider,
+  invalidRuntimeTarget,
   RuntimeConfigurationError,
   resolveRuntimeTarget,
   VALIDATED_EXECUTION_PROVIDER,
@@ -171,7 +172,7 @@ function initialReadiness(
     nonessentialTelemetryDisabled: true,
     cachePath: "",
     appDataPath: "",
-    status: configurationError === null ? "not_initialized" : "error",
+    status: configurationError === null ? "not_initialized" : "configuration_invalid",
     detail: configurationError ?? "Foundry Local has not been initialized.",
   };
 }
@@ -190,11 +191,13 @@ export class FoundryLayoutService {
   #readiness: RuntimeReadiness;
 
   constructor(options: FoundryLayoutServiceOptions = {}) {
+    const environment = options.environment ?? process.env;
     let target = defaultRuntimeTarget();
     let configurationError: string | null = null;
     try {
-      target = resolveRuntimeTarget(options.environment ?? process.env);
+      target = resolveRuntimeTarget(environment);
     } catch (error) {
+      target = error instanceof RuntimeConfigurationError ? error.target : invalidRuntimeTarget(environment);
       configurationError =
         error instanceof RuntimeConfigurationError
           ? error.message
@@ -553,7 +556,7 @@ export class FoundryLayoutService {
     this.#readiness = {
       ...this.#readiness,
       localInferenceReady: false,
-      status: this.#configurationError === null ? "not_initialized" : "error",
+      status: this.#configurationError === null ? "not_initialized" : "configuration_invalid",
       detail: this.#configurationError ?? "Foundry Local was shut down.",
     };
   }

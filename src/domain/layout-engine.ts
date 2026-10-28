@@ -39,6 +39,17 @@ function uniqueConflicts(conflicts: readonly LayoutConflict[]): readonly LayoutC
   });
 }
 
+function noFeasibleSummary(hasKnownOptions: boolean, hasAcceptedLayout: boolean): string {
+  if (hasKnownOptions) {
+    return hasAcceptedLayout
+      ? "No bounded known option is feasible; the prior accepted layout remains active."
+      : "No bounded known option is feasible; no layout has been accepted.";
+  }
+  return hasAcceptedLayout
+    ? "No geometry was fabricated for an unknown furniture combination; the prior accepted layout remains active."
+    : "No geometry was fabricated for an unknown furniture combination; no layout has been accepted.";
+}
+
 export function compareKnownLayoutOptions(
   input: CompareLayoutOptionsInput,
   state: DemoStateSnapshot,
@@ -127,9 +138,7 @@ export function compareKnownLayoutOptions(
         : "The application has no verified known option set for that exact furniture combination.",
       preferencesThatMayChange: ["bed size", "desk footprint or orientation", "crib requirement"],
     },
-    summary: hasKnownOptions
-      ? "No bounded known option is feasible; the prior accepted layout remains active."
-      : "No geometry was fabricated for an unknown furniture combination.",
+    summary: noFeasibleSummary(hasKnownOptions, state.currentLayoutId !== null),
     provenance,
   };
 }

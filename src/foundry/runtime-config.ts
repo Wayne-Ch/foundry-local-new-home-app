@@ -3,9 +3,13 @@ import type { RuntimeTargetIdentity } from "../domain/types";
 export const VALIDATED_MODEL_ALIAS = "qwen2.5-1.5b";
 export const VALIDATED_MODEL_ID = "qwen2.5-1.5b-instruct-generic-gpu:4";
 export const VALIDATED_EXECUTION_PROVIDER = "WebGPUExecutionProvider";
+const UNSET_RUNTIME_TARGET_VALUE = "<unset>";
 
 export class RuntimeConfigurationError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly target: RuntimeTargetIdentity,
+  ) {
     super(message);
     this.name = "RuntimeConfigurationError";
   }
@@ -18,6 +22,21 @@ export function canonicalExecutionProvider(name: string): string {
     : trimmed;
 }
 
+export function invalidRuntimeTarget(
+  environment: Readonly<Record<string, string | undefined>>,
+): RuntimeTargetIdentity {
+  const modelId = environment.FOUNDRY_MODEL_ID?.trim();
+  const executionProvider = environment.FOUNDRY_EXECUTION_PROVIDER?.trim();
+  return {
+    modelId: modelId || UNSET_RUNTIME_TARGET_VALUE,
+    executionProvider: executionProvider
+      ? canonicalExecutionProvider(executionProvider)
+      : UNSET_RUNTIME_TARGET_VALUE,
+    source: "invalid_environment_override",
+    stageValidated: false,
+  };
+}
+
 export function resolveRuntimeTarget(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): RuntimeTargetIdentity {
@@ -25,6 +44,7 @@ export function resolveRuntimeTarget(
   if (legacyAlias) {
     throw new RuntimeConfigurationError(
       "FOUNDRY_MODEL_ALIAS is not supported because an alias does not identify an exact model variant. Remove it to use the validated default, or set both FOUNDRY_MODEL_ID and FOUNDRY_EXECUTION_PROVIDER.",
+      invalidRuntimeTarget(environment),
     );
   }
 
@@ -33,6 +53,7 @@ export function resolveRuntimeTarget(
   if ((modelId && !executionProvider) || (!modelId && executionProvider)) {
     throw new RuntimeConfigurationError(
       "FOUNDRY_MODEL_ID and FOUNDRY_EXECUTION_PROVIDER must be set together for an explicit runtime override.",
+      invalidRuntimeTarget(environment),
     );
   }
 

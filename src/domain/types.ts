@@ -199,7 +199,7 @@ export interface ModelIdentity {
 export interface RuntimeTargetIdentity {
   readonly modelId: string;
   readonly executionProvider: string;
-  readonly source: "built_in_default" | "environment_override";
+  readonly source: "built_in_default" | "environment_override" | "invalid_environment_override";
   readonly stageValidated: boolean;
 }
 
@@ -219,6 +219,7 @@ export interface RuntimeReadiness {
   readonly appDataPath: string;
   readonly status:
     | "not_initialized"
+    | "configuration_invalid"
     | "checking"
     | "ready"
     | "model_unavailable"

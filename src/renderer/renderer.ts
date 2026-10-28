@@ -193,7 +193,12 @@ function renderAll(): void {
 
 function renderRuntime(readiness: RuntimeReadiness): void {
   runtimeBadge.className = "runtime-badge";
-  if (readiness.localInferenceReady) {
+  if (readiness.status === "configuration_invalid") {
+    runtimeBadge.classList.add("is-error");
+    runtimeLabel.textContent = runtimeBadgeLabel(readiness);
+    prepareButton.textContent = "Fix environment override";
+    prepareButton.disabled = true;
+  } else if (readiness.localInferenceReady) {
     runtimeBadge.classList.add("is-ready");
     if (!readiness.target.stageValidated) {
       runtimeBadge.classList.add("is-override");

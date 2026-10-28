@@ -41,6 +41,29 @@ describe("layout evidence presentation", () => {
     );
     expect(presentation.conflictsLabel).toBe("Preview option conflicts");
     expect(presentation.layoutNotice).toContain("Aggregate reasons across 2 rejected options");
+    expect(presentation.layoutNotice).toContain("The prior accepted layout remains active");
+  });
+
+  it("states that no layout was accepted for a first-turn rejected option preview", () => {
+    const state = createInitialDemoState();
+    const rejectedResult = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-king", "desk-standard"],
+        changedPreference: "initial King and desk request",
+      }),
+      state,
+    );
+    const presentation = createLayoutPresentation(rejectedResult, null);
+
+    expect(rejectedResult.status).toBe("no_feasible_option");
+    expect(rejectedResult.rejectedOptions.length).toBeGreaterThan(0);
+    expect(presentation.mode).toBe("rejected_option");
+    expect(presentation.displayLayout?.id).toBe(rejectedResult.evidenceOptionId);
+    expect(presentation.conflicts).toEqual(presentation.displayLayout?.conflicts);
+    expect(presentation.checks).toEqual(presentation.displayLayout?.checkedStates);
+    expect(presentation.layoutNotice).toContain("No layout has been accepted");
+    expect(presentation.layoutNotice).not.toContain("prior accepted layout");
   });
 
   it("labels the prior layout as retained when no option was evaluated", () => {

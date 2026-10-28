@@ -270,6 +270,60 @@ describe("Foundry runtime target configuration", () => {
       stageValidated: false,
     });
   });
+
+  it("reports an incomplete exact override as invalid without loading the default model", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model);
+    const service = createService(manager, { FOUNDRY_MODEL_ID: "alternate:1" });
+
+    const readiness = await service.initialize();
+
+    expect(readiness.status).toBe("configuration_invalid");
+    expect(readiness.target).toEqual({
+      modelId: "alternate:1",
+      executionProvider: "<unset>",
+      source: "invalid_environment_override",
+      stageValidated: false,
+    });
+    expect(readiness.detail).toContain("must be set together");
+    expect(runtimeBadgeLabel(readiness)).toBe("Invalid environment override");
+    expect(manager.catalogLookupIds).toEqual([]);
+    expect(model.downloadCalls).toBe(0);
+    expect(model.loadCalls).toBe(0);
+    await expect(service.prepareOffline()).rejects.toMatchObject<Partial<FoundryRuntimeError>>({
+      code: "CONFIGURATION_INVALID",
+    });
+    expect(manager.catalogLookupIds).toEqual([]);
+    expect(model.loadCalls).toBe(0);
+    await service.shutdown();
+  });
+
+  it("reports a rejected alias override as invalid without loading the default model", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model);
+    const service = createService(manager, { FOUNDRY_MODEL_ALIAS: "qwen3-1.7b" });
+
+    const readiness = await service.initialize();
+
+    expect(readiness.status).toBe("configuration_invalid");
+    expect(readiness.target).toEqual({
+      modelId: "<unset>",
+      executionProvider: "<unset>",
+      source: "invalid_environment_override",
+      stageValidated: false,
+    });
+    expect(readiness.detail).toContain("FOUNDRY_MODEL_ALIAS is not supported");
+    expect(runtimeBadgeLabel(readiness)).toBe("Invalid environment override");
+    expect(manager.catalogLookupIds).toEqual([]);
+    expect(model.downloadCalls).toBe(0);
+    expect(model.loadCalls).toBe(0);
+    await expect(service.prepareOffline()).rejects.toMatchObject<Partial<FoundryRuntimeError>>({
+      code: "CONFIGURATION_INVALID",
+    });
+    expect(manager.catalogLookupIds).toEqual([]);
+    expect(model.loadCalls).toBe(0);
+    await service.shutdown();
+  });
 });
 
 describe("Foundry offline preparation", () => {
