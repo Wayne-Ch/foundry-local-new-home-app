@@ -12,6 +12,7 @@ const MIME_TYPE_CANDIDATES = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg
 
 export interface AudioRecorderOperation {
   readonly operationId: number;
+  readonly lifecycleGeneration: number;
   readonly recorder: MediaRecorder;
   readonly stream: MediaStream;
   readonly chunks: Blob[];

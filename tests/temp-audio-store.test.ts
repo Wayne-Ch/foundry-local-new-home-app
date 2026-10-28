@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,6 +53,88 @@ describe("temporary audio cleanup", () => {
     await store.cleanupAll();
     await expect(readFile(first)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(second)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(store.activeCount).toBe(0);
+  });
+
+  it("tracks before writing and removes a partial file when the write fails", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    let partialPath = "";
+    const store = new TempAudioStore(root, {
+      createId: () => "partial-write",
+      write: async (filePath, data) => {
+        partialPath = filePath;
+        await writeFile(filePath, data.subarray(0, 12));
+        throw new Error("simulated partial write");
+      },
+    });
+
+    await expect(store.createWav(new Uint8Array([0, 0]))).rejects.toThrow("simulated partial write");
+    expect(store.activeCount).toBe(0);
+    await expect(readFile(partialPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retains an EPERM path for a later reset cleanup retry", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    let removeCalls = 0;
+    const store = new TempAudioStore(root, {
+      createId: () => "retry-unlink",
+      remove: async (filePath) => {
+        removeCalls += 1;
+        if (removeCalls === 1) {
+          throw Object.assign(new Error("file is busy"), { code: "EPERM" });
+        }
+        await unlink(filePath);
+      },
+    });
+    const filePath = await store.createWav(new Uint8Array([0, 0]));
+    expect(store.activeCount).toBe(1);
+
+    await expect(store.remove(filePath)).rejects.toMatchObject({ code: "EPERM" });
+    expect(store.activeCount).toBe(1);
+    expect((await readFile(filePath)).byteLength).toBeGreaterThan(0);
+
+    await store.cleanupAll();
+    expect(store.activeCount).toBe(0);
+    expect(removeCalls).toBe(2);
+    await expect(readFile(filePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps a partial write tracked when immediate cleanup fails", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    let removeCalls = 0;
+    const store = new TempAudioStore(root, {
+      createId: () => "partial-retry",
+      write: async (filePath, data) => {
+        await writeFile(filePath, data.subarray(0, 8));
+        throw new Error("partial write failed");
+      },
+      remove: async (filePath) => {
+        removeCalls += 1;
+        if (removeCalls === 1) {
+          throw Object.assign(new Error("file is busy"), { code: "EBUSY" });
+        }
+        await unlink(filePath);
+      },
+    });
+
+    await expect(store.createWav(new Uint8Array([0, 0]))).rejects.toBeInstanceOf(AggregateError);
+    expect(store.activeCount).toBe(1);
+    await store.cleanupAll();
+    expect(store.activeCount).toBe(0);
+    expect(removeCalls).toBe(2);
+  });
+
+  it("treats ENOENT as successful cleanup and updates activeCount", async () => {
+    const store = await createStore();
+    const filePath = await store.createWav(new Uint8Array([0, 0]));
+    expect(store.activeCount).toBe(1);
+    await unlink(filePath);
+
+    await store.remove(filePath);
+
     expect(store.activeCount).toBe(0);
   });
 });

@@ -8,6 +8,8 @@ import {
   type Response,
 } from "foundry-local-sdk";
 import { describe, expect, it } from "vitest";
+import { createInitialDemoState } from "../src/domain/demo-state";
+import { createToolInputForTests } from "../src/domain/tool-contract";
 import { FoundryLayoutService, type FoundryRuntimeError } from "../src/foundry/foundry-service";
 import {
   resolveRuntimeTarget,
@@ -156,6 +158,7 @@ class FakeModel implements IModel {
 class FakeSession {
   readonly turnCount = 0;
   disposed = false;
+  disposeCalls = 0;
 
   async preflightRequest(_request: Request): Promise<RequestPreflightResult> {
     throw new Error("Not used by these tests.");
@@ -168,6 +171,50 @@ class FakeSession {
   undoTurns(_count: number): void {}
 
   dispose(): void {
+    this.disposeCalls += 1;
+    this.disposed = true;
+  }
+}
+
+class GatedSession {
+  turnCount = 0;
+  disposed = false;
+  disposeCalls = 0;
+
+  constructor(
+    readonly toolInput: unknown,
+    readonly processGate: Promise<void>,
+    readonly processStarted: () => void,
+  ) {}
+
+  async preflightRequest(_request: Request): Promise<RequestPreflightResult> {
+    return {
+      fits: true,
+      promptTokens: 50,
+      outputReserveTokens: 50,
+      requiredTokens: 100,
+      contextLimitTokens: 4096,
+      deficitTokens: 0,
+    };
+  }
+
+  async processRequest(_request: Request): Promise<Response> {
+    this.processStarted();
+    await this.processGate;
+    this.turnCount += 1;
+    return {
+      finishReason: "stop",
+      usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
+      output: [{ type: "text", text: JSON.stringify(this.toolInput) }],
+    };
+  }
+
+  undoTurns(count: number): void {
+    this.turnCount = Math.max(0, this.turnCount - count);
+  }
+
+  dispose(): void {
+    this.disposeCalls += 1;
     this.disposed = true;
   }
 }
@@ -177,6 +224,7 @@ class FakeManager {
   readonly registrationRequests: string[][] = [];
   providerRegistered: boolean;
   disposed = false;
+  disposeCalls = 0;
   readonly catalog: {
     readonly getModelVariant: (modelId: string) => Promise<IModel>;
     readonly getCachedModels: () => Promise<IModel[]>;
@@ -224,6 +272,7 @@ class FakeManager {
   }
 
   dispose(): void {
+    this.disposeCalls += 1;
     this.disposed = true;
   }
 }
@@ -242,6 +291,17 @@ function createService(
     createManager: () => manager,
     createSession: () => new FakeSession(),
   });
+}
+
+function deferred(): {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
 
 describe("Foundry runtime target configuration", () => {
@@ -328,6 +388,66 @@ describe("Foundry runtime target configuration", () => {
 });
 
 describe("Foundry offline preparation", () => {
+  it("single-flights concurrent initialization and disposes the manager once", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model);
+    const pathsGate = deferred();
+    let managerCreateCalls = 0;
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => {
+        await pathsGate.promise;
+        return fakePaths;
+      },
+      createManager: () => {
+        managerCreateCalls += 1;
+        return manager;
+      },
+      createSession: () => new FakeSession(),
+    });
+
+    const first = service.initialize();
+    const second = service.initialize();
+    expect(second).toBe(first);
+    pathsGate.resolve();
+
+    await Promise.all([first, second]);
+    expect(managerCreateCalls).toBe(1);
+
+    await Promise.all([service.shutdown(), service.shutdown()]);
+    expect(manager.disposeCalls).toBe(1);
+  });
+
+  it("clears a failed initialization flight so a later retry can succeed", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model);
+    let managerCreateCalls = 0;
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => {
+        managerCreateCalls += 1;
+        if (managerCreateCalls === 1) {
+          throw new Error("manager startup failed");
+        }
+        return manager;
+      },
+      createSession: () => new FakeSession(),
+    });
+
+    const first = service.initialize();
+    const second = service.initialize();
+    expect(second).toBe(first);
+    const failures = await Promise.allSettled([first, second]);
+    expect(failures.every((outcome) => outcome.status === "rejected")).toBe(true);
+    expect(managerCreateCalls).toBe(1);
+
+    await expect(service.initialize()).resolves.toMatchObject({
+      model: { id: VALIDATED_MODEL_ID },
+    });
+    expect(managerCreateCalls).toBe(2);
+    await service.shutdown();
+    expect(manager.disposeCalls).toBe(1);
+  });
+
   it("resolves the full catalog and downloads the exact default from an empty cache", async () => {
     const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, false);
     const manager = new FakeManager(model);
@@ -428,5 +548,92 @@ describe("Foundry offline preparation", () => {
     });
     expect(runtimeBadgeLabel(readiness)).toContain("Override (not stage-validated)");
     await service.shutdown();
+  });
+
+  it("waits for an active layout request before replacing its native session", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model, true);
+    const state = createInitialDemoState();
+    const prompt = "Can a Queen bed and a standard desk fit?";
+    const processGate = deferred();
+    const processStarted = deferred();
+    const sessions: Array<GatedSession | FakeSession> = [];
+    const gatedSession = new GatedSession(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: prompt,
+      }),
+      processGate.promise,
+      processStarted.resolve,
+    );
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createSession: () => {
+        const session = sessions.length === 0 ? gatedSession : new FakeSession();
+        sessions.push(session);
+        return session;
+      },
+      operationDrainTimeoutMs: 1_000,
+    });
+    await service.prepareOffline();
+
+    const turn = service.runTurn(prompt, state);
+    const turnOutcome = Promise.allSettled([turn]);
+    await processStarted.promise;
+    const reset = service.reset();
+    await Promise.resolve();
+    expect(gatedSession.disposed).toBe(false);
+
+    processGate.resolve();
+    expect((await turnOutcome)[0]?.status).toBe("rejected");
+    await reset;
+
+    expect(gatedSession.disposeCalls).toBe(1);
+    expect(sessions).toHaveLength(2);
+    await service.shutdown();
+    expect(manager.disposeCalls).toBe(1);
+  });
+
+  it("aborts reset on a bounded drain timeout without disposing a live session", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model, true);
+    const state = createInitialDemoState();
+    const prompt = "Can a Queen bed and a standard desk fit?";
+    const processGate = deferred();
+    const processStarted = deferred();
+    const gatedSession = new GatedSession(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: prompt,
+      }),
+      processGate.promise,
+      processStarted.resolve,
+    );
+    let sessionCreateCalls = 0;
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createSession: () => {
+        sessionCreateCalls += 1;
+        return sessionCreateCalls === 1 ? gatedSession : new FakeSession();
+      },
+      operationDrainTimeoutMs: 20,
+    });
+    await service.prepareOffline();
+
+    const turnOutcome = Promise.allSettled([service.runTurn(prompt, state)]);
+    await processStarted.promise;
+    await expect(service.reset()).rejects.toThrow("could not safely stop active native operations");
+    expect(gatedSession.disposed).toBe(false);
+
+    processGate.resolve();
+    expect((await turnOutcome)[0]?.status).toBe("rejected");
+    await service.reset();
+    expect(gatedSession.disposeCalls).toBe(1);
+    await service.shutdown();
+    expect(manager.disposeCalls).toBe(1);
   });
 });

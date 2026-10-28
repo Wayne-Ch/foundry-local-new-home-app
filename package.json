@@ -19,6 +19,7 @@
     "test:integration": "tsx scripts/run-foundry-integration.ts",
     "test:audio-integration": "tsx scripts/run-audio-integration.ts",
     "probe:foundry": "tsx scripts/probe-foundry.ts",
+    "probe:microphone-permission": "npm run build && node scripts/probe-electron-microphone.mjs",
     "smoke:electron": "npm run build && node scripts/smoke-electron.mjs",
     "capture:ui": "npm run build && node scripts/capture-ui.mjs",
     "start": "npm run build && electron .",

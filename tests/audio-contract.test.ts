@@ -135,6 +135,7 @@ describe("audio recorder state and draft behavior", () => {
     const newRecorder = { state: "recording", stop: vi.fn() } as unknown as MediaRecorder;
     const oldOperation = {
       operationId: 1,
+      lifecycleGeneration: 0,
       recorder: oldRecorder,
       stream: {} as MediaStream,
       chunks: [new Blob(["old"])],
@@ -144,6 +145,7 @@ describe("audio recorder state and draft behavior", () => {
     } satisfies AudioRecorderOperation;
     const newOperation = {
       operationId: 2,
+      lifecycleGeneration: 0,
       recorder: newRecorder,
       stream: {} as MediaStream,
       chunks: [new Blob(["new"])],

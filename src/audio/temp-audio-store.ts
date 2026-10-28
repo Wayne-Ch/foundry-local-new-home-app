@@ -3,21 +3,60 @@ import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { encodePcm16Wav } from "./audio-contract";
 
+export interface TempAudioStoreOptions {
+  readonly createId?: () => string;
+  readonly ensureDirectory?: (directory: string) => Promise<void>;
+  readonly write?: (filePath: string, data: Uint8Array) => Promise<void>;
+  readonly remove?: (filePath: string) => Promise<void>;
+}
+
 export class TempAudioStore {
   readonly #activePaths = new Set<string>();
+  readonly #createId: () => string;
+  readonly #ensureDirectory: (directory: string) => Promise<void>;
+  readonly #write: (filePath: string, data: Uint8Array) => Promise<void>;
+  readonly #remove: (filePath: string) => Promise<void>;
 
-  constructor(readonly rootDir: string) {}
+  constructor(
+    readonly rootDir: string,
+    options: TempAudioStoreOptions = {},
+  ) {
+    this.#createId = options.createId ?? randomUUID;
+    this.#ensureDirectory =
+      options.ensureDirectory ??
+      (async (directory) => {
+        await mkdir(directory, { recursive: true });
+      });
+    this.#write =
+      options.write ??
+      (async (filePath, data) => {
+        await writeFile(filePath, data);
+      });
+    this.#remove = options.remove ?? unlink;
+  }
 
   get activeCount(): number {
     return this.#activePaths.size;
   }
 
   async createWav(pcmBytes: Uint8Array): Promise<string> {
-    await mkdir(this.rootDir, { recursive: true });
-    const filePath = path.join(this.rootDir, `capture-${randomUUID()}.wav`);
-    await writeFile(filePath, encodePcm16Wav(pcmBytes));
+    await this.#ensureDirectory(this.rootDir);
+    const filePath = path.join(this.rootDir, `capture-${this.#createId()}.wav`);
     this.#activePaths.add(filePath);
-    return filePath;
+    try {
+      await this.#write(filePath, encodePcm16Wav(pcmBytes));
+      return filePath;
+    } catch (writeError) {
+      try {
+        await this.remove(filePath);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [writeError, cleanupError],
+          `Failed to write temporary audio file ${filePath} and cleanup also failed.`,
+        );
+      }
+      throw writeError;
+    }
   }
 
   async remove(filePath: string): Promise<void> {
@@ -25,13 +64,14 @@ export class TempAudioStore {
       return;
     }
     try {
-      await unlink(filePath);
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw error;
-      }
-    } finally {
+      await this.#remove(filePath);
       this.#activePaths.delete(filePath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        this.#activePaths.delete(filePath);
+        return;
+      }
+      throw error;
     }
   }
 

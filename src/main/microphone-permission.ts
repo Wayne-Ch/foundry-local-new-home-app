@@ -44,6 +44,7 @@ export class MicrophonePermissionGate {
   readonly #now: () => number;
   readonly #authorizationTtlMs: number;
   #authorizedUntil = 0;
+  #checkConsumed = false;
 
   constructor(options: MicrophonePermissionGateOptions) {
     this.#expectedWebContents = options.expectedWebContents;
@@ -76,7 +77,7 @@ export class MicrophonePermissionGate {
       attempt.requestingOrigin === this.#expectedOrigin &&
       attempt.securityOrigin === this.#expectedOrigin &&
       attempt.mediaType === "audio" &&
-      this.#consumeAuthorization()
+      this.#consumeCheckAuthorization()
     );
   }
 
@@ -86,12 +87,13 @@ export class MicrophonePermissionGate {
       attempt.securityOrigin === this.#expectedOrigin &&
       attempt.mediaTypes?.length === 1 &&
       attempt.mediaTypes[0] === "audio" &&
-      this.#consumeAuthorization()
+      this.#consumeRequestAuthorization()
     );
   }
 
   revoke(): void {
     this.#authorizedUntil = 0;
+    this.#checkConsumed = false;
   }
 
   #matchesBase(attempt: MicrophonePermissionBase): boolean {
@@ -106,7 +108,15 @@ export class MicrophonePermissionGate {
     );
   }
 
-  #consumeAuthorization(): boolean {
+  #consumeCheckAuthorization(): boolean {
+    const authorized = this.#authorizedUntil > this.#now() && !this.#checkConsumed;
+    if (authorized) {
+      this.#checkConsumed = true;
+    }
+    return authorized;
+  }
+
+  #consumeRequestAuthorization(): boolean {
     const authorized = this.#authorizedUntil > this.#now();
     this.revoke();
     return authorized;
@@ -115,7 +125,10 @@ export class MicrophonePermissionGate {
 
 export function permissionOriginForDocument(documentUrl: string): string {
   const parsed = new URL(documentUrl);
-  return parsed.protocol === "file:" ? "file://" : parsed.origin;
+  if (parsed.protocol === "file:") {
+    return parsed.host ? `file://${parsed.host}` : "file:///";
+  }
+  return parsed.origin;
 }
 
 export function isAllowedAppNavigation(

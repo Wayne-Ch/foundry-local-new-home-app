@@ -27,6 +27,7 @@ import {
   releaseMediaStream,
 } from "./audio-capture";
 import { createLayoutPresentation } from "./layout-presentation";
+import { RendererOperationBarrier } from "./operation-barrier";
 import { createPreviewApi } from "./preview-api";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import "./styles.css";
@@ -38,9 +39,11 @@ const demoApi = window.demoApi ?? (previewMode ? createPreviewApi() : null);
 let viewState: BootstrapPayload;
 let latestToolResult: LayoutToolResult | null = null;
 let isBusy = false;
+let runtimeStartupPending = true;
 let audioRecorderState: AudioRecorderState = { status: "idle", elapsedMs: 0, detail: "" };
 let audioNotice = "Editable draft only; click Send to submit.";
 const recorderOperationRef: AudioRecorderOperationRef = { current: null };
+const operationBarrier = new RendererOperationBarrier();
 let audioOperationId = 0;
 
 const runtimeBadge = requiredElement("runtimeBadge");
@@ -91,6 +94,7 @@ async function initialize(): Promise<void> {
   if (demoApi === null) {
     throw new Error("Electron preload API is unavailable. Use ?preview=1 only for visual inspection.");
   }
+  const lifecycleGeneration = operationBarrier.beginOperation();
   previewBanner.hidden = !previewMode;
   viewState = await demoApi.getBootstrap();
   latestToolResult = viewState.lastToolResult;
@@ -98,40 +102,64 @@ async function initialize(): Promise<void> {
   demoApi.onProgress(renderProgress);
   try {
     const readiness = await demoApi.initializeRuntime();
-    viewState = { ...viewState, readiness };
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      viewState = { ...viewState, readiness };
+    }
   } catch (error) {
-    viewState = {
-      ...viewState,
-      readiness: {
-        ...viewState.readiness,
-        status: "error",
-        detail: error instanceof Error ? error.message : String(error),
-      },
-    };
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      viewState = {
+        ...viewState,
+        readiness: {
+          ...viewState.readiness,
+          status: "error",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  } finally {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      runtimeStartupPending = false;
+      renderRuntime(viewState.readiness);
+      renderAudio();
+    }
   }
-  renderRuntime(viewState.readiness);
 }
 
 prepareButton.addEventListener("click", async () => {
+  const lifecycleGeneration = operationBarrier.beginOperation();
   setBusy(true);
   try {
     if (demoApi === null) {
       return;
     }
     const response = await demoApi.prepareOffline();
+    if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      return;
+    }
     viewState = { ...viewState, readiness: response.readiness };
     renderRuntime(response.readiness);
   } catch (error) {
-    showRuntimeError(error);
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      showRuntimeError(error);
+    }
   } finally {
-    setBusy(false);
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
   }
 });
 
 audioPrepareButton.addEventListener("click", async () => {
-  if (demoApi === null || previewMode || isAudioBusy()) {
+  if (
+    demoApi === null ||
+    previewMode ||
+    runtimeStartupPending ||
+    operationBarrier.resetInFlight ||
+    isAudioBusy()
+  ) {
     return;
   }
+  const lifecycleGeneration = operationBarrier.beginOperation();
   const operationId = ++audioOperationId;
   viewState = {
     ...viewState,
@@ -145,13 +173,13 @@ audioPrepareButton.addEventListener("click", async () => {
   renderAudio();
   try {
     const response = await demoApi.prepareAudio();
-    if (operationId !== audioOperationId) {
+    if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
     viewState = { ...viewState, audioReadiness: response.readiness };
     audioNotice = "Microphone model is ready. Press Start recording.";
   } catch (error) {
-    if (operationId !== audioOperationId) {
+    if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
     await refreshRuntimeState();
@@ -172,22 +200,46 @@ traceToggle.addEventListener("click", () => setTraceOpen(!tracePanel.classList.c
 traceClose.addEventListener("click", () => setTraceOpen(false));
 
 resetButton.addEventListener("click", async () => {
-  if (isBusy) {
+  if (demoApi === null || operationBarrier.resetInFlight) {
     return;
   }
-  if (demoApi === null) {
-    return;
+  const resetGeneration = operationBarrier.beginReset();
+  setBusy(true);
+  let resetError: unknown = null;
+  try {
+    await discardRecording();
+    const bootstrap = await demoApi.resetConversation();
+    if (!operationBarrier.isCurrentReset(resetGeneration)) {
+      return;
+    }
+    viewState = bootstrap;
+    latestToolResult = null;
+    audioNotice = "Editable draft only; click Send to submit.";
+    renderAll();
+  } catch (error) {
+    if (!operationBarrier.isCurrentReset(resetGeneration)) {
+      return;
+    }
+    resetError = error;
+    try {
+      const bootstrap = await demoApi.getBootstrap();
+      if (operationBarrier.isCurrentReset(resetGeneration)) {
+        viewState = bootstrap;
+        latestToolResult = bootstrap.lastToolResult;
+        renderAll();
+      }
+    } catch {
+      // Keep the last rendered state and surface the reset failure below.
+    }
+  } finally {
+    if (operationBarrier.finishReset(resetGeneration)) {
+      runtimeStartupPending = false;
+      setBusy(false);
+      if (resetError !== null) {
+        showResetError(resetError);
+      }
+    }
   }
-  await discardRecording();
-  const operationId = audioOperationId;
-  const bootstrap = await demoApi.resetConversation();
-  if (operationId !== audioOperationId) {
-    return;
-  }
-  viewState = bootstrap;
-  latestToolResult = null;
-  audioNotice = "Editable draft only; click Send to submit.";
-  renderAll();
 });
 
 nextTurnButton.addEventListener("click", () => {
@@ -212,9 +264,10 @@ promptForm.addEventListener("submit", (event) => {
 });
 
 async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<void> {
-  if (isBusy || isAudioBusy() || !viewState.readiness.localInferenceReady) {
+  if (isBusy || operationBarrier.resetInFlight || isAudioBusy() || !viewState.readiness.localInferenceReady) {
     return;
   }
+  const lifecycleGeneration = operationBarrier.beginOperation();
   setBusy(true);
   try {
     if (demoApi === null) {
@@ -224,14 +277,22 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
       prompt,
       ...(scriptedTurnId ? { scriptedTurnId } : {}),
     });
+    if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      return;
+    }
     applyTurnResponse(response);
   } catch (error) {
+    if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      return;
+    }
     progressBar.hidden = true;
     showRuntimeError(error);
     viewState = await demoApi.getBootstrap();
     renderAll();
   } finally {
-    setBusy(false);
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
   }
 }
 
@@ -328,6 +389,8 @@ function renderAudio(): void {
 
   audioPrepareButton.disabled =
     previewMode ||
+    runtimeStartupPending ||
+    operationBarrier.resetInFlight ||
     isBusy ||
     isAudioBusy() ||
     ["checking", "loading"].includes(readiness.status) ||
@@ -607,7 +670,9 @@ function setBusy(value: boolean): void {
   promptInput.disabled =
     value || audioRecorderState.status === "transcribing" || !viewState.readiness.localInferenceReady;
   prepareButton.disabled = value || viewState.readiness.localInferenceReady;
-  resetButton.disabled = value;
+  resetButton.disabled = operationBarrier.resetInFlight;
+  traceToggle.disabled = operationBarrier.resetInFlight;
+  traceClose.disabled = operationBarrier.resetInFlight;
   if (!value) {
     progressBar.hidden = true;
   }
@@ -642,11 +707,13 @@ async function startRecording(): Promise<void> {
     !viewState.audioReadiness.localAudioReady ||
     !viewState.readiness.localInferenceReady ||
     isBusy ||
+    operationBarrier.resetInFlight ||
     isAudioBusy()
   ) {
     return;
   }
 
+  const lifecycleGeneration = operationBarrier.beginOperation();
   const operationId = ++audioOperationId;
   audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
     type: "REQUEST_PERMISSION",
@@ -657,7 +724,7 @@ async function startRecording(): Promise<void> {
   let pendingStream: MediaStream | null = null;
   try {
     await demoApi.authorizeMicrophone();
-    if (operationId !== audioOperationId) {
+    if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
     pendingStream = await navigator.mediaDevices.getUserMedia({
@@ -669,7 +736,7 @@ async function startRecording(): Promise<void> {
       },
       video: false,
     });
-    if (operationId !== audioOperationId) {
+    if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       releaseMediaStream(pendingStream);
       pendingStream = null;
       return;
@@ -679,6 +746,7 @@ async function startRecording(): Promise<void> {
     const recorder = new MediaRecorder(pendingStream, mimeType ? { mimeType } : undefined);
     const operation: AudioRecorderOperation = {
       operationId,
+      lifecycleGeneration,
       recorder,
       stream: pendingStream,
       chunks: [],
@@ -710,7 +778,7 @@ async function startRecording(): Promise<void> {
       cleanupActiveRecorder(operation, true);
     }
     releaseMediaStream(pendingStream);
-    if (operationId === audioOperationId) {
+    if (operationId === audioOperationId && operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       showAudioError(error, microphoneErrorMessage(error));
     }
   }
@@ -737,13 +805,20 @@ async function stopAndTranscribe(
     const blob = await stopRecorder(recorder, operation.chunks);
     cleanupActiveRecorder(operation, false);
     const payload = await recordedBlobToAudioPayload(blob);
-    if (operationId !== audioOperationId || demoApi === null) {
+    if (
+      operationId !== audioOperationId ||
+      !operationBarrier.isCurrentOperation(operation.lifecycleGeneration) ||
+      demoApi === null
+    ) {
       return;
     }
     audioNotice = "Foundry Local is transcribing on device.";
     renderAudio();
     const response = await demoApi.transcribeAudio(payload);
-    if (operationId !== audioOperationId) {
+    if (
+      operationId !== audioOperationId ||
+      !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
+    ) {
       return;
     }
     viewState = {
@@ -758,7 +833,10 @@ async function stopAndTranscribe(
     audioNotice = `Transcript added in ${response.result.transcriptionMs} ms. Review it, then click Send.`;
     renderAll();
   } catch (error) {
-    if (operationId === audioOperationId) {
+    if (
+      operationId === audioOperationId &&
+      operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
+    ) {
       await refreshRuntimeState();
       showAudioError(error);
     }
@@ -793,7 +871,10 @@ function stopRecorder(recorder: MediaRecorder, chunks: readonly Blob[]): Promise
 }
 
 function handleRecorderError(operation: AudioRecorderOperation, event: Event): void {
-  if (!cleanupActiveRecorder(operation, false)) {
+  if (
+    !operationBarrier.isCurrentOperation(operation.lifecycleGeneration) ||
+    !cleanupActiveRecorder(operation, false)
+  ) {
     return;
   }
   const message =
@@ -858,6 +939,13 @@ function showAudioError(error: unknown, override?: string): void {
   });
   audioNotice = detail;
   renderAll();
+}
+
+function showResetError(error: unknown): void {
+  renderProgress({
+    phase: "error",
+    detail: `Reset failed: ${error instanceof Error ? error.message : String(error)}`,
+  });
 }
 
 async function refreshRuntimeState(): Promise<void> {

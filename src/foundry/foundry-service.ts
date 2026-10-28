@@ -46,6 +46,7 @@ import {
 } from "./runtime-config";
 
 const MAX_TOOL_ATTEMPTS = 3;
+const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
 
 interface FoundryCatalogHandle {
   getCachedModels(): Promise<IModel[]>;
@@ -82,6 +83,7 @@ export interface FoundryLayoutServiceOptions {
   readonly createSession?: (model: IModel) => FoundrySessionHandle;
   readonly createAudioSession?: (model: IModel) => FoundryAudioSessionHandle;
   readonly audioTempStore?: TempAudioStore;
+  readonly operationDrainTimeoutMs?: number;
 }
 
 export interface FoundryTurnOutcome {
@@ -249,11 +251,18 @@ export class FoundryLayoutService {
   readonly #createManager: (config: FoundryLocalConfig) => FoundryManagerHandle;
   readonly #sessionFactory: (model: IModel) => FoundrySessionHandle;
   readonly #audioSessionFactory: (model: IModel) => FoundryAudioSessionHandle;
+  readonly #operationDrainTimeoutMs: number;
   #audioTempStore: TempAudioStore | null;
   #paths: FoundryPaths | null = null;
   #manager: FoundryManagerHandle | null = null;
   #model: IModel | null = null;
   #session: FoundrySessionHandle | null = null;
+  #initializePromise: Promise<RuntimeReadiness> | null = null;
+  #preparePromise: Promise<RuntimeReadiness> | null = null;
+  #turnPromise: Promise<FoundryTurnOutcome> | null = null;
+  #activeLayoutRequest: Request | null = null;
+  #layoutResetPromise: Promise<void> | null = null;
+  #resetPromise: Promise<void> | null = null;
   #audioModel: IModel | null = null;
   #activeAudioRequest: Request | null = null;
   #audioPreparePromise: Promise<AudioReadiness> | null = null;
@@ -261,6 +270,7 @@ export class FoundryLayoutService {
   #audioResetPromise: Promise<void> | null = null;
   #shutdownPromise: Promise<void> | null = null;
   readonly #audioPrepareProgressListeners = new Set<(detail: string) => void>();
+  #layoutGeneration = 0;
   #audioGeneration = 0;
   #shuttingDown = false;
   #systemPromptPending = true;
@@ -287,6 +297,10 @@ export class FoundryLayoutService {
     this.#createManager = options.createManager ?? ((config) => FoundryLocalManager.create(config));
     this.#sessionFactory = options.createSession ?? ((model) => new ChatSession(model));
     this.#audioSessionFactory = options.createAudioSession ?? ((model) => new AudioSession(model));
+    this.#operationDrainTimeoutMs = Math.max(
+      1,
+      options.operationDrainTimeoutMs ?? DEFAULT_OPERATION_DRAIN_TIMEOUT_MS,
+    );
     this.#audioTempStore = options.audioTempStore ?? null;
     this.#readiness = initialReadiness(target, configurationError);
   }
@@ -299,10 +313,26 @@ export class FoundryLayoutService {
     return this.#audioReadiness;
   }
 
-  async initialize(): Promise<RuntimeReadiness> {
+  initialize(): Promise<RuntimeReadiness> {
     if (this.#configurationError !== null) {
-      return this.#readiness;
+      return Promise.resolve(this.#readiness);
     }
+    this.#assertRuntimeLifecycleAvailable();
+    if (this.#initializePromise !== null) {
+      return this.#initializePromise;
+    }
+
+    let trackedPromise: Promise<RuntimeReadiness>;
+    trackedPromise = this.#initialize().finally(() => {
+      if (this.#initializePromise === trackedPromise) {
+        this.#initializePromise = null;
+      }
+    });
+    this.#initializePromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #initialize(): Promise<RuntimeReadiness> {
     if (this.#manager !== null) {
       if (this.#model !== null) {
         return this.#refreshReadiness();
@@ -364,7 +394,23 @@ export class FoundryLayoutService {
     return this.#refreshReadiness();
   }
 
-  async prepareOffline(onProgress?: (detail: string) => void): Promise<RuntimeReadiness> {
+  prepareOffline(onProgress?: (detail: string) => void): Promise<RuntimeReadiness> {
+    this.#assertRuntimeLifecycleAvailable();
+    if (this.#preparePromise !== null) {
+      return this.#preparePromise;
+    }
+
+    let trackedPromise: Promise<RuntimeReadiness>;
+    trackedPromise = this.#prepareOffline(onProgress).finally(() => {
+      if (this.#preparePromise === trackedPromise) {
+        this.#preparePromise = null;
+      }
+    });
+    this.#preparePromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #prepareOffline(onProgress?: (detail: string) => void): Promise<RuntimeReadiness> {
     await this.initialize();
     if (this.#configurationError !== null) {
       throw new FoundryRuntimeError(this.#configurationError, "CONFIGURATION_INVALID");
@@ -675,14 +721,40 @@ export class FoundryLayoutService {
     }
   }
 
-  async runTurn(
+  runTurn(
     userPrompt: string,
     state: DemoStateSnapshot,
     onPhase?: (phase: string, detail: string) => void,
   ): Promise<FoundryTurnOutcome> {
+    this.#assertRuntimeLifecycleAvailable();
+    if (this.#turnPromise !== null) {
+      return Promise.reject(
+        new FoundryRuntimeError("A layout inference request is already running.", "RUNTIME_NOT_READY"),
+      );
+    }
+
+    const generation = this.#layoutGeneration;
+    let trackedPromise: Promise<FoundryTurnOutcome>;
+    trackedPromise = this.#runTurn(userPrompt, state, generation, onPhase).finally(() => {
+      if (this.#turnPromise === trackedPromise) {
+        this.#turnPromise = null;
+      }
+    });
+    this.#turnPromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #runTurn(
+    userPrompt: string,
+    state: DemoStateSnapshot,
+    generation: number,
+    onPhase?: (phase: string, detail: string) => void,
+  ): Promise<FoundryTurnOutcome> {
     await this.initialize();
+    this.#assertLayoutOperationCurrent(generation);
     if (!this.#readiness.localInferenceReady) {
       await this.prepareOffline((detail) => onPhase?.("runtime", detail));
+      this.#assertLayoutOperationCurrent(generation);
     }
 
     const session = this.#requireSession();
@@ -725,7 +797,9 @@ export class FoundryLayoutService {
         },
       });
 
-      planningPreflight = await session.preflightRequest(request);
+      planningPreflight = await this.#executeLayoutRequest(request, generation, () =>
+        session.preflightRequest(request),
+      );
       if (!planningPreflight.fits) {
         throw new FoundryRuntimeError(
           `Request needs ${planningPreflight.requiredTokens} tokens but the context limit is ${planningPreflight.contextLimitTokens}.`,
@@ -734,8 +808,11 @@ export class FoundryLayoutService {
       }
 
       try {
-        planningResponse = await session.processRequest(request);
+        planningResponse = await this.#executeLayoutRequest(request, generation, () =>
+          session.processRequest(request),
+        );
       } catch (error) {
+        this.#assertLayoutOperationCurrent(generation);
         validationErrors.push({
           code: "INVALID_SCHEMA",
           message: "The native runtime rejected the generated tool call before execution.",
@@ -754,6 +831,7 @@ export class FoundryLayoutService {
           { cause: error },
         );
       }
+      this.#assertLayoutOperationCurrent(generation);
       this.#systemPromptPending = false;
       if (!["stop", "length"].includes(planningResponse.finishReason)) {
         validationErrors.push({
@@ -809,6 +887,7 @@ export class FoundryLayoutService {
       }
     }
 
+    this.#assertLayoutOperationCurrent(generation);
     if (
       planningResponse === null ||
       planningPreflight === null ||
@@ -825,6 +904,7 @@ export class FoundryLayoutService {
     }
 
     onPhase?.("geometry-running", "Running deterministic bounded geometry checks.");
+    this.#assertLayoutOperationCurrent(generation);
     const toolResult = compareKnownLayoutOptions(validatedInput, state);
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
     const assistantText = renderApplicationEvidence(toolResult);
@@ -847,16 +927,44 @@ export class FoundryLayoutService {
     };
   }
 
-  resetConversation(): void {
-    this.#session?.dispose();
-    this.#session = null;
-    this.#systemPromptPending = true;
-    if (this.#model !== null && this.#readiness.localInferenceReady) {
-      this.#createSession();
+  reset(): Promise<void> {
+    if (this.#resetPromise !== null) {
+      return this.#resetPromise;
     }
+    if (this.#shuttingDown && this.#shutdownPromise !== null) {
+      return this.#shutdownPromise;
+    }
+    return this.#startReset();
+  }
+
+  resetConversation(): Promise<void> {
+    if (this.#resetPromise !== null) {
+      return this.#resetPromise;
+    }
+    if (this.#layoutResetPromise !== null) {
+      return this.#layoutResetPromise;
+    }
+    if (this.#shuttingDown && this.#shutdownPromise !== null) {
+      return this.#shutdownPromise;
+    }
+
+    this.#layoutGeneration += 1;
+    this.#activeLayoutRequest?.cancel();
+    const operations = [this.#initializePromise, this.#preparePromise, this.#turnPromise];
+    let trackedPromise: Promise<void>;
+    trackedPromise = this.#resetConversation(operations).finally(() => {
+      if (this.#layoutResetPromise === trackedPromise) {
+        this.#layoutResetPromise = null;
+      }
+    });
+    this.#layoutResetPromise = trackedPromise;
+    return trackedPromise;
   }
 
   resetAudio(): Promise<void> {
+    if (this.#resetPromise !== null) {
+      return this.#resetPromise;
+    }
     if (this.#audioResetPromise !== null) {
       return this.#audioResetPromise;
     }
@@ -866,13 +974,36 @@ export class FoundryLayoutService {
     return this.#startAudioReset();
   }
 
+  #startReset(): Promise<void> {
+    this.#layoutGeneration += 1;
+    this.#audioGeneration += 1;
+    this.#activeLayoutRequest?.cancel();
+    this.#activeAudioRequest?.cancel();
+    const operations = [
+      this.#initializePromise,
+      this.#preparePromise,
+      this.#turnPromise,
+      this.#audioPreparePromise,
+      this.#audioTranscriptionPromise,
+      this.#layoutResetPromise,
+      this.#audioResetPromise,
+    ];
+    let trackedPromise: Promise<void>;
+    trackedPromise = this.#resetAll(operations).finally(() => {
+      if (this.#resetPromise === trackedPromise) {
+        this.#resetPromise = null;
+      }
+    });
+    this.#resetPromise = trackedPromise;
+    return trackedPromise;
+  }
+
   #startAudioReset(): Promise<void> {
     this.#audioGeneration += 1;
     this.#activeAudioRequest?.cancel();
-    const preparation = this.#audioPreparePromise;
-    const transcription = this.#audioTranscriptionPromise;
+    const operations = [this.#audioPreparePromise, this.#audioTranscriptionPromise];
     let trackedPromise: Promise<void>;
-    trackedPromise = this.#resetAudio(preparation, transcription).finally(() => {
+    trackedPromise = this.#resetAudio(operations).finally(() => {
       if (this.#audioResetPromise === trackedPromise) {
         this.#audioResetPromise = null;
       }
@@ -899,11 +1030,23 @@ export class FoundryLayoutService {
     }
   }
 
-  async #resetAudio(
-    preparation: Promise<AudioReadiness> | null,
-    transcription: Promise<AudioTranscriptionResult> | null,
-  ): Promise<void> {
-    await Promise.allSettled([preparation, transcription].filter((value) => value !== null));
+  async #resetAll(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
+    await this.#waitForOperationDrain("reset", operations);
+    await this.#resetAudioResources();
+    this.#resetConversationResources();
+  }
+
+  async #resetConversation(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
+    await this.#waitForOperationDrain("conversation reset", operations);
+    this.#resetConversationResources();
+  }
+
+  async #resetAudio(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
+    await this.#waitForOperationDrain("audio reset", operations);
+    await this.#resetAudioResources();
+  }
+
+  async #resetAudioResources(): Promise<void> {
     this.#activeAudioRequest?.cancel();
     await this.#audioTempStore?.cleanupAll();
 
@@ -931,17 +1074,17 @@ export class FoundryLayoutService {
   }
 
   async #shutdown(): Promise<void> {
-    await (this.#audioResetPromise ?? this.#startAudioReset());
-    this.#session?.dispose();
-    this.#session = null;
+    await (this.#resetPromise ?? this.#startReset());
+    this.#disposeConversationSession();
     if (this.#model !== null) {
       if (await this.#model.isLoaded()) {
         await this.#model.unload();
       }
       this.#model = null;
     }
-    this.#manager?.dispose();
+    const manager = this.#manager;
     this.#manager = null;
+    manager?.dispose();
     this.#readiness = {
       ...this.#readiness,
       localInferenceReady: false,
@@ -1061,11 +1204,75 @@ export class FoundryLayoutService {
     }
   }
 
+  async #executeLayoutRequest<T>(
+    request: Request,
+    generation: number,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.#assertLayoutOperationCurrent(generation);
+    this.#activeLayoutRequest = request;
+    try {
+      const result = await operation();
+      this.#assertLayoutOperationCurrent(generation);
+      return result;
+    } finally {
+      if (this.#activeLayoutRequest === request) {
+        this.#activeLayoutRequest = null;
+      }
+    }
+  }
+
   #createSession(): void {
     const model = this.#requireModel();
-    this.#session?.dispose();
+    this.#disposeConversationSession();
     this.#session = this.#sessionFactory(model);
     this.#systemPromptPending = true;
+  }
+
+  #resetConversationResources(): void {
+    this.#disposeConversationSession();
+    this.#systemPromptPending = true;
+    if (!this.#shuttingDown && this.#model !== null && this.#readiness.localInferenceReady) {
+      this.#session = this.#sessionFactory(this.#model);
+    }
+  }
+
+  #disposeConversationSession(): void {
+    const session = this.#session;
+    this.#session = null;
+    session?.dispose();
+  }
+
+  async #waitForOperationDrain(
+    label: string,
+    operations: readonly (Promise<unknown> | null)[],
+  ): Promise<void> {
+    const activeOperations = operations.filter(
+      (operation): operation is Promise<unknown> => operation !== null,
+    );
+    if (activeOperations.length === 0) {
+      return;
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        reject(
+          new FoundryRuntimeError(
+            `${label} could not safely stop active native operations within ${this.#operationDrainTimeoutMs} ms.`,
+            "RUNTIME_NOT_READY",
+          ),
+        );
+      }, this.#operationDrainTimeoutMs);
+    });
+
+    try {
+      await Promise.race([Promise.allSettled(activeOperations), timedOut]);
+    } finally {
+      if (timeout !== null) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   #findProviderInfo(): EpInfo | undefined {
@@ -1194,14 +1401,42 @@ export class FoundryLayoutService {
     if (this.#shuttingDown) {
       throw new FoundryAudioError("Audio runtime shutdown is in progress.", "AUDIO_NOT_READY");
     }
-    if (this.#audioResetPromise !== null) {
+    if (this.#resetPromise !== null || this.#audioResetPromise !== null) {
       throw new FoundryAudioError("Audio runtime reset is in progress.", "AUDIO_NOT_READY");
     }
   }
 
   #assertAudioOperationCurrent(generation: number): void {
-    if (generation !== this.#audioGeneration || this.#audioResetPromise !== null || this.#shuttingDown) {
+    if (
+      generation !== this.#audioGeneration ||
+      this.#resetPromise !== null ||
+      this.#audioResetPromise !== null ||
+      this.#shuttingDown
+    ) {
       throw new FoundryAudioError("Audio operation was superseded by reset or shutdown.", "AUDIO_NOT_READY");
+    }
+  }
+
+  #assertRuntimeLifecycleAvailable(): void {
+    if (this.#shuttingDown) {
+      throw new FoundryRuntimeError("Foundry Local shutdown is in progress.", "RUNTIME_NOT_READY");
+    }
+    if (this.#resetPromise !== null || this.#layoutResetPromise !== null) {
+      throw new FoundryRuntimeError("Foundry Local reset is in progress.", "RUNTIME_NOT_READY");
+    }
+  }
+
+  #assertLayoutOperationCurrent(generation: number): void {
+    if (
+      generation !== this.#layoutGeneration ||
+      this.#resetPromise !== null ||
+      this.#layoutResetPromise !== null ||
+      this.#shuttingDown
+    ) {
+      throw new FoundryRuntimeError(
+        "Layout operation was superseded by reset or shutdown.",
+        "RUNTIME_NOT_READY",
+      );
     }
   }
 

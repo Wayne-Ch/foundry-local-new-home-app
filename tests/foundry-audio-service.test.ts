@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -135,6 +135,7 @@ class FakeModel implements IModel {
 
 class FakeManager {
   readonly catalog;
+  disposeCalls = 0;
 
   constructor(
     readonly chatModel: FakeModel,
@@ -165,7 +166,9 @@ class FakeManager {
     };
   }
 
-  dispose(): void {}
+  dispose(): void {
+    this.disposeCalls += 1;
+  }
 }
 
 class FakeChatSession {
@@ -181,9 +184,18 @@ class FakeChatSession {
 }
 
 class FakeAudioSession {
-  constructor(readonly error: Error | null) {}
+  disposed = false;
+  disposeCalls = 0;
+
+  constructor(
+    readonly error: Error | null,
+    readonly processGate: Promise<void> | null = null,
+    readonly processStarted: (() => void) | null = null,
+  ) {}
 
   async processRequest(_request: Request): Promise<Response> {
+    this.processStarted?.();
+    await this.processGate;
     if (this.error !== null) {
       throw this.error;
     }
@@ -200,17 +212,29 @@ class FakeAudioSession {
     };
   }
 
-  dispose(): void {}
+  dispose(): void {
+    this.disposeCalls += 1;
+    this.disposed = true;
+  }
 }
 
 afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function createFixture(audioError: Error | null = null) {
+interface FixtureOptions {
+  readonly audioError?: Error | null;
+  readonly audioSession?: FakeAudioSession;
+  readonly createStore?: (root: string) => TempAudioStore;
+  readonly resolvePathsGate?: Promise<void>;
+  readonly onCreateManager?: () => void;
+  readonly operationDrainTimeoutMs?: number;
+}
+
+async function createFixture(options: FixtureOptions = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "foundry-audio-service-"));
   tempRoots.push(root);
-  const store = new TempAudioStore(root);
+  const store = options.createStore?.(root) ?? new TempAudioStore(root);
   const chatModel = new FakeModel(
     VALIDATED_MODEL_ID,
     "qwen2.5-1.5b",
@@ -228,19 +252,29 @@ async function createFixture(audioError: Error | null = null) {
     131,
   );
   const manager = new FakeManager(chatModel, audioModel);
+  const audioSession = options.audioSession ?? new FakeAudioSession(options.audioError ?? null);
   const service = new FoundryLayoutService({
-    resolvePaths: async () => ({
-      appDataDir: root,
-      logsDir: root,
-      modelCacheDir: root,
-      audioTempDir: root,
-    }),
-    createManager: (_config: FoundryLocalConfig) => manager,
+    resolvePaths: async () => {
+      await options.resolvePathsGate;
+      return {
+        appDataDir: root,
+        logsDir: root,
+        modelCacheDir: root,
+        audioTempDir: root,
+      };
+    },
+    createManager: (_config: FoundryLocalConfig) => {
+      options.onCreateManager?.();
+      return manager;
+    },
     createSession: () => new FakeChatSession(),
-    createAudioSession: () => new FakeAudioSession(audioError),
+    createAudioSession: () => audioSession,
     audioTempStore: store,
+    ...(options.operationDrainTimeoutMs === undefined
+      ? {}
+      : { operationDrainTimeoutMs: options.operationDrainTimeoutMs }),
   });
-  return { service, store, audioModel };
+  return { service, store, audioModel, audioSession, manager };
 }
 
 const capture: ValidatedAudioCapture = {
@@ -282,7 +316,9 @@ describe("Foundry audio service cleanup", () => {
   });
 
   it("deletes the temporary WAV when native transcription fails", async () => {
-    const { service, store } = await createFixture(new Error("native ASR failure"));
+    const { service, store } = await createFixture({
+      audioError: new Error("native ASR failure"),
+    });
     await service.prepareAudioOffline();
     await expect(service.transcribeAudio(capture)).rejects.toThrow("native ASR failure");
     expect(store.activeCount).toBe(0);
@@ -346,5 +382,79 @@ describe("Foundry audio service cleanup", () => {
     expect(audioModel.unloadCalls).toBe(1);
     expect(audioModel.loaded).toBe(false);
     expect(service.audioReadiness.status).toBe("not_initialized");
+  });
+
+  it("shares manager initialization between runtime startup and audio preparation", async () => {
+    const pathsGate = deferred();
+    let managerCreateCalls = 0;
+    const { service, manager } = await createFixture({
+      resolvePathsGate: pathsGate.promise,
+      onCreateManager: () => {
+        managerCreateCalls += 1;
+      },
+    });
+
+    const startup = service.initialize();
+    const audioPreparation = service.prepareAudioOffline();
+    pathsGate.resolve();
+
+    await Promise.all([startup, audioPreparation]);
+    expect(managerCreateCalls).toBe(1);
+    await service.shutdown();
+    expect(manager.disposeCalls).toBe(1);
+  });
+
+  it("does not dispose an audio session while reset is waiting for its request", async () => {
+    const processGate = deferred();
+    const processStarted = deferred();
+    const audioSession = new FakeAudioSession(null, processGate.promise, processStarted.resolve);
+    const { service, store, audioModel } = await createFixture({
+      audioSession,
+      operationDrainTimeoutMs: 1_000,
+    });
+    await service.prepareAudioOffline();
+
+    const transcriptionOutcome = Promise.allSettled([service.transcribeAudio(capture)]);
+    await processStarted.promise;
+    await vi.waitFor(() => expect(store.activeCount).toBe(1));
+    const reset = service.reset();
+    await Promise.resolve();
+    expect(audioSession.disposed).toBe(false);
+
+    processGate.resolve();
+    expect((await transcriptionOutcome)[0]?.status).toBe("rejected");
+    await reset;
+
+    expect(audioSession.disposeCalls).toBe(1);
+    expect(store.activeCount).toBe(0);
+    expect(audioModel.unloadCalls).toBe(1);
+    await service.shutdown();
+  });
+
+  it("keeps failed reset cleanup tracked and succeeds on retry", async () => {
+    let blockRemoval = true;
+    const { service, store, audioModel } = await createFixture({
+      createStore: (root) =>
+        new TempAudioStore(root, {
+          remove: async (filePath) => {
+            if (blockRemoval) {
+              throw Object.assign(new Error("file is busy"), { code: "EPERM" });
+            }
+            await unlink(filePath);
+          },
+        }),
+    });
+    await service.prepareAudioOffline();
+    await store.createWav(new Uint8Array([0, 0]));
+
+    await expect(service.reset()).rejects.toMatchObject({ code: "EPERM" });
+    expect(store.activeCount).toBe(1);
+    expect(audioModel.loaded).toBe(true);
+
+    blockRemoval = false;
+    await service.reset();
+    expect(store.activeCount).toBe(0);
+    expect(audioModel.loaded).toBe(false);
+    await service.shutdown();
   });
 });

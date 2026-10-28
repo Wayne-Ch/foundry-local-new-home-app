@@ -31,8 +31,25 @@ function message(role: ConversationMessage["role"], text: string, status?: Conve
   };
 }
 
+type DemoFoundryService = Pick<
+  FoundryLayoutService,
+  | "readiness"
+  | "audioReadiness"
+  | "initialize"
+  | "prepareOffline"
+  | "prepareAudioOffline"
+  | "transcribeAudio"
+  | "runTurn"
+  | "reset"
+  | "shutdown"
+>;
+
+export interface DemoControllerOptions {
+  readonly foundry?: DemoFoundryService;
+}
+
 export class DemoController {
-  readonly #foundry = new FoundryLayoutService();
+  readonly #foundry: DemoFoundryService;
   #state: DemoState = createInitialDemoState();
   #selectedLayout: EvaluatedLayoutOption | null = null;
   #messages: ConversationMessage[] = [
@@ -42,6 +59,12 @@ export class DemoController {
     ),
   ];
   #trace: TraceEntry[] = [];
+  #operationGeneration = 0;
+  #resetPromise: Promise<BootstrapPayload> | null = null;
+
+  constructor(options: DemoControllerOptions = {}) {
+    this.#foundry = options.foundry ?? new FoundryLayoutService();
+  }
 
   bootstrap(): BootstrapPayload {
     return {
@@ -58,23 +81,33 @@ export class DemoController {
   }
 
   async initializeRuntime(): Promise<BootstrapPayload["readiness"]> {
+    const generation = this.#beginOperation();
     const readiness = await this.#foundry.initialize();
+    this.#assertOperationCurrent(generation);
     this.#pushTrace("runtime", "Runtime inspection", readiness);
     return readiness;
   }
 
   async prepareOffline(onProgress?: (event: ProgressEvent) => void): Promise<PrepareOfflineResponse> {
+    const generation = this.#beginOperation();
     const readiness = await this.#foundry.prepareOffline((detail) => {
-      onProgress?.({ phase: "model-planning", detail });
+      if (this.#isOperationCurrent(generation)) {
+        onProgress?.({ phase: "model-planning", detail });
+      }
     });
+    this.#assertOperationCurrent(generation);
     this.#pushTrace("runtime", "Offline readiness prepared", readiness);
     return { readiness, model: readiness.model };
   }
 
   async prepareAudio(onProgress?: (event: ProgressEvent) => void): Promise<PrepareAudioResponse> {
+    const generation = this.#beginOperation();
     const readiness = await this.#foundry.prepareAudioOffline((detail) => {
-      onProgress?.({ phase: "audio-preparing", detail });
+      if (this.#isOperationCurrent(generation)) {
+        onProgress?.({ phase: "audio-preparing", detail });
+      }
     });
+    this.#assertOperationCurrent(generation);
     this.#pushTrace("runtime", "Audio runtime prepared", readiness);
     return { readiness };
   }
@@ -83,15 +116,19 @@ export class DemoController {
     payload: AudioCapturePayload,
     onProgress?: (event: ProgressEvent) => void,
   ): Promise<AudioTranscriptionResponse> {
+    const generation = this.#beginOperation();
     const validation = validateAudioCapturePayload(payload);
     if (!validation.ok) {
       this.#pushTrace("error", "Audio payload rejected", validation.error);
       throw new Error(validation.error.message);
     }
 
-    onProgress?.({ phase: "audio-transcribing", detail: "Transcribing microphone audio locally." });
+    if (this.#isOperationCurrent(generation)) {
+      onProgress?.({ phase: "audio-transcribing", detail: "Transcribing microphone audio locally." });
+    }
     try {
       const result = await this.#foundry.transcribeAudio(validation.value);
+      this.#assertOperationCurrent(generation);
       this.#pushTrace("audio-transcription", "Local speech-to-text result", {
         transcript: result.transcript,
         transcriptionMs: result.transcriptionMs,
@@ -107,6 +144,9 @@ export class DemoController {
         trace: this.#trace,
       };
     } catch (error) {
+      if (!this.#isOperationCurrent(generation)) {
+        throw error;
+      }
       this.#pushTrace("error", "Local speech-to-text failed", {
         message: error instanceof Error ? error.message : String(error),
         audioReadiness: this.#foundry.audioReadiness,
@@ -123,6 +163,7 @@ export class DemoController {
     request: RunTurnRequest,
     onProgress?: (event: ProgressEvent) => void,
   ): Promise<RunTurnResponse> {
+    const generation = this.#beginOperation();
     const prompt = request.prompt.trim();
     if (!prompt) {
       throw new Error("Prompt cannot be empty.");
@@ -133,6 +174,9 @@ export class DemoController {
 
     try {
       const outcome = await this.#foundry.runTurn(prompt, this.#state, (phase, detail) => {
+        if (!this.#isOperationCurrent(generation)) {
+          return;
+        }
         const progressPhase =
           phase === "model-planning"
             ? "model-planning"
@@ -145,6 +189,7 @@ export class DemoController {
                   : "model-planning";
         onProgress?.({ phase: progressPhase, detail });
       });
+      this.#assertOperationCurrent(generation);
 
       this.#pushTrace("model-tool-call", "Model-proposed tool call", outcome.toolCall);
       this.#pushTrace("validation", "Application validation accepted", {
@@ -172,6 +217,9 @@ export class DemoController {
       onProgress?.({ phase: "complete", detail: "Turn complete." });
       return this.#response(outcome.toolResult, outcome.assistantText);
     } catch (error) {
+      if (!this.#isOperationCurrent(generation)) {
+        throw error;
+      }
       const detail = error instanceof Error ? error.message : String(error);
       this.#messages.push(
         message("assistant", `Foundry Local could not complete this turn: ${detail}`, "error"),
@@ -185,9 +233,23 @@ export class DemoController {
     }
   }
 
-  async reset(): Promise<BootstrapPayload> {
-    await this.#foundry.resetAudio();
-    this.#foundry.resetConversation();
+  reset(): Promise<BootstrapPayload> {
+    if (this.#resetPromise !== null) {
+      return this.#resetPromise;
+    }
+    this.#operationGeneration += 1;
+    let trackedPromise: Promise<BootstrapPayload>;
+    trackedPromise = this.#reset().finally(() => {
+      if (this.#resetPromise === trackedPromise) {
+        this.#resetPromise = null;
+      }
+    });
+    this.#resetPromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #reset(): Promise<BootstrapPayload> {
+    await this.#foundry.reset();
     this.#state = createInitialDemoState();
     this.#selectedLayout = null;
     this.#messages = [
@@ -198,7 +260,25 @@ export class DemoController {
   }
 
   async shutdown(): Promise<void> {
+    this.#operationGeneration += 1;
     await this.#foundry.shutdown();
+  }
+
+  #beginOperation(): number {
+    if (this.#resetPromise !== null) {
+      throw new Error("Conversation reset is in progress.");
+    }
+    return this.#operationGeneration;
+  }
+
+  #isOperationCurrent(generation: number): boolean {
+    return generation === this.#operationGeneration && this.#resetPromise === null;
+  }
+
+  #assertOperationCurrent(generation: number): void {
+    if (!this.#isOperationCurrent(generation)) {
+      throw new Error("Operation was superseded by conversation reset.");
+    }
   }
 
   #response(toolResult: RunTurnResponse["toolResult"], assistantText: string): RunTurnResponse {

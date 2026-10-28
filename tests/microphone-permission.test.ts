@@ -6,7 +6,7 @@ import {
 } from "../src/main/microphone-permission";
 
 const documentUrl = "file:///C:/demo/dist/renderer/index.html";
-const origin = "file://";
+const origin = "file:///";
 
 function createGate() {
   const webContents = {};
@@ -86,6 +86,39 @@ describe("microphone permission authorization", () => {
     expect(gate.allowRequest(attempt)).toBe(false);
   });
 
+  it("allows Electron's exact check-then-request flow for file:/// once", () => {
+    const { gate, webContents, mainFrame } = createGate();
+    expect(authorize(gate, webContents, mainFrame)).toBe(true);
+
+    expect(
+      gate.allowCheck({
+        webContents,
+        mainFrame,
+        currentDocumentUrl: documentUrl,
+        mainFrameUrl: documentUrl,
+        permission: "media",
+        requestingOrigin: "file:///",
+        requestingUrl: documentUrl,
+        securityOrigin: "file:///",
+        mediaType: "audio",
+        isMainFrame: true,
+      }),
+    ).toBe(true);
+    expect(
+      gate.allowRequest({
+        webContents,
+        mainFrame,
+        currentDocumentUrl: documentUrl,
+        mainFrameUrl: documentUrl,
+        permission: "media",
+        requestingUrl: documentUrl,
+        securityOrigin: "file:///",
+        mediaTypes: ["audio"],
+        isMainFrame: true,
+      }),
+    ).toBe(true);
+  });
+
   it("fails closed for missing activation, stale authorization, wrong frames, origins, or media", () => {
     const { gate, webContents, mainFrame, advance } = createGate();
     expect(
@@ -130,6 +163,8 @@ describe("microphone permission authorization", () => {
 
   it("accepts only the expected local file origin and main-frame navigation", () => {
     expect(permissionOriginForDocument(documentUrl)).toBe(origin);
+    expect(permissionOriginForDocument("file://server/share/index.html")).toBe("file://server");
+    expect(permissionOriginForDocument("https://example.test/app")).toBe("https://example.test");
     expect(isAllowedAppNavigation(documentUrl, documentUrl, true)).toBe(true);
     expect(isAllowedAppNavigation(documentUrl, "https://example.test/", true)).toBe(false);
     expect(isAllowedAppNavigation(documentUrl, documentUrl, false)).toBe(false);
