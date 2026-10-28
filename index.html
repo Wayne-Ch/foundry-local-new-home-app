@@ -53,7 +53,13 @@
           <div id="messages" class="messages" aria-live="polite"></div>
 
           <form id="promptForm" class="prompt-form">
-            <label for="promptInput">Manual prompt</label>
+            <div class="prompt-heading-row">
+              <label for="promptInput">Manual prompt</label>
+              <div id="audioBadge" class="audio-badge is-idle">
+                <span class="audio-status-dot"></span>
+                <span id="audioLabel">Voice input not ready</span>
+              </div>
+            </div>
             <div class="prompt-row">
               <textarea
                 id="promptInput"
@@ -62,7 +68,29 @@
               ></textarea>
               <button id="sendButton" class="button button-primary send-button" type="submit">Send</button>
             </div>
-            <p class="input-note">Every turn must produce a validated local tool call. No cloud fallback.</p>
+            <div class="audio-control-row">
+              <button id="audioPrepareButton" class="button button-secondary audio-button" type="button">
+                Prepare microphone
+              </button>
+              <button
+                id="recordButton"
+                class="button button-secondary record-button"
+                type="button"
+                aria-pressed="false"
+              >
+                Start recording
+              </button>
+              <div class="audio-status-row" aria-live="polite">
+                <span id="recordingIndicator" class="recording-indicator" hidden></span>
+                <span id="audioStatus"
+                  >Transcript stays editable and is never submitted automatically.</span
+                >
+                <span id="recordingTimer" class="recording-timer">00:00</span>
+              </div>
+            </div>
+            <p class="input-note">
+              Every submitted turn uses the existing validated text pipeline. No cloud fallback.
+            </p>
           </form>
         </section>
 
@@ -139,6 +167,10 @@
           <article>
             <h3>Runtime + locked state</h3>
             <pre id="runtimeTrace"></pre>
+          </article>
+          <article>
+            <h3>Speech-to-text</h3>
+            <pre id="audioTrace"></pre>
           </article>
           <article>
             <h3>Model-proposed tool call</h3>

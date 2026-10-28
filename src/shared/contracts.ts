@@ -1,3 +1,4 @@
+import type { AudioCapturePayload, AudioReadiness, AudioTranscriptionResult } from "../audio/audio-types";
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
@@ -11,6 +12,9 @@ export const ipcChannels = {
   getBootstrap: "demo:get-bootstrap",
   initializeRuntime: "demo:initialize-runtime",
   prepareOffline: "demo:prepare-offline",
+  prepareAudio: "demo:prepare-audio",
+  authorizeMicrophone: "demo:authorize-microphone",
+  transcribeAudio: "demo:transcribe-audio",
   runTurn: "demo:run-turn",
   resetConversation: "demo:reset-conversation",
   progress: "demo:progress",
@@ -34,6 +38,7 @@ export interface TraceEntry {
     | "geometry"
     | "model-summary"
     | "application-response"
+    | "audio-transcription"
     | "runtime"
     | "error";
   readonly title: string;
@@ -51,6 +56,7 @@ export interface BootstrapPayload {
   readonly roomPlan: RoomPlan;
   readonly state: DemoStateSnapshot;
   readonly readiness: RuntimeReadiness;
+  readonly audioReadiness: AudioReadiness;
   readonly stageTurns: readonly StageTurnDefinition[];
   readonly selectedLayout: EvaluatedLayoutOption | null;
   readonly lastToolResult: LayoutToolResult | null;
@@ -79,6 +85,8 @@ export interface ProgressEvent {
     | "tool-validating"
     | "geometry-running"
     | "model-summarizing"
+    | "audio-preparing"
+    | "audio-transcribing"
     | "complete"
     | "error";
   readonly detail: string;
@@ -89,10 +97,27 @@ export interface PrepareOfflineResponse {
   readonly model: ModelIdentity | null;
 }
 
+export interface PrepareAudioResponse {
+  readonly readiness: AudioReadiness;
+}
+
+export interface AudioTranscriptionResponse {
+  readonly result: AudioTranscriptionResult;
+  readonly audioReadiness: AudioReadiness;
+  readonly trace: readonly TraceEntry[];
+}
+
+export interface MicrophoneAuthorizationRequest {
+  readonly hasTransientUserActivation: boolean;
+}
+
 export interface DemoApi {
   getBootstrap(): Promise<BootstrapPayload>;
   initializeRuntime(): Promise<RuntimeReadiness>;
   prepareOffline(): Promise<PrepareOfflineResponse>;
+  prepareAudio(): Promise<PrepareAudioResponse>;
+  authorizeMicrophone(): Promise<void>;
+  transcribeAudio(request: AudioCapturePayload): Promise<AudioTranscriptionResponse>;
   runTurn(request: RunTurnRequest): Promise<RunTurnResponse>;
   resetConversation(): Promise<BootstrapPayload>;
   onProgress(callback: (event: ProgressEvent) => void): () => void;

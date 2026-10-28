@@ -1,6 +1,6 @@
 # Validation record
 
-**Date:** October 27, 2026
+**Date:** October 28, 2026
 
 **Platform:** Windows 11 Enterprise x64, build `10.0.26300`
 
@@ -23,6 +23,13 @@
 | Inference endpoint | none |
 | Planning mode | runtime JSON Schema -> app tool invocation |
 | Visible response | application-rendered typed evidence |
+| Audio model alias | `whisper-tiny` |
+| Exact audio model ID | `openai-whisper-tiny-generic-cpu:4` |
+| Audio model size | 131 MB |
+| Audio device / EP | CPU / `CPUExecutionProvider` |
+| Audio language | English |
+| Audio path | record -> PCM16LE 16 kHz mono -> temp WAV URI -> native `AudioSession` |
+| Audio submission policy | editable draft; never auto-submit |
 
 Qwen2.5 1.5B was the smallest cached model that passed the entire staged and adversarial acceptance.
 Qwen3 1.7B is smaller (1,421 MB) but failed the crib correction after three bounded attempts.
@@ -41,6 +48,7 @@ Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
+npm run test:audio-integration
 npm run build
 npm run smoke:electron
 npm run capture:ui
@@ -52,7 +60,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 31/31 pass |
+| Unit tests | 57/57 pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Turn A Queen + desk | Feasible |
@@ -66,16 +74,21 @@ npm run capture:ui
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
+| Real audio integration | Exact English transcript; 100% key-word recall |
+| Audio model/EP | Exact Whisper Tiny ID on CPU EP |
+| Audio transcription | 203 ms for 5.53-second deterministic WAV |
+| Audio temp cleanup | Pass; capture files before/after both empty |
+| Audio external endpoint | No |
 
 Observed turn durations on this machine:
 
 | Turn | Duration |
 |---|---:|
-| Queen + desk | 10.4 s |
-| King replacement | 18.0 s |
-| Add crib | 21.6 s |
-| Controlled failure | 25.8 s |
-| Adversarial correction | 28.7 s |
+| Queen + desk | 10.9 s |
+| King replacement | 18.7 s |
+| Add crib | 22.1 s |
+| Controlled failure | 27.6 s |
+| Adversarial correction | 29.6 s |
 
 The longer turns include one bounded correction request.
 
@@ -89,9 +102,53 @@ The longer turns include one bounded correction request.
 | Qwen3 1.7B GPU, 1,421 MB | Reasoning disabled successfully; failed crib correction |
 | Qwen2.5 1.5B GPU, 1,546 MB | Full staged and adversarial flow passed |
 
+## Audio model evidence
+
+Pinned v2.2.1 API evidence:
+
+- Whisper file transcription is covered by the JS `AudioSession` tests with
+  `Item.audioFromUri(...)` and `language: "en"`.
+- Typed inline `Item.audioFromData("wav", bytes)` was measured and rejected by the v2.2.1 native
+  runtime: inline audio without `ItemQueue` is not yet supported.
+- Nemotron streaming is covered by the pinned JS `AudioSession` PCM `ItemQueue` tests and live audio
+  sample.
+
+Catalog and measured comparison:
+
+| Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
+|---|---|---|---:|---:|
+| `openai-whisper-tiny-generic-cpu:4` | Cached | 131 MB / CPU / CPU EP | 1,142 ms | 169–279 ms, exact |
+| `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Uncached | 696 MB / CPU / CPU EP | 2,699 ms | 932–971 ms buffered, exact except terminal punctuation |
+| `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
+
+Nemotron English was downloaded once under the authorized under-1-GB evaluation. A real-time PCM
+probe produced first text at 1,291 ms and final output 189 ms after the 5.53-second input ended. The
+app's UX is record-then-transcribe and does not display partial captions, so that streaming advantage
+did not materially improve the stage interaction. Whisper Tiny and Nemotron had comparable
+stop-to-final latency in the measured paths. Whisper Tiny was selected for its smaller footprint,
+cached availability, faster 169–279 ms buffered record-then-transcribe benchmark, and the absence of
+partial streaming in the UI. The rejected Nemotron benchmark model was removed from cache after
+measurement.
+
+Final real app-service audio integration:
+
+| Item | Result |
+|---|---|
+| Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
+| Duration | 5,530 ms |
+| Prepare manager/catalog/model | 1,706 ms |
+| Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
+| Key-word recall | 7/7 (100%) |
+| Transcription | 203 ms |
+| Temporary files | none before, none after |
+| Endpoint | in-process SDK only |
+
 ## Offline and telemetry status
 
 - The selected model is in the shared local cache.
+- Whisper Tiny is in the shared cache and must also be loaded before the UI claims voice input is
+  offline-ready.
 - The required WebGPU EP bundle is installed and registered in the app data directory.
 - The default target is resolved by exact model ID from the full public catalog; cache-only alias
   fallback is not used.
@@ -101,6 +158,8 @@ The longer turns include one bounded correction request.
   `FOUNDRY_EXECUTION_PROVIDER`; readiness marks them as environment overrides and does not imply
   stage validation.
 - A fresh process loaded the model and completed five turns.
+- A fresh process loaded Whisper Tiny and completed deterministic local ASR with no residual audio
+  file.
 - The app does not configure `serviceEndpoint`, call `startWebService`, or make inference HTTP
   requests.
 - `disableNonessentialTelemetry` is enabled.
@@ -116,5 +175,8 @@ The longer turns include one bounded correction request.
 - No Apple-silicon Mac was available. macOS install, EP selection, model variant, rendering, and
   performance are not validated.
 - A physical network-disconnect rehearsal still requires Wayne's manual adapter action.
+- Real microphone permission and human-spoken acceptance still require one Wayne interaction:
+  **Prepare microphone -> Start recording -> speak the Queen + desk request -> Stop & transcribe ->
+  verify/edit -> Send**.
 - The local CLI is `0.11.0` while current public CLI is `0.12.1 Preview`; the app does not depend on
   the CLI.

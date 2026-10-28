@@ -412,12 +412,68 @@ h3 {
   background: rgb(7 17 31 / 52%);
 }
 
+.prompt-heading-row {
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .prompt-form label {
   display: block;
-  margin-bottom: 7px;
   color: #bcd3ee;
   font-size: 13px;
   font-weight: 800;
+}
+
+.audio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid #365573;
+  border-radius: 999px;
+  background: #0c2035;
+  color: #9fb6cf;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.audio-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #6f839b;
+}
+
+.audio-badge.is-ready {
+  border-color: rgb(53 198 138 / 50%);
+  color: #bdf6dd;
+}
+
+.audio-badge.is-ready .audio-status-dot {
+  background: var(--success);
+}
+
+.audio-badge.is-busy {
+  border-color: rgb(245 165 36 / 55%);
+  color: #ffe0a6;
+}
+
+.audio-badge.is-busy .audio-status-dot {
+  background: var(--warning);
+}
+
+.audio-badge.is-error {
+  border-color: rgb(255 82 99 / 55%);
+  color: #ffd1d6;
+}
+
+.audio-badge.is-error .audio-status-dot {
+  background: var(--danger);
 }
 
 .prompt-row {
@@ -447,6 +503,67 @@ h3 {
 
 .send-button {
   min-width: 72px;
+}
+
+.audio-control-row {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.audio-button,
+.record-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.record-button.is-recording {
+  border-color: rgb(255 82 99 / 65%);
+  background: rgb(142 37 52 / 54%);
+  color: #ffd2d7;
+}
+
+.audio-status-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8ea6bf;
+  font-size: 11px;
+}
+
+#audioStatus {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-indicator {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 5px rgb(255 82 99 / 14%);
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.recording-timer {
+  flex: 0 0 auto;
+  color: #d7e5f4;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-weight: 800;
 }
 
 .input-note {
@@ -768,7 +885,8 @@ h3 {
 .trace-grid {
   height: calc(100% - 58px);
   display: grid;
-  grid-template-columns: 0.95fr 1fr 1.25fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 

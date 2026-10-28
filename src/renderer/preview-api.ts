@@ -1,3 +1,10 @@
+import {
+  AUDIO_EXECUTION_PROVIDER,
+  AUDIO_MAX_DURATION_MS,
+  AUDIO_MODEL_ALIAS,
+  AUDIO_MODEL_ID,
+  type AudioReadiness,
+} from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
@@ -34,6 +41,28 @@ const readiness: RuntimeReadiness = {
   appDataPath: "<local app data>",
   status: "ready",
   detail: "Visual preview of the validated Windows configuration.",
+};
+
+const audioReadiness: AudioReadiness = {
+  sdkVersion: "2.2.1",
+  provider: "Foundry Local in-process SDK",
+  model: {
+    alias: AUDIO_MODEL_ALIAS,
+    id: AUDIO_MODEL_ID,
+    deviceType: "CPU",
+    executionProvider: AUDIO_EXECUTION_PROVIDER,
+    fileSizeMb: 131,
+    language: "en",
+    inputMode: "temporary PCM WAV file URI",
+  },
+  modelCached: true,
+  localAudioReady: true,
+  externalEndpointUsed: false,
+  maxDurationMs: AUDIO_MAX_DURATION_MS,
+  inputFormat: "PCM16LE · 16 kHz · mono",
+  status: "ready",
+  detail: "Visual preview of the validated local speech model.",
+  lastTranscriptionMs: 169,
 };
 
 function buildPreview(): BootstrapPayload {
@@ -77,6 +106,7 @@ function buildPreview(): BootstrapPayload {
     roomPlan,
     state,
     readiness,
+    audioReadiness,
     stageTurns,
     selectedLayout,
     lastToolResult: controlledFailure,
@@ -159,6 +189,13 @@ export function createPreviewApi(): DemoApi {
       readiness,
       model: readiness.model,
     }),
+    prepareAudio: async () => ({ readiness: audioReadiness }),
+    authorizeMicrophone: async () => {
+      throw new Error("Microphone capture is unavailable in the visual-only browser preview.");
+    },
+    transcribeAudio: async () => {
+      throw new Error("Microphone transcription is unavailable in the visual-only browser preview.");
+    },
     runTurn: async (): Promise<RunTurnResponse> => ({
       state: bootstrap.state,
       toolResult: bootstrap.lastToolResult,

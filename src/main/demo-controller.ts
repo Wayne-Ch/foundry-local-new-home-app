@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { validateAudioCapturePayload } from "../audio/audio-contract";
+import type { AudioCapturePayload } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import type { DemoState, EvaluatedLayoutOption } from "../domain/types";
 import { FoundryLayoutService } from "../foundry/foundry-service";
 import { stageTurns } from "../foundry/prompt";
 import type {
+  AudioTranscriptionResponse,
   BootstrapPayload,
   ConversationMessage,
+  PrepareAudioResponse,
   PrepareOfflineResponse,
   ProgressEvent,
   RunTurnRequest,
@@ -44,6 +48,7 @@ export class DemoController {
       roomPlan,
       state: this.#state,
       readiness: this.#foundry.readiness,
+      audioReadiness: this.#foundry.audioReadiness,
       stageTurns,
       selectedLayout: this.#selectedLayout,
       lastToolResult: this.#state.lastToolResult,
@@ -64,6 +69,54 @@ export class DemoController {
     });
     this.#pushTrace("runtime", "Offline readiness prepared", readiness);
     return { readiness, model: readiness.model };
+  }
+
+  async prepareAudio(onProgress?: (event: ProgressEvent) => void): Promise<PrepareAudioResponse> {
+    const readiness = await this.#foundry.prepareAudioOffline((detail) => {
+      onProgress?.({ phase: "audio-preparing", detail });
+    });
+    this.#pushTrace("runtime", "Audio runtime prepared", readiness);
+    return { readiness };
+  }
+
+  async transcribeAudio(
+    payload: AudioCapturePayload,
+    onProgress?: (event: ProgressEvent) => void,
+  ): Promise<AudioTranscriptionResponse> {
+    const validation = validateAudioCapturePayload(payload);
+    if (!validation.ok) {
+      this.#pushTrace("error", "Audio payload rejected", validation.error);
+      throw new Error(validation.error.message);
+    }
+
+    onProgress?.({ phase: "audio-transcribing", detail: "Transcribing microphone audio locally." });
+    try {
+      const result = await this.#foundry.transcribeAudio(validation.value);
+      this.#pushTrace("audio-transcription", "Local speech-to-text result", {
+        transcript: result.transcript,
+        transcriptionMs: result.transcriptionMs,
+        audioDurationMs: result.audioDurationMs,
+        model: result.model,
+        externalEndpointUsed: result.externalEndpointUsed,
+        autoSubmitted: false,
+      });
+      onProgress?.({ phase: "complete", detail: "Transcript is ready for review." });
+      return {
+        result,
+        audioReadiness: this.#foundry.audioReadiness,
+        trace: this.#trace,
+      };
+    } catch (error) {
+      this.#pushTrace("error", "Local speech-to-text failed", {
+        message: error instanceof Error ? error.message : String(error),
+        audioReadiness: this.#foundry.audioReadiness,
+      });
+      onProgress?.({
+        phase: "error",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   async runTurn(
@@ -132,7 +185,8 @@ export class DemoController {
     }
   }
 
-  reset(): BootstrapPayload {
+  async reset(): Promise<BootstrapPayload> {
+    await this.#foundry.resetAudio();
     this.#foundry.resetConversation();
     this.#state = createInitialDemoState();
     this.#selectedLayout = null;

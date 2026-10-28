@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "tsx scripts/run-foundry-integration.ts",
+    "test:audio-integration": "tsx scripts/run-audio-integration.ts",
     "probe:foundry": "tsx scripts/probe-foundry.ts",
     "smoke:electron": "npm run build && node scripts/smoke-electron.mjs",
     "capture:ui": "npm run build && node scripts/capture-ui.mjs",

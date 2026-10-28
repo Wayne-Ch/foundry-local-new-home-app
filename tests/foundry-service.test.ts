@@ -21,6 +21,7 @@ const fakePaths = {
   appDataDir: "C:\\foundry-test\\app",
   modelCacheDir: "C:\\foundry-test\\models",
   logsDir: "C:\\foundry-test\\logs",
+  audioTempDir: "C:\\foundry-test\\audio-temp",
 };
 
 class FakeModel implements IModel {

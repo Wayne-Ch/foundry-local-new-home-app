@@ -1,3 +1,5 @@
+import { createTranscriptDraftUpdate, reduceAudioRecorderState } from "../audio/audio-contract";
+import { AUDIO_MAX_DURATION_MS, type AudioRecorderState } from "../audio/audio-types";
 import type {
   CheckedRoomState,
   EvaluatedLayoutOption,
@@ -15,6 +17,15 @@ import type {
   StageTurnId,
   TraceEntry,
 } from "../shared/contracts";
+import {
+  type AudioRecorderOperation,
+  type AudioRecorderOperationRef,
+  chooseRecordingMimeType,
+  cleanupRecorderOperation,
+  isCurrentRecorderOperation,
+  recordedBlobToAudioPayload,
+  releaseMediaStream,
+} from "./audio-capture";
 import { createLayoutPresentation } from "./layout-presentation";
 import { createPreviewApi } from "./preview-api";
 import { runtimeBadgeLabel } from "./runtime-presentation";
@@ -27,10 +38,21 @@ const demoApi = window.demoApi ?? (previewMode ? createPreviewApi() : null);
 let viewState: BootstrapPayload;
 let latestToolResult: LayoutToolResult | null = null;
 let isBusy = false;
+let audioRecorderState: AudioRecorderState = { status: "idle", elapsedMs: 0, detail: "" };
+let audioNotice = "Transcript stays editable and is never submitted automatically.";
+const recorderOperationRef: AudioRecorderOperationRef = { current: null };
+let audioOperationId = 0;
 
 const runtimeBadge = requiredElement("runtimeBadge");
 const runtimeLabel = requiredElement("runtimeLabel");
 const prepareButton = requiredButton("prepareButton");
+const audioBadge = requiredElement("audioBadge");
+const audioLabel = requiredElement("audioLabel");
+const audioPrepareButton = requiredButton("audioPrepareButton");
+const recordButton = requiredButton("recordButton");
+const audioStatus = requiredElement("audioStatus");
+const recordingIndicator = requiredElement("recordingIndicator");
+const recordingTimer = requiredElement("recordingTimer");
 const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
@@ -56,6 +78,7 @@ const progressPhase = requiredElement("progressPhase");
 const progressDetail = requiredElement("progressDetail");
 const tracePanel = requiredElement("tracePanel");
 const runtimeTrace = requiredElement("runtimeTrace");
+const audioTrace = requiredElement("audioTrace");
 const toolTrace = requiredElement("toolTrace");
 const geometryTrace = requiredElement("geometryTrace");
 const previewBanner = requiredElement("previewBanner");
@@ -105,6 +128,46 @@ prepareButton.addEventListener("click", async () => {
   }
 });
 
+audioPrepareButton.addEventListener("click", async () => {
+  if (demoApi === null || previewMode || isAudioBusy()) {
+    return;
+  }
+  const operationId = ++audioOperationId;
+  viewState = {
+    ...viewState,
+    audioReadiness: {
+      ...viewState.audioReadiness,
+      status: "checking",
+      detail: "Inspecting the local speech model.",
+    },
+  };
+  audioNotice = "Preparing local speech-to-text.";
+  renderAudio();
+  try {
+    const response = await demoApi.prepareAudio();
+    if (operationId !== audioOperationId) {
+      return;
+    }
+    viewState = { ...viewState, audioReadiness: response.readiness };
+    audioNotice = "Microphone model is ready. Press Start recording.";
+  } catch (error) {
+    if (operationId !== audioOperationId) {
+      return;
+    }
+    await refreshRuntimeState();
+    showAudioError(error);
+  }
+  renderAudio();
+});
+
+recordButton.addEventListener("click", () => {
+  if (audioRecorderState.status === "recording") {
+    void stopAndTranscribe();
+  } else {
+    void startRecording();
+  }
+});
+
 traceToggle.addEventListener("click", () => setTraceOpen(!tracePanel.classList.contains("is-open")));
 traceClose.addEventListener("click", () => setTraceOpen(false));
 
@@ -115,8 +178,15 @@ resetButton.addEventListener("click", async () => {
   if (demoApi === null) {
     return;
   }
-  viewState = await demoApi.resetConversation();
+  await discardRecording();
+  const operationId = audioOperationId;
+  const bootstrap = await demoApi.resetConversation();
+  if (operationId !== audioOperationId) {
+    return;
+  }
+  viewState = bootstrap;
   latestToolResult = null;
+  audioNotice = "Transcript stays editable and is never submitted automatically.";
   renderAll();
 });
 
@@ -130,6 +200,9 @@ nextTurnButton.addEventListener("click", () => {
 
 promptForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (isAudioBusy()) {
+    return;
+  }
   const prompt = promptInput.value.trim();
   if (!prompt) {
     return;
@@ -139,7 +212,7 @@ promptForm.addEventListener("submit", (event) => {
 });
 
 async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<void> {
-  if (isBusy || !viewState.readiness.localInferenceReady) {
+  if (isBusy || isAudioBusy() || !viewState.readiness.localInferenceReady) {
     return;
   }
   setBusy(true);
@@ -177,6 +250,7 @@ function applyTurnResponse(response: RunTurnResponse): void {
 
 function renderAll(): void {
   renderRuntime(viewState.readiness);
+  renderAudio();
   renderStageSteps(viewState.stageTurns);
   renderMessages(viewState.messages);
   renderLayout();
@@ -220,9 +294,58 @@ function renderRuntime(readiness: RuntimeReadiness): void {
     prepareButton.disabled = isBusy;
   }
 
-  sendButton.disabled = isBusy || !readiness.localInferenceReady;
-  promptInput.disabled = isBusy || !readiness.localInferenceReady;
+  sendButton.disabled = isBusy || isAudioBusy() || !readiness.localInferenceReady;
+  promptInput.disabled =
+    isBusy || audioRecorderState.status === "transcribing" || !readiness.localInferenceReady;
   renderTrace();
+}
+
+function renderAudio(): void {
+  const readiness = viewState.audioReadiness;
+  const pipelineReady = readiness.localAudioReady && viewState.readiness.localInferenceReady;
+  audioBadge.className = "audio-badge";
+  if (audioRecorderState.status === "error" || readiness.status === "error") {
+    audioBadge.classList.add("is-error");
+    audioLabel.textContent = "Voice input error";
+  } else if (isAudioBusy() || ["checking", "loading", "transcribing"].includes(readiness.status)) {
+    audioBadge.classList.add("is-busy");
+    audioLabel.textContent =
+      audioRecorderState.status === "recording"
+        ? "Recording locally"
+        : audioRecorderState.status === "transcribing"
+          ? "Transcribing locally"
+          : "Preparing voice input";
+  } else if (pipelineReady) {
+    audioBadge.classList.add("is-ready");
+    audioLabel.textContent = `${readiness.model?.alias ?? "Local ASR"} · ${readiness.model?.deviceType ?? ""}`;
+  } else if (readiness.localAudioReady) {
+    audioBadge.classList.add("is-busy");
+    audioLabel.textContent = "ASR ready · load layout model";
+  } else {
+    audioBadge.classList.add("is-idle");
+    audioLabel.textContent = "Voice input not ready";
+  }
+
+  audioPrepareButton.disabled =
+    previewMode ||
+    isBusy ||
+    isAudioBusy() ||
+    ["checking", "loading"].includes(readiness.status) ||
+    readiness.localAudioReady;
+  audioPrepareButton.textContent = readiness.localAudioReady ? "ASR model ready" : "Prepare microphone";
+  recordButton.disabled =
+    previewMode ||
+    isBusy ||
+    audioRecorderState.status === "requesting_permission" ||
+    audioRecorderState.status === "transcribing" ||
+    (!pipelineReady && audioRecorderState.status !== "recording");
+  recordButton.classList.toggle("is-recording", audioRecorderState.status === "recording");
+  recordButton.setAttribute("aria-pressed", String(audioRecorderState.status === "recording"));
+  recordButton.textContent =
+    audioRecorderState.status === "recording" ? "Stop & transcribe" : "Start recording";
+  recordingIndicator.hidden = audioRecorderState.status !== "recording";
+  recordingTimer.textContent = formatElapsedTime(audioRecorderState.elapsedMs);
+  audioStatus.textContent = audioRecorderState.detail || audioNotice || readiness.detail;
 }
 
 function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
@@ -237,7 +360,7 @@ function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
       button.classList.add("is-current");
     }
     button.innerHTML = `<span>${index + 1}</span><strong>${escapeHtml(turn.label)}</strong>`;
-    button.disabled = isBusy || !viewState.readiness.localInferenceReady;
+    button.disabled = isBusy || isAudioBusy() || !viewState.readiness.localInferenceReady;
     button.addEventListener("click", () => void runTurn(turn.prompt, turn.id));
     stageSteps.append(button);
   });
@@ -442,8 +565,10 @@ function renderTrace(): void {
   }
   runtimeTrace.textContent = pretty({
     readiness: viewState.readiness,
+    audioReadiness: viewState.audioReadiness,
     currentState: viewState.state,
   });
+  audioTrace.textContent = pretty(lastTracePayload("audio-transcription") ?? "No speech transcript yet.");
   toolTrace.textContent = pretty(lastTracePayload("model-tool-call") ?? "No tool call yet.");
   geometryTrace.textContent = pretty({
     validation: lastTracePayload("validation") ?? "No validation yet.",
@@ -478,8 +603,9 @@ function renderProgress(event: ProgressEvent): void {
 
 function setBusy(value: boolean): void {
   isBusy = value;
-  sendButton.disabled = value || !viewState.readiness.localInferenceReady;
-  promptInput.disabled = value || !viewState.readiness.localInferenceReady;
+  sendButton.disabled = value || isAudioBusy() || !viewState.readiness.localInferenceReady;
+  promptInput.disabled =
+    value || audioRecorderState.status === "transcribing" || !viewState.readiness.localInferenceReady;
   prepareButton.disabled = value || viewState.readiness.localInferenceReady;
   resetButton.disabled = value;
   if (!value) {
@@ -509,6 +635,273 @@ function showRuntimeError(error: unknown): void {
   };
   renderRuntime(viewState.readiness);
 }
+
+async function startRecording(): Promise<void> {
+  if (
+    previewMode ||
+    !viewState.audioReadiness.localAudioReady ||
+    !viewState.readiness.localInferenceReady ||
+    isBusy ||
+    isAudioBusy()
+  ) {
+    return;
+  }
+
+  const operationId = ++audioOperationId;
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
+    type: "REQUEST_PERMISSION",
+  });
+  audioNotice = "Allow microphone access to record locally.";
+  renderAudio();
+
+  let pendingStream: MediaStream | null = null;
+  try {
+    await demoApi.authorizeMicrophone();
+    if (operationId !== audioOperationId) {
+      return;
+    }
+    pendingStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+    if (operationId !== audioOperationId) {
+      releaseMediaStream(pendingStream);
+      pendingStream = null;
+      return;
+    }
+
+    const mimeType = chooseRecordingMimeType();
+    const recorder = new MediaRecorder(pendingStream, mimeType ? { mimeType } : undefined);
+    const operation: AudioRecorderOperation = {
+      operationId,
+      recorder,
+      stream: pendingStream,
+      chunks: [],
+      startedAt: performance.now(),
+      recordingTimerId: null,
+      recordingLimitId: null,
+    };
+    recorderOperationRef.current = operation;
+    pendingStream = null;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (isCurrentRecorderOperation(recorderOperationRef, operation) && event.data.size > 0) {
+        operation.chunks.push(event.data);
+      }
+    });
+    recorder.addEventListener("error", (event) => handleRecorderError(operation, event));
+    recorder.start(250);
+    audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "START" });
+    audioNotice = `Recording is capped at ${AUDIO_MAX_DURATION_MS / 1000} seconds.`;
+    operation.recordingTimerId = window.setInterval(() => updateRecordingTimer(operation), 100);
+    operation.recordingLimitId = window.setTimeout(() => {
+      if (isCurrentRecorderOperation(recorderOperationRef, operation)) {
+        void stopAndTranscribe(operation);
+      }
+    }, AUDIO_MAX_DURATION_MS);
+    renderAll();
+  } catch (error) {
+    const operation = recorderOperationRef.current;
+    if (operation?.operationId === operationId) {
+      cleanupActiveRecorder(operation, true);
+    }
+    releaseMediaStream(pendingStream);
+    if (operationId === audioOperationId) {
+      showAudioError(error, microphoneErrorMessage(error));
+    }
+  }
+}
+
+async function stopAndTranscribe(
+  operation: AudioRecorderOperation | null = recorderOperationRef.current,
+): Promise<void> {
+  if (
+    operation === null ||
+    !isCurrentRecorderOperation(recorderOperationRef, operation) ||
+    operation.recorder.state === "inactive"
+  ) {
+    return;
+  }
+  const { operationId, recorder } = operation;
+  clearRecordingTimers(operation);
+  updateRecordingTimer(operation);
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "TRANSCRIBE" });
+  audioNotice = "Converting the local capture to 16 kHz mono PCM.";
+  renderAll();
+
+  try {
+    const blob = await stopRecorder(recorder, operation.chunks);
+    cleanupActiveRecorder(operation, false);
+    const payload = await recordedBlobToAudioPayload(blob);
+    if (operationId !== audioOperationId || demoApi === null) {
+      return;
+    }
+    audioNotice = "Foundry Local is transcribing on device.";
+    renderAudio();
+    const response = await demoApi.transcribeAudio(payload);
+    if (operationId !== audioOperationId) {
+      return;
+    }
+    viewState = {
+      ...viewState,
+      audioReadiness: response.audioReadiness,
+      trace: response.trace,
+    };
+    const draft = createTranscriptDraftUpdate(promptInput.value, response.result.transcript);
+    promptInput.value = draft.value;
+    promptInput.focus();
+    audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "COMPLETE" });
+    audioNotice = `Transcript added in ${response.result.transcriptionMs} ms. Review it, then click Send.`;
+    renderAll();
+  } catch (error) {
+    if (operationId === audioOperationId) {
+      await refreshRuntimeState();
+      showAudioError(error);
+    }
+  } finally {
+    cleanupActiveRecorder(operation, false);
+  }
+}
+
+async function discardRecording(): Promise<void> {
+  const operation = recorderOperationRef.current;
+  if (operation !== null) {
+    cleanupActiveRecorder(operation, true);
+  }
+  audioOperationId += 1;
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "RESET" });
+}
+
+function stopRecorder(recorder: MediaRecorder, chunks: readonly Blob[]): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const handleStop = () => {
+      recorder.removeEventListener("error", handleError);
+      resolve(new Blob([...chunks], { type: recorder.mimeType || "audio/webm" }));
+    };
+    const handleError = () => {
+      recorder.removeEventListener("stop", handleStop);
+      reject(new Error("Microphone recording failed before transcription."));
+    };
+    recorder.addEventListener("stop", handleStop, { once: true });
+    recorder.addEventListener("error", handleError, { once: true });
+    recorder.stop();
+  });
+}
+
+function handleRecorderError(operation: AudioRecorderOperation, event: Event): void {
+  if (!cleanupActiveRecorder(operation, false)) {
+    return;
+  }
+  const message =
+    "error" in event && event.error instanceof Error
+      ? event.error.message
+      : "The browser recorder reported an error.";
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
+    type: "FAIL",
+    detail: message,
+  });
+  audioNotice = message;
+  renderAudio();
+}
+
+function updateRecordingTimer(operation: AudioRecorderOperation): void {
+  if (
+    audioRecorderState.status !== "recording" ||
+    !isCurrentRecorderOperation(recorderOperationRef, operation)
+  ) {
+    return;
+  }
+  const elapsedMs = Math.min(
+    AUDIO_MAX_DURATION_MS,
+    Math.max(0, Math.round(performance.now() - operation.startedAt)),
+  );
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
+    type: "TICK",
+    elapsedMs,
+  });
+  recordingTimer.textContent = formatElapsedTime(elapsedMs);
+}
+
+function clearRecordingTimers(operation: AudioRecorderOperation): void {
+  if (operation.recordingTimerId !== null) {
+    window.clearInterval(operation.recordingTimerId);
+    operation.recordingTimerId = null;
+  }
+  if (operation.recordingLimitId !== null) {
+    window.clearTimeout(operation.recordingLimitId);
+    operation.recordingLimitId = null;
+  }
+}
+
+function cleanupActiveRecorder(operation: AudioRecorderOperation, stopRecorder: boolean): boolean {
+  return cleanupRecorderOperation(recorderOperationRef, operation, {
+    stopRecorder,
+    clearInterval: (timerId) => window.clearInterval(timerId),
+    clearTimeout: (timerId) => window.clearTimeout(timerId),
+    releaseStream: releaseMediaStream,
+  });
+}
+
+function isAudioBusy(): boolean {
+  return ["requesting_permission", "recording", "transcribing"].includes(audioRecorderState.status);
+}
+
+function showAudioError(error: unknown, override?: string): void {
+  const detail = override ?? (error instanceof Error ? error.message : String(error));
+  audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
+    type: "FAIL",
+    detail,
+  });
+  audioNotice = detail;
+  renderAll();
+}
+
+async function refreshRuntimeState(): Promise<void> {
+  if (demoApi === null) {
+    return;
+  }
+  try {
+    const bootstrap = await demoApi.getBootstrap();
+    viewState = {
+      ...viewState,
+      readiness: bootstrap.readiness,
+      audioReadiness: bootstrap.audioReadiness,
+      trace: bootstrap.trace,
+    };
+  } catch {
+    // Preserve the last known state when the main process is unavailable.
+  }
+}
+
+function microphoneErrorMessage(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      return "Microphone permission was denied. Typed input remains available.";
+    }
+    if (error.name === "NotFoundError") {
+      return "No microphone was found. Typed input remains available.";
+    }
+    if (error.name === "NotReadableError") {
+      return "The microphone is busy or unavailable. Typed input remains available.";
+    }
+  }
+  return error instanceof Error ? error.message : "Microphone capture failed.";
+}
+
+function formatElapsedTime(elapsedMs: number): string {
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+window.addEventListener("beforeunload", () => {
+  void discardRecording();
+});
 
 function appendSvgLabel(text: string, x: number, y: number, color: string): void {
   const label = svgElement("text", {

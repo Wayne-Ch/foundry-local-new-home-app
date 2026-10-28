@@ -4,7 +4,11 @@
 
 ```mermaid
 flowchart LR
-  U[Buyer / designer prompt] --> R[Electron renderer]
+  MIC[Optional microphone] --> R[Electron renderer<br/>permission + PCM conversion]
+  R --> ASR[Foundry Local AudioSession<br/>Whisper Tiny CPU]
+  ASR --> D[Editable transcript draft]
+  D --> U[User review/edit + Send]
+  U --> R
   R --> M[Electron main process]
   M --> FL[Foundry Local SDK 2.2.1<br/>ChatSession]
   FL --> P[Runtime-guided JSON plan]
@@ -19,6 +23,7 @@ flowchart LR
 
 **Foundry Local owns**
 
+- local English speech-to-text through a separate `AudioSession`;
 - multi-turn language interpretation;
 - proposing catalog IDs and retained furniture;
 - emitting a structured plan under runtime JSON Schema guidance;
@@ -27,6 +32,8 @@ flowchart LR
 
 **The application owns**
 
+- explicit microphone permission UX, 20-second capture bound, and typed IPC validation;
+- local PCM conversion, temporary WAV lifecycle, and transcript-as-draft behavior;
 - verified room, zone, rule, and furniture dimensions;
 - accepted state and stale-state references;
 - strict ID/unit/version/schema checks;
@@ -36,6 +43,58 @@ flowchart LR
 - the visible application-evidence response and SVG.
 
 The model never decides whether geometry is valid.
+
+## Optional local audio input
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant R as Renderer
+  participant M as Electron main
+  participant A as Foundry Local AudioSession
+  participant T as Existing text pipeline
+
+  U->>R: Start recording
+  R->>U: OS/Electron microphone permission
+  R->>R: Record locally, max 20 s
+  U->>R: Stop & transcribe
+  R->>R: Decode, downmix, resample to PCM16LE 16 kHz mono
+  R->>M: Typed bounded ArrayBuffer
+  M->>M: Validate format, duration, bytes
+  M->>M: Write tracked temporary WAV
+  M->>A: AudioSession + audioFromUri + language=en
+  A-->>M: SpeechResult
+  M->>M: Delete temporary WAV
+  M-->>R: Transcript + model/timing evidence
+  R->>U: Editable Manual prompt draft
+  U->>T: Review/edit, then click Send
+```
+
+Pinned v2.2.1 accepts Whisper file transcription by URI. A measured inline
+`Item.audioFromData("wav", bytes)` request failed with:
+
+> Inline audio data without streaming (ItemQueue) is not yet supported.
+
+The app therefore uses a bounded temporary WAV under the OS app temp directory and deletes it on
+success, failure, reset, and quit. Renderer code never receives filesystem or Node access.
+
+Audio readiness is separate from layout-model readiness. The microphone control becomes stage-ready
+only when both exact model dependencies are loaded. Speech output is trace evidence, not a command:
+it never invokes `compare_layout_options` until the user reviews and submits the text.
+
+### ASR candidate evidence
+
+| Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
+|---|---|---|---|---|
+| `openai-whisper-tiny-generic-cpu:4` | Cached | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 169–279 ms |
+| `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Uncached, downloaded only for benchmark, then removed | 696 MB / CPU / CPU EP | `AudioSession` PCM `ItemQueue`; pinned JS live sample also exposes deprecated live adapter | Exact text; first live segment 1.29 s, stop-to-final 189 ms, buffered 932–971 ms |
+| `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
+
+Whisper Tiny and Nemotron had comparable stop-to-final latency in the measured paths. Whisper Tiny
+won for this exact **record-then-transcribe** experience because it was already cached, its offline
+footprint is roughly one fifth of the English Nemotron model, its buffered benchmark was faster, and
+the UI does not use live partial text. A future live-caption feature should re-evaluate Nemotron.
 
 ## One turn
 
@@ -172,13 +231,13 @@ path, not a hidden fake.
 
 1. Create one `FoundryLocalManager`.
 2. Resolve exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4` from the public catalog.
-3. Download that exact model once if the cache is empty.
-4. Match and register only `WebGPUExecutionProvider`.
-5. Load the model once and verify the loaded model/EP still match the configured target.
-6. Keep one planning `ChatSession` per conversation.
-7. Dispose the session.
-8. Unload the model.
-9. Dispose the manager.
+3. Resolve exact audio ID `openai-whisper-tiny-generic-cpu:4` from the same manager/catalog.
+4. Download either exact model once if its bounded preparation is approved and the cache is empty.
+5. Match/register WebGPU for text; CPU EP is built in for Whisper Tiny.
+6. Load the two models independently and expose separate readiness.
+7. Keep one planning `ChatSession`; create/dispose one `AudioSession` per reviewed capture.
+8. Cancel active ASR, delete tracked temp files, and unload Whisper on reset.
+9. Dispose sessions, unload both models, then dispose the manager on quit.
 
 Electron's `before-quit` handler waits for cleanup before exiting.
 

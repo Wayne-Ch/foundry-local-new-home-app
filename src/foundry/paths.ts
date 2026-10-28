@@ -7,6 +7,7 @@ export interface FoundryPaths {
   readonly appDataDir: string;
   readonly logsDir: string;
   readonly modelCacheDir: string;
+  readonly audioTempDir: string;
 }
 
 function platformAppDataDir(): string {
@@ -45,10 +46,12 @@ export async function resolveFoundryPaths(): Promise<FoundryPaths> {
   const appDataDir = platformAppDataDir();
   const logsDir = path.join(appDataDir, "logs");
   const modelCacheDir = sharedModelCacheDir(appDataDir);
+  const audioTempDir = path.join(os.tmpdir(), "FoundryLocalNewHomeLayoutDemo", "audio");
   await Promise.all([
     mkdir(appDataDir, { recursive: true }),
     mkdir(logsDir, { recursive: true }),
     mkdir(modelCacheDir, { recursive: true }),
+    mkdir(audioTempDir, { recursive: true }),
   ]);
-  return { appDataDir, logsDir, modelCacheDir };
+  return { appDataDir, logsDir, modelCacheDir, audioTempDir };
 }

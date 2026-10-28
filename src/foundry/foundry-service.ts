@@ -1,5 +1,6 @@
 import type { EpDownloadResult, EpInfo, FoundryLocalConfig, IModel, ModelInfo } from "foundry-local-sdk";
 import {
+  AudioSession,
   ChatSession,
   FoundryLocalManager,
   Item,
@@ -7,6 +8,18 @@ import {
   type RequestPreflightResult,
   type Response,
 } from "foundry-local-sdk";
+import {
+  AUDIO_EXECUTION_PROVIDER,
+  AUDIO_LANGUAGE,
+  AUDIO_MAX_DURATION_MS,
+  AUDIO_MODEL_ALIAS,
+  AUDIO_MODEL_ID,
+  type AudioModelIdentity,
+  type AudioReadiness,
+  type AudioTranscriptionResult,
+  type ValidatedAudioCapture,
+} from "../audio/audio-types";
+import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import {
   type CompareLayoutOptionsInput,
@@ -57,11 +70,18 @@ interface FoundrySessionHandle {
   dispose(): void;
 }
 
+interface FoundryAudioSessionHandle {
+  processRequest(request: Request): Promise<Response>;
+  dispose(): void;
+}
+
 export interface FoundryLayoutServiceOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly resolvePaths?: () => Promise<FoundryPaths>;
   readonly createManager?: (config: FoundryLocalConfig) => FoundryManagerHandle;
   readonly createSession?: (model: IModel) => FoundrySessionHandle;
+  readonly createAudioSession?: (model: IModel) => FoundryAudioSessionHandle;
+  readonly audioTempStore?: TempAudioStore;
 }
 
 export interface FoundryTurnOutcome {
@@ -102,6 +122,23 @@ export class FoundryRuntimeError extends Error {
   }
 }
 
+export class FoundryAudioError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | "AUDIO_MODEL_UNAVAILABLE"
+      | "AUDIO_MODEL_DOWNLOAD_FAILED"
+      | "AUDIO_MODEL_LOAD_FAILED"
+      | "AUDIO_NOT_READY"
+      | "AUDIO_BUSY"
+      | "AUDIO_TRANSCRIPTION_FAILED",
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "FoundryAudioError";
+  }
+}
+
 function executionProvider(model: IModel): string {
   return canonicalExecutionProvider(
     model.info.runtime?.executionProvider ?? model.info.executionProvider ?? "CPUExecutionProvider",
@@ -120,6 +157,18 @@ function modelIdentity(model: IModel): ModelIdentity {
     executionProvider: executionProvider(model),
     supportsToolCalling: model.supportsToolCalling === true,
     fileSizeMb: model.info.fileSizeMb ?? null,
+  };
+}
+
+function audioModelIdentity(model: IModel): AudioModelIdentity {
+  return {
+    alias: model.alias,
+    id: model.id,
+    deviceType: model.info.runtime?.deviceType ?? model.info.deviceType,
+    executionProvider: executionProvider(model),
+    fileSizeMb: model.info.fileSizeMb ?? null,
+    language: AUDIO_LANGUAGE,
+    inputMode: "temporary PCM WAV file URI",
   };
 }
 
@@ -177,18 +226,46 @@ function initialReadiness(
   };
 }
 
+function initialAudioReadiness(): AudioReadiness {
+  return {
+    sdkVersion: "2.2.1",
+    provider: "Foundry Local in-process SDK",
+    model: null,
+    modelCached: false,
+    localAudioReady: false,
+    externalEndpointUsed: false,
+    maxDurationMs: AUDIO_MAX_DURATION_MS,
+    inputFormat: "PCM16LE · 16 kHz · mono",
+    status: "not_initialized",
+    detail: "Local speech-to-text has not been initialized.",
+    lastTranscriptionMs: null,
+  };
+}
+
 export class FoundryLayoutService {
   readonly #target: RuntimeTargetIdentity;
   readonly #configurationError: string | null;
   readonly #resolvePaths: () => Promise<FoundryPaths>;
   readonly #createManager: (config: FoundryLocalConfig) => FoundryManagerHandle;
   readonly #sessionFactory: (model: IModel) => FoundrySessionHandle;
+  readonly #audioSessionFactory: (model: IModel) => FoundryAudioSessionHandle;
+  #audioTempStore: TempAudioStore | null;
   #paths: FoundryPaths | null = null;
   #manager: FoundryManagerHandle | null = null;
   #model: IModel | null = null;
   #session: FoundrySessionHandle | null = null;
+  #audioModel: IModel | null = null;
+  #activeAudioRequest: Request | null = null;
+  #audioPreparePromise: Promise<AudioReadiness> | null = null;
+  #audioTranscriptionPromise: Promise<AudioTranscriptionResult> | null = null;
+  #audioResetPromise: Promise<void> | null = null;
+  #shutdownPromise: Promise<void> | null = null;
+  readonly #audioPrepareProgressListeners = new Set<(detail: string) => void>();
+  #audioGeneration = 0;
+  #shuttingDown = false;
   #systemPromptPending = true;
   #readiness: RuntimeReadiness;
+  #audioReadiness = initialAudioReadiness();
 
   constructor(options: FoundryLayoutServiceOptions = {}) {
     const environment = options.environment ?? process.env;
@@ -209,11 +286,17 @@ export class FoundryLayoutService {
     this.#resolvePaths = options.resolvePaths ?? resolveFoundryPaths;
     this.#createManager = options.createManager ?? ((config) => FoundryLocalManager.create(config));
     this.#sessionFactory = options.createSession ?? ((model) => new ChatSession(model));
+    this.#audioSessionFactory = options.createAudioSession ?? ((model) => new AudioSession(model));
+    this.#audioTempStore = options.audioTempStore ?? null;
     this.#readiness = initialReadiness(target, configurationError);
   }
 
   get readiness(): RuntimeReadiness {
     return this.#readiness;
+  }
+
+  get audioReadiness(): AudioReadiness {
+    return this.#audioReadiness;
   }
 
   async initialize(): Promise<RuntimeReadiness> {
@@ -244,6 +327,7 @@ export class FoundryLayoutService {
     };
 
     this.#paths = await this.#resolvePaths();
+    this.#audioTempStore ??= new TempAudioStore(this.#paths.audioTempDir);
     try {
       this.#manager = this.#createManager({
         appName: "FoundryLocalNewHomeLayoutDemo",
@@ -359,6 +443,236 @@ export class FoundryLayoutService {
       );
     }
     return readiness;
+  }
+
+  prepareAudioOffline(onProgress?: (detail: string) => void): Promise<AudioReadiness> {
+    this.#assertAudioLifecycleAvailable();
+    if (this.#audioPreparePromise !== null) {
+      if (onProgress !== undefined) {
+        this.#audioPrepareProgressListeners.add(onProgress);
+      }
+      return this.#audioPreparePromise;
+    }
+    if (this.#audioTranscriptionPromise !== null) {
+      throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
+    }
+    if (onProgress !== undefined) {
+      this.#audioPrepareProgressListeners.add(onProgress);
+    }
+
+    const generation = this.#audioGeneration;
+    let trackedPromise: Promise<AudioReadiness>;
+    trackedPromise = this.#prepareAudioOffline(generation).finally(() => {
+      if (this.#audioPreparePromise === trackedPromise) {
+        this.#audioPreparePromise = null;
+        this.#audioPrepareProgressListeners.clear();
+      }
+    });
+    this.#audioPreparePromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async transcribeAudio(capture: ValidatedAudioCapture): Promise<AudioTranscriptionResult> {
+    this.#assertAudioLifecycleAvailable();
+    if (this.#audioTranscriptionPromise !== null) {
+      throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
+    }
+
+    const generation = this.#audioGeneration;
+    const operation = this.#transcribeAudio(capture, generation);
+    this.#audioTranscriptionPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.#audioTranscriptionPromise === operation) {
+        this.#audioTranscriptionPromise = null;
+      }
+    }
+  }
+
+  async #initializeAudio(generation: number): Promise<AudioReadiness> {
+    this.#assertAudioOperationCurrent(generation);
+    this.#audioReadiness = {
+      ...this.#audioReadiness,
+      status: "checking",
+      detail: "Inspecting the exact local speech model.",
+    };
+
+    try {
+      await this.initialize();
+      this.#assertAudioOperationCurrent(generation);
+      const manager = this.#requireManager();
+      if (this.#audioModel === null) {
+        let publicCatalogError = "";
+        try {
+          this.#audioModel = await manager.catalog.getModelVariant(AUDIO_MODEL_ID);
+        } catch (error) {
+          publicCatalogError = error instanceof Error ? error.message : String(error);
+          this.#audioModel =
+            (await manager.catalog.getCachedModels()).find((model) => model.id === AUDIO_MODEL_ID) ?? null;
+        }
+        this.#assertAudioOperationCurrent(generation);
+        if (this.#audioModel === null) {
+          this.#audioReadiness = {
+            ...this.#audioReadiness,
+            status: "model_unavailable",
+            detail: `Exact audio model ${AUDIO_MODEL_ID} is unavailable. ${publicCatalogError}`,
+          };
+          return this.#audioReadiness;
+        }
+      }
+      this.#assertAudioModel(this.#audioModel);
+      this.#assertAudioOperationCurrent(generation);
+      const readiness = await this.#refreshAudioReadiness();
+      this.#assertAudioOperationCurrent(generation);
+      return readiness;
+    } catch (error) {
+      if (error instanceof FoundryAudioError && error.code === "AUDIO_NOT_READY") {
+        throw error;
+      }
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+      return this.#audioReadiness;
+    }
+  }
+
+  async #prepareAudioOffline(generation: number): Promise<AudioReadiness> {
+    await this.#initializeAudio(generation);
+    this.#assertAudioOperationCurrent(generation);
+    const model = this.#requireAudioModel();
+    this.#assertAudioModel(model);
+
+    if (!model.isCached) {
+      const sizeMb = model.info.fileSizeMb ?? Number.POSITIVE_INFINITY;
+      if (sizeMb > 256) {
+        throw new FoundryAudioError(
+          `Refusing to automatically download ${model.id} (${sizeMb} MB).`,
+          "AUDIO_MODEL_DOWNLOAD_FAILED",
+        );
+      }
+      this.#reportAudioPrepareProgress(
+        `Downloading ${AUDIO_MODEL_ALIAS} (${sizeMb} MB) for offline speech input.`,
+      );
+      try {
+        await model.download((percent) =>
+          this.#reportAudioPrepareProgress(`Audio model download ${percent.toFixed(1)}%`),
+        );
+      } catch (error) {
+        this.#audioReadiness = {
+          ...this.#audioReadiness,
+          status: "error",
+          detail: `Failed to download ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
+        };
+        throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED", {
+          cause: error,
+        });
+      }
+      this.#assertAudioOperationCurrent(generation);
+    }
+
+    this.#audioReadiness = {
+      ...this.#audioReadiness,
+      status: "loading",
+      detail: `Loading ${model.id} in-process.`,
+    };
+    try {
+      if (!(await model.isLoaded())) {
+        await model.load();
+      }
+      this.#assertAudioOperationCurrent(generation);
+    } catch (error) {
+      if (error instanceof FoundryAudioError && error.code === "AUDIO_NOT_READY") {
+        throw error;
+      }
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        detail: `Failed to load ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_LOAD_FAILED", {
+        cause: error,
+      });
+    }
+
+    this.#assertAudioOperationCurrent(generation);
+    const readiness = await this.#refreshAudioReadiness();
+    this.#assertAudioOperationCurrent(generation);
+    return readiness;
+  }
+
+  async #transcribeAudio(
+    capture: ValidatedAudioCapture,
+    generation: number,
+  ): Promise<AudioTranscriptionResult> {
+    if (!this.#audioReadiness.localAudioReady) {
+      await this.prepareAudioOffline();
+    }
+    this.#assertAudioOperationCurrent(generation);
+    if (this.#activeAudioRequest !== null) {
+      throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
+    }
+
+    const model = this.#requireAudioModel();
+    const store = this.#requireAudioTempStore();
+    const request = new Request();
+    this.#activeAudioRequest = request;
+    this.#audioReadiness = {
+      ...this.#audioReadiness,
+      status: "transcribing",
+      localAudioReady: false,
+      detail: "Transcribing the reviewed microphone capture locally.",
+    };
+
+    const started = performance.now();
+    try {
+      const transcript = await withTemporaryWav(store, capture.pcmBytes, async (filePath) => {
+        const session = this.#audioSessionFactory(model);
+        try {
+          request
+            .addItem(Item.audioFromUri(filePath))
+            .setOptions({ search: { temperature: 0 }, additionalOptions: { language: AUDIO_LANGUAGE } });
+          const response = await session.processRequest(request);
+          this.#assertAudioOperationCurrent(generation);
+          const result = response.output.find((item) => item.type === "speechResult");
+          if (result?.type !== "speechResult" || !result.text.trim()) {
+            throw new Error("Foundry Local returned no speech transcript.");
+          }
+          return result.text.trim();
+        } finally {
+          session.dispose();
+        }
+      });
+      const transcriptionMs = Math.round(performance.now() - started);
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "ready",
+        localAudioReady: true,
+        detail: `${model.id} is ready for local microphone transcription.`,
+        lastTranscriptionMs: transcriptionMs,
+      };
+      return {
+        transcript,
+        transcriptionMs,
+        audioDurationMs: capture.durationMs,
+        model: audioModelIdentity(model),
+        externalEndpointUsed: false,
+      };
+    } catch (error) {
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        localAudioReady: false,
+        detail: `Local transcription failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_TRANSCRIPTION_FAILED", {
+        cause: error,
+      });
+    } finally {
+      this.#activeAudioRequest = null;
+    }
   }
 
   async runTurn(
@@ -542,7 +856,82 @@ export class FoundryLayoutService {
     }
   }
 
+  resetAudio(): Promise<void> {
+    if (this.#audioResetPromise !== null) {
+      return this.#audioResetPromise;
+    }
+    if (this.#shuttingDown && this.#shutdownPromise !== null) {
+      return this.#shutdownPromise;
+    }
+    return this.#startAudioReset();
+  }
+
+  #startAudioReset(): Promise<void> {
+    this.#audioGeneration += 1;
+    this.#activeAudioRequest?.cancel();
+    const preparation = this.#audioPreparePromise;
+    const transcription = this.#audioTranscriptionPromise;
+    let trackedPromise: Promise<void>;
+    trackedPromise = this.#resetAudio(preparation, transcription).finally(() => {
+      if (this.#audioResetPromise === trackedPromise) {
+        this.#audioResetPromise = null;
+      }
+    });
+    this.#audioResetPromise = trackedPromise;
+    return trackedPromise;
+  }
+
   async shutdown(): Promise<void> {
+    if (this.#shutdownPromise !== null) {
+      return this.#shutdownPromise;
+    }
+
+    this.#shuttingDown = true;
+    const operation = this.#shutdown();
+    this.#shutdownPromise = operation;
+    try {
+      await operation;
+    } catch (error) {
+      if (this.#shutdownPromise === operation) {
+        this.#shutdownPromise = null;
+      }
+      throw error;
+    }
+  }
+
+  async #resetAudio(
+    preparation: Promise<AudioReadiness> | null,
+    transcription: Promise<AudioTranscriptionResult> | null,
+  ): Promise<void> {
+    await Promise.allSettled([preparation, transcription].filter((value) => value !== null));
+    this.#activeAudioRequest?.cancel();
+    await this.#audioTempStore?.cleanupAll();
+
+    const model = this.#audioModel;
+    try {
+      if (model !== null && (await model.isLoaded())) {
+        await model.unload();
+      }
+    } catch (error) {
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        localAudioReady: false,
+        detail: `Failed to unload ${model?.id ?? AUDIO_MODEL_ID}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+      throw error;
+    }
+
+    if (this.#audioModel === model) {
+      this.#audioModel = null;
+    }
+    this.#audioReadiness = initialAudioReadiness();
+  }
+
+  async #shutdown(): Promise<void> {
+    await (this.#audioResetPromise ?? this.#startAudioReset());
     this.#session?.dispose();
     this.#session = null;
     if (this.#model !== null) {
@@ -624,6 +1013,27 @@ export class FoundryLayoutService {
       throw new FoundryRuntimeError(
         `Configured exact model ${model.id} uses ${actualProvider}; expected ${this.#target.executionProvider}.`,
         "PROVIDER_UNAVAILABLE",
+      );
+    }
+  }
+
+  #assertAudioModel(model: IModel): void {
+    if (model.id !== AUDIO_MODEL_ID || model.alias !== AUDIO_MODEL_ALIAS) {
+      throw new FoundryAudioError(
+        `Resolved audio model ${model.id} does not match ${AUDIO_MODEL_ID}.`,
+        "AUDIO_MODEL_UNAVAILABLE",
+      );
+    }
+    if (executionProvider(model) !== AUDIO_EXECUTION_PROVIDER) {
+      throw new FoundryAudioError(
+        `Audio model ${model.id} must use ${AUDIO_EXECUTION_PROVIDER}.`,
+        "AUDIO_MODEL_UNAVAILABLE",
+      );
+    }
+    if (model.info.task?.toLowerCase() !== "automatic-speech-recognition") {
+      throw new FoundryAudioError(
+        `Audio model ${model.id} is not an automatic-speech-recognition model.`,
+        "AUDIO_MODEL_UNAVAILABLE",
       );
     }
   }
@@ -747,6 +1157,54 @@ export class FoundryLayoutService {
     return this.#readiness;
   }
 
+  async #refreshAudioReadiness(): Promise<AudioReadiness> {
+    const model = this.#audioModel;
+    if (model === null) {
+      return this.#audioReadiness;
+    }
+    const loaded = await model.isLoaded();
+    const ready = model.isCached && loaded;
+    this.#audioReadiness = {
+      sdkVersion: "2.2.1",
+      provider: "Foundry Local in-process SDK",
+      model: audioModelIdentity(model),
+      modelCached: model.isCached,
+      localAudioReady: ready,
+      externalEndpointUsed: false,
+      maxDurationMs: AUDIO_MAX_DURATION_MS,
+      inputFormat: "PCM16LE · 16 kHz · mono",
+      status: ready ? "ready" : model.isCached ? "loading" : "preparation_required",
+      detail: ready
+        ? `${model.id} is loaded through ${AUDIO_EXECUTION_PROVIDER} for English speech-to-text.`
+        : model.isCached
+          ? `${model.id} is cached and ready to load.`
+          : `${model.id} is available but must be downloaded before offline speech input.`,
+      lastTranscriptionMs: this.#audioReadiness.lastTranscriptionMs,
+    };
+    return this.#audioReadiness;
+  }
+
+  #reportAudioPrepareProgress(detail: string): void {
+    for (const listener of this.#audioPrepareProgressListeners) {
+      listener(detail);
+    }
+  }
+
+  #assertAudioLifecycleAvailable(): void {
+    if (this.#shuttingDown) {
+      throw new FoundryAudioError("Audio runtime shutdown is in progress.", "AUDIO_NOT_READY");
+    }
+    if (this.#audioResetPromise !== null) {
+      throw new FoundryAudioError("Audio runtime reset is in progress.", "AUDIO_NOT_READY");
+    }
+  }
+
+  #assertAudioOperationCurrent(generation: number): void {
+    if (generation !== this.#audioGeneration || this.#audioResetPromise !== null || this.#shuttingDown) {
+      throw new FoundryAudioError("Audio operation was superseded by reset or shutdown.", "AUDIO_NOT_READY");
+    }
+  }
+
   #requireManager(): FoundryManagerHandle {
     if (this.#manager === null) {
       throw new FoundryRuntimeError("Foundry Local manager is not initialized.", "RUNTIME_NOT_READY");
@@ -766,6 +1224,20 @@ export class FoundryLayoutService {
       throw new FoundryRuntimeError("Foundry Local chat session is not ready.", "RUNTIME_NOT_READY");
     }
     return this.#session;
+  }
+
+  #requireAudioModel(): IModel {
+    if (this.#audioModel === null) {
+      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_UNAVAILABLE");
+    }
+    return this.#audioModel;
+  }
+
+  #requireAudioTempStore(): TempAudioStore {
+    if (this.#audioTempStore === null) {
+      throw new FoundryAudioError("Audio temporary storage is not initialized.", "AUDIO_NOT_READY");
+    }
+    return this.#audioTempStore;
   }
 }
 
