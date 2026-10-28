@@ -11,7 +11,7 @@
 | Item | Validated value |
 |---|---|
 | SDK | `foundry-local-sdk@2.2.1` |
-| Node | `24.22.1` |
+| Node | `24.22.2` |
 | Electron | `42.3.3` |
 | Model alias | `qwen2.5-1.5b` |
 | Exact model ID | `qwen2.5-1.5b-instruct-generic-gpu:4` |
@@ -51,6 +51,7 @@ npm run test:integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:microphone-permission
 npm run capture:ui
 ```
 
@@ -60,9 +61,10 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 57/57 pass |
+| Unit tests | 80/80 pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
+| Electron microphone permission probe | Pass |
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
 | Turn C Queen + crib + compact desk | Feasible |
@@ -76,19 +78,21 @@ npm run capture:ui
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
 | Real audio integration | Exact English transcript; 100% key-word recall |
 | Audio model/EP | Exact Whisper Tiny ID on CPU EP |
-| Audio transcription | 203 ms for 5.53-second deterministic WAV |
-| Audio temp cleanup | Pass; capture files before/after both empty |
+| Audio transcription | 233 ms for 5.53-second deterministic WAV |
+| Reset timeout quarantine | Pass; late native turn is rolled back, controls remain blocked, and the session is replaced before readiness returns |
+| Audio temp cleanup | Pass; real integration capture files before/after both empty |
+| Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
 
 Observed turn durations on this machine:
 
 | Turn | Duration |
 |---|---:|
-| Queen + desk | 10.9 s |
-| King replacement | 18.7 s |
-| Add crib | 22.1 s |
-| Controlled failure | 27.6 s |
-| Adversarial correction | 29.6 s |
+| Queen + desk | 12.1 s |
+| King replacement | 22.0 s |
+| Add crib | 25.0 s |
+| Controlled failure | 30.2 s |
+| Adversarial correction | 33.9 s |
 
 The longer turns include one bounded correction request.
 
@@ -137,10 +141,10 @@ Final real app-service audio integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 1,706 ms |
+| Prepare manager/catalog/model | 2,013 ms |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 203 ms |
+| Transcription | 233 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 

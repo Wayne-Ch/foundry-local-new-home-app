@@ -124,6 +124,13 @@ export class FoundryRuntimeError extends Error {
   }
 }
 
+class OperationDrainTimeoutError extends FoundryRuntimeError {
+  constructor(message: string) {
+    super(message, "RUNTIME_NOT_READY");
+    this.name = "OperationDrainTimeoutError";
+  }
+}
+
 export class FoundryAudioError extends Error {
   constructor(
     message: string,
@@ -269,6 +276,8 @@ export class FoundryLayoutService {
   #audioTranscriptionPromise: Promise<AudioTranscriptionResult> | null = null;
   #audioResetPromise: Promise<void> | null = null;
   #shutdownPromise: Promise<void> | null = null;
+  #runtimeRecoveryPromise: Promise<void> | null = null;
+  #runtimeRecoveryBaseline: RuntimeReadiness | null = null;
   readonly #audioPrepareProgressListeners = new Set<(detail: string) => void>();
   #layoutGeneration = 0;
   #audioGeneration = 0;
@@ -358,6 +367,16 @@ export class FoundryLayoutService {
 
     this.#paths = await this.#resolvePaths();
     this.#audioTempStore ??= new TempAudioStore(this.#paths.audioTempDir);
+    const audioRecovery = await this.#audioTempStore.recoverOwnedCaptures();
+    if (audioRecovery.retained > 0) {
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        detail: `${audioRecovery.retained} owned temporary audio capture${
+          audioRecovery.retained === 1 ? "" : "s"
+        } could not be removed at startup and will be retried during cleanup.`,
+      };
+    }
     try {
       this.#manager = this.#createManager({
         appName: "FoundryLocalNewHomeLayoutDemo",
@@ -812,15 +831,13 @@ export class FoundryLayoutService {
           session.processRequest(request),
         );
       } catch (error) {
+        this.#rollbackSessionTurns(session, turnCountBeforeAttempt);
         this.#assertLayoutOperationCurrent(generation);
         validationErrors.push({
           code: "INVALID_SCHEMA",
           message: "The native runtime rejected the generated tool call before execution.",
           details: [error instanceof Error ? error.message : String(error)],
         });
-        if (session.turnCount > turnCountBeforeAttempt) {
-          session.undoTurns(session.turnCount - turnCountBeforeAttempt);
-        }
         this.#systemPromptPending = state.version === 0;
         if (attempt < MAX_TOOL_ATTEMPTS) {
           continue;
@@ -931,6 +948,9 @@ export class FoundryLayoutService {
     if (this.#resetPromise !== null) {
       return this.#resetPromise;
     }
+    if (this.#runtimeRecoveryPromise !== null) {
+      return this.#runtimeRecoveryPromise;
+    }
     if (this.#shuttingDown && this.#shutdownPromise !== null) {
       return this.#shutdownPromise;
     }
@@ -943,6 +963,9 @@ export class FoundryLayoutService {
     }
     if (this.#layoutResetPromise !== null) {
       return this.#layoutResetPromise;
+    }
+    if (this.#runtimeRecoveryPromise !== null) {
+      return this.#runtimeRecoveryPromise;
     }
     if (this.#shuttingDown && this.#shutdownPromise !== null) {
       return this.#shutdownPromise;
@@ -967,6 +990,9 @@ export class FoundryLayoutService {
     }
     if (this.#audioResetPromise !== null) {
       return this.#audioResetPromise;
+    }
+    if (this.#runtimeRecoveryPromise !== null) {
+      return this.#runtimeRecoveryPromise;
     }
     if (this.#shuttingDown && this.#shutdownPromise !== null) {
       return this.#shutdownPromise;
@@ -1031,18 +1057,51 @@ export class FoundryLayoutService {
   }
 
   async #resetAll(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
-    await this.#waitForOperationDrain("reset", operations);
-    await this.#resetAudioResources();
-    this.#resetConversationResources();
+    const drain = this.#captureOperationDrain(operations);
+    try {
+      await this.#waitForOperationDrain("reset", drain);
+    } catch (error) {
+      if (error instanceof OperationDrainTimeoutError && drain !== null) {
+        this.#startAutomaticRuntimeRecovery(error, drain, async () => {
+          await this.#resetAudioResources();
+          this.#resetConversationResources();
+        });
+      }
+      throw error;
+    }
+    try {
+      await this.#resetAudioResources();
+      this.#resetConversationResources();
+      this.#completeRuntimeRecovery();
+    } catch (error) {
+      this.#markRuntimeRecoveryFailure(error);
+      throw error;
+    }
   }
 
   async #resetConversation(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
-    await this.#waitForOperationDrain("conversation reset", operations);
-    this.#resetConversationResources();
+    const drain = this.#captureOperationDrain(operations);
+    try {
+      await this.#waitForOperationDrain("conversation reset", drain);
+    } catch (error) {
+      if (error instanceof OperationDrainTimeoutError && drain !== null) {
+        this.#startAutomaticRuntimeRecovery(error, drain, () => {
+          this.#resetConversationResources();
+        });
+      }
+      throw error;
+    }
+    try {
+      this.#resetConversationResources();
+      this.#completeRuntimeRecovery();
+    } catch (error) {
+      this.#markRuntimeRecoveryFailure(error);
+      throw error;
+    }
   }
 
   async #resetAudio(operations: readonly (Promise<unknown> | null)[]): Promise<void> {
-    await this.#waitForOperationDrain("audio reset", operations);
+    await this.#waitForOperationDrain("audio reset", this.#captureOperationDrain(operations));
     await this.#resetAudioResources();
   }
 
@@ -1074,7 +1133,11 @@ export class FoundryLayoutService {
   }
 
   async #shutdown(): Promise<void> {
-    await (this.#resetPromise ?? this.#startReset());
+    try {
+      await (this.#runtimeRecoveryPromise ?? this.#resetPromise ?? this.#startReset());
+    } catch (error) {
+      await this.#reportShutdownFailure(error);
+    }
     this.#disposeConversationSession();
     if (this.#model !== null) {
       if (await this.#model.isLoaded()) {
@@ -1232,7 +1295,8 @@ export class FoundryLayoutService {
   #resetConversationResources(): void {
     this.#disposeConversationSession();
     this.#systemPromptPending = true;
-    if (!this.#shuttingDown && this.#model !== null && this.#readiness.localInferenceReady) {
+    const readiness = this.#runtimeRecoveryBaseline ?? this.#readiness;
+    if (!this.#shuttingDown && this.#model !== null && readiness.localInferenceReady) {
       this.#session = this.#sessionFactory(this.#model);
     }
   }
@@ -1243,36 +1307,126 @@ export class FoundryLayoutService {
     session?.dispose();
   }
 
-  async #waitForOperationDrain(
-    label: string,
-    operations: readonly (Promise<unknown> | null)[],
-  ): Promise<void> {
+  #captureOperationDrain(operations: readonly (Promise<unknown> | null)[]): Promise<void> | null {
     const activeOperations = operations.filter(
       (operation): operation is Promise<unknown> => operation !== null,
     );
     if (activeOperations.length === 0) {
+      return null;
+    }
+    return Promise.allSettled(activeOperations).then(() => undefined);
+  }
+
+  async #waitForOperationDrain(label: string, drain: Promise<void> | null): Promise<void> {
+    if (drain === null) {
       return;
     }
-
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         reject(
-          new FoundryRuntimeError(
+          new OperationDrainTimeoutError(
             `${label} could not safely stop active native operations within ${this.#operationDrainTimeoutMs} ms.`,
-            "RUNTIME_NOT_READY",
           ),
         );
       }, this.#operationDrainTimeoutMs);
     });
 
     try {
-      await Promise.race([Promise.allSettled(activeOperations), timedOut]);
+      await Promise.race([drain, timedOut]);
     } finally {
       if (timeout !== null) {
         clearTimeout(timeout);
       }
     }
+  }
+
+  #startAutomaticRuntimeRecovery(
+    timeoutError: OperationDrainTimeoutError,
+    drain: Promise<void>,
+    resetResources: () => Promise<void> | void,
+  ): void {
+    this.#enterRuntimeRecovery(timeoutError);
+    if (this.#runtimeRecoveryPromise !== null) {
+      return;
+    }
+
+    let trackedPromise: Promise<void>;
+    trackedPromise = drain
+      .then(async () => {
+        await resetResources();
+        this.#completeRuntimeRecovery();
+      })
+      .catch((error: unknown) => {
+        this.#markRuntimeRecoveryFailure(error);
+        throw error;
+      })
+      .finally(() => {
+        if (this.#runtimeRecoveryPromise === trackedPromise) {
+          this.#runtimeRecoveryPromise = null;
+        }
+      });
+    this.#runtimeRecoveryPromise = trackedPromise;
+    void trackedPromise.catch(() => undefined);
+  }
+
+  #enterRuntimeRecovery(error: OperationDrainTimeoutError): void {
+    this.#runtimeRecoveryBaseline ??= this.#readiness;
+    this.#readiness = {
+      ...this.#readiness,
+      localInferenceReady: false,
+      status: "recovering",
+      detail: `${error.message} The runtime is quarantined until the captured operation settles and the chat session is replaced.`,
+    };
+  }
+
+  #completeRuntimeRecovery(): void {
+    if (this.#runtimeRecoveryBaseline === null) {
+      return;
+    }
+    this.#readiness = this.#runtimeRecoveryBaseline;
+    this.#runtimeRecoveryBaseline = null;
+  }
+
+  #markRuntimeRecoveryFailure(error: unknown): void {
+    if (this.#runtimeRecoveryBaseline === null) {
+      return;
+    }
+    this.#readiness = {
+      ...this.#readiness,
+      localInferenceReady: false,
+      status: "recovery_required",
+      detail: `Automatic reset recovery failed: ${
+        error instanceof Error ? error.message : String(error)
+      }. No new turns are accepted; select Reset to retry session replacement.`,
+    };
+  }
+
+  async #reportShutdownFailure(error: unknown): Promise<never> {
+    let cleanupError: unknown = null;
+    try {
+      await this.#audioTempStore?.cleanupAll();
+    } catch (failure) {
+      cleanupError = failure;
+    }
+
+    const pendingCaptures = this.#audioTempStore?.activeCount ?? 0;
+    if (pendingCaptures > 0 || cleanupError !== null) {
+      const detail = `${pendingCaptures} owned temporary audio ${
+        pendingCaptures === 1 ? "capture remains" : "captures remain"
+      } for next-launch recovery in the dedicated audio temp directory.`;
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        localAudioReady: false,
+        status: "error",
+        detail: `Foundry Local shutdown was not clean. ${detail}`,
+      };
+      throw new AggregateError(
+        cleanupError === null ? [error] : [error, cleanupError],
+        `Foundry Local shutdown was not clean. ${detail}`,
+      );
+    }
+    throw error;
   }
 
   #findProviderInfo(): EpInfo | undefined {
@@ -1401,7 +1555,11 @@ export class FoundryLayoutService {
     if (this.#shuttingDown) {
       throw new FoundryAudioError("Audio runtime shutdown is in progress.", "AUDIO_NOT_READY");
     }
-    if (this.#resetPromise !== null || this.#audioResetPromise !== null) {
+    if (
+      this.#resetPromise !== null ||
+      this.#audioResetPromise !== null ||
+      this.#runtimeRecoveryBaseline !== null
+    ) {
       throw new FoundryAudioError("Audio runtime reset is in progress.", "AUDIO_NOT_READY");
     }
   }
@@ -1411,6 +1569,7 @@ export class FoundryLayoutService {
       generation !== this.#audioGeneration ||
       this.#resetPromise !== null ||
       this.#audioResetPromise !== null ||
+      this.#runtimeRecoveryBaseline !== null ||
       this.#shuttingDown
     ) {
       throw new FoundryAudioError("Audio operation was superseded by reset or shutdown.", "AUDIO_NOT_READY");
@@ -1421,22 +1580,42 @@ export class FoundryLayoutService {
     if (this.#shuttingDown) {
       throw new FoundryRuntimeError("Foundry Local shutdown is in progress.", "RUNTIME_NOT_READY");
     }
-    if (this.#resetPromise !== null || this.#layoutResetPromise !== null) {
-      throw new FoundryRuntimeError("Foundry Local reset is in progress.", "RUNTIME_NOT_READY");
+    if (
+      this.#resetPromise !== null ||
+      this.#layoutResetPromise !== null ||
+      this.#runtimeRecoveryBaseline !== null
+    ) {
+      throw new FoundryRuntimeError(
+        this.#runtimeRecoveryBaseline === null
+          ? "Foundry Local reset is in progress."
+          : this.#readiness.detail,
+        "RUNTIME_NOT_READY",
+      );
     }
   }
 
   #assertLayoutOperationCurrent(generation: number): void {
-    if (
-      generation !== this.#layoutGeneration ||
-      this.#resetPromise !== null ||
-      this.#layoutResetPromise !== null ||
-      this.#shuttingDown
-    ) {
+    if (!this.#isLayoutOperationCurrent(generation)) {
       throw new FoundryRuntimeError(
         "Layout operation was superseded by reset or shutdown.",
         "RUNTIME_NOT_READY",
       );
+    }
+  }
+
+  #isLayoutOperationCurrent(generation: number): boolean {
+    return !(
+      generation !== this.#layoutGeneration ||
+      this.#resetPromise !== null ||
+      this.#layoutResetPromise !== null ||
+      this.#runtimeRecoveryBaseline !== null ||
+      this.#shuttingDown
+    );
+  }
+
+  #rollbackSessionTurns(session: FoundrySessionHandle, turnCountBeforeAttempt: number): void {
+    if (session.turnCount > turnCountBeforeAttempt) {
+      session.undoTurns(session.turnCount - turnCountBeforeAttempt);
     }
   }
 

@@ -40,7 +40,8 @@ In the app:
    `openai-whisper-tiny-generic-cpu:4`, CPU EP, English, and no external endpoint. The
    **Speech-to-text** pane remains empty until a voice turn is transcribed.
 6. Select **Reset**, then load both models again. Reset intentionally unloads the audio model and
-   deletes any capture.
+   deletes tracked captures. If native work exceeds the reset bound, the UI stays quarantined until
+   automatic session replacement succeeds or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
 Observed integration timings on the validated laptop were 11–31 seconds per turn, including bounded

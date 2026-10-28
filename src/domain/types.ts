@@ -226,6 +226,8 @@ export interface RuntimeReadiness {
     | "provider_unavailable"
     | "preparation_required"
     | "loading"
+    | "recovering"
+    | "recovery_required"
     | "error";
   readonly detail: string;
 }

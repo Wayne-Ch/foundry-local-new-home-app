@@ -1,4 +1,4 @@
-import { mkdtemp, rm, unlink } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -229,11 +229,13 @@ interface FixtureOptions {
   readonly resolvePathsGate?: Promise<void>;
   readonly onCreateManager?: () => void;
   readonly operationDrainTimeoutMs?: number;
+  readonly prepareRoot?: (root: string) => Promise<void>;
 }
 
 async function createFixture(options: FixtureOptions = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "foundry-audio-service-"));
   tempRoots.push(root);
+  await options.prepareRoot?.(root);
   const store = options.createStore?.(root) ?? new TempAudioStore(root);
   const chatModel = new FakeModel(
     VALIDATED_MODEL_ID,
@@ -274,7 +276,7 @@ async function createFixture(options: FixtureOptions = {}) {
       ? {}
       : { operationDrainTimeoutMs: options.operationDrainTimeoutMs }),
   });
-  return { service, store, audioModel, audioSession, manager };
+  return { service, store, audioModel, audioSession, manager, root };
 }
 
 const capture: ValidatedAudioCapture = {
@@ -297,6 +299,27 @@ function deferred(): {
 }
 
 describe("Foundry audio service cleanup", () => {
+  it("purges owned startup orphans without touching unrelated files", async () => {
+    let orphanPath = "";
+    let unrelatedPath = "";
+    const { service } = await createFixture({
+      prepareRoot: async (root) => {
+        orphanPath = path.join(root, "capture-startup-orphan.wav");
+        unrelatedPath = path.join(root, "meeting.wav");
+        await Promise.all([
+          writeFile(orphanPath, new Uint8Array([1])),
+          writeFile(unrelatedPath, new Uint8Array([2])),
+        ]);
+      },
+    });
+
+    await service.initialize();
+
+    await expect(readFile(orphanPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect([...(await readFile(unrelatedPath))]).toEqual([2]);
+    await service.shutdown();
+  });
+
   it("transcribes with the exact audio model and deletes the temporary WAV", async () => {
     const { service, store } = await createFixture();
     const readiness = await service.prepareAudioOffline();
@@ -455,6 +478,48 @@ describe("Foundry audio service cleanup", () => {
     await service.reset();
     expect(store.activeCount).toBe(0);
     expect(audioModel.loaded).toBe(false);
+    await service.shutdown();
+  });
+
+  it("reports a shutdown-time capture obligation and lets the next store purge the orphan", async () => {
+    const processGate = deferred();
+    const processStarted = deferred();
+    const audioSession = new FakeAudioSession(null, processGate.promise, processStarted.resolve);
+    let blockRemoval = true;
+    const { service, store, root } = await createFixture({
+      audioSession,
+      operationDrainTimeoutMs: 20,
+      createStore: (directory) =>
+        new TempAudioStore(directory, {
+          remove: async (filePath) => {
+            if (blockRemoval) {
+              throw Object.assign(new Error("capture is locked"), { code: "EBUSY" });
+            }
+            await unlink(filePath);
+          },
+        }),
+    });
+    await service.prepareAudioOffline();
+
+    const transcriptionOutcome = Promise.allSettled([service.transcribeAudio(capture)]);
+    await processStarted.promise;
+    await vi.waitFor(() => expect(store.activeCount).toBe(1));
+
+    await expect(service.shutdown()).rejects.toThrow(
+      "owned temporary audio capture remains for next-launch recovery",
+    );
+    expect(store.activeCount).toBe(1);
+    expect((await readdir(root)).filter((fileName) => fileName.startsWith("capture-"))).toHaveLength(1);
+
+    const nextStore = new TempAudioStore(root);
+    const recovery = await nextStore.recoverOwnedCaptures();
+    expect(recovery).toEqual({ discovered: 1, removed: 1, retained: 0 });
+    expect((await readdir(root)).filter((fileName) => fileName.startsWith("capture-"))).toHaveLength(0);
+
+    blockRemoval = false;
+    processGate.resolve();
+    expect((await transcriptionOutcome)[0]?.status).toBe("rejected");
+    await vi.waitFor(() => expect(store.activeCount).toBe(0));
     await service.shutdown();
   });
 });

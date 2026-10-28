@@ -319,6 +319,7 @@ app.on("before-quit", (event) => {
   void controller
     .shutdown()
     .catch((error: unknown) => {
+      process.exitCode = 1;
       console.error("Failed to shut down Foundry Local cleanly:", error);
     })
     .finally(() => app.quit());

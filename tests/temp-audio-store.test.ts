@@ -137,4 +137,70 @@ describe("temporary audio cleanup", () => {
 
     expect(store.activeCount).toBe(0);
   });
+
+  it("purges only owned capture WAVs when a new store starts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    const orphan = path.join(root, "capture-orphan.wav");
+    const unrelatedWav = path.join(root, "meeting.wav");
+    const similarName = path.join(root, "capture-not-a-wav.txt");
+    await Promise.all([
+      writeFile(orphan, new Uint8Array([1])),
+      writeFile(unrelatedWav, new Uint8Array([2])),
+      writeFile(similarName, new Uint8Array([3])),
+    ]);
+
+    const store = new TempAudioStore(root);
+    const report = await store.recoverOwnedCaptures();
+
+    expect(report).toEqual({ discovered: 1, removed: 1, retained: 0 });
+    await expect(readFile(orphan)).rejects.toMatchObject({ code: "ENOENT" });
+    expect([...(await readFile(unrelatedWav))]).toEqual([2]);
+    expect([...(await readFile(similarName))]).toEqual([3]);
+    expect(store.activeCount).toBe(0);
+  });
+
+  it("retains a locked startup orphan and retries it during later cleanup", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    const orphan = path.join(root, "capture-locked.wav");
+    await writeFile(orphan, new Uint8Array([1]));
+    let removeCalls = 0;
+    const store = new TempAudioStore(root, {
+      remove: async (filePath) => {
+        removeCalls += 1;
+        if (removeCalls === 1) {
+          throw Object.assign(new Error("file is locked"), { code: "EBUSY" });
+        }
+        await unlink(filePath);
+      },
+    });
+
+    const report = await store.recoverOwnedCaptures();
+
+    expect(report).toEqual({ discovered: 1, removed: 0, retained: 1 });
+    expect(store.activeCount).toBe(1);
+    expect([...(await readFile(orphan))]).toEqual([1]);
+
+    await store.cleanupAll();
+    expect(removeCalls).toBe(2);
+    expect(store.activeCount).toBe(0);
+    await expect(readFile(orphan)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects capture IDs that could escape the owned temp directory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    let writeCalled = false;
+    const store = new TempAudioStore(root, {
+      createId: () => "segment/../../../escaped",
+      write: async () => {
+        writeCalled = true;
+      },
+    });
+
+    await expect(store.createWav(new Uint8Array([0, 0]))).rejects.toThrow("path-safe token");
+    expect(writeCalled).toBe(false);
+    expect(store.activeCount).toBe(0);
+  });
 });

@@ -45,6 +45,7 @@ let audioNotice = "Editable draft only; click Send to submit.";
 const recorderOperationRef: AudioRecorderOperationRef = { current: null };
 const operationBarrier = new RendererOperationBarrier();
 let audioOperationId = 0;
+let resetRecoveryMonitor: Promise<void> | null = null;
 
 const runtimeBadge = requiredElement("runtimeBadge");
 const runtimeLabel = requiredElement("runtimeLabel");
@@ -126,6 +127,9 @@ async function initialize(): Promise<void> {
 }
 
 prepareButton.addEventListener("click", async () => {
+  if (operationBarrier.operationsBlocked) {
+    return;
+  }
   const lifecycleGeneration = operationBarrier.beginOperation();
   setBusy(true);
   try {
@@ -154,7 +158,7 @@ audioPrepareButton.addEventListener("click", async () => {
     demoApi === null ||
     previewMode ||
     runtimeStartupPending ||
-    operationBarrier.resetInFlight ||
+    operationBarrier.operationsBlocked ||
     isAudioBusy()
   ) {
     return;
@@ -205,7 +209,6 @@ resetButton.addEventListener("click", async () => {
   }
   const resetGeneration = operationBarrier.beginReset();
   setBusy(true);
-  let resetError: unknown = null;
   try {
     await discardRecording();
     const bootstrap = await demoApi.resetConversation();
@@ -220,7 +223,6 @@ resetButton.addEventListener("click", async () => {
     if (!operationBarrier.isCurrentReset(resetGeneration)) {
       return;
     }
-    resetError = error;
     try {
       const bootstrap = await demoApi.getBootstrap();
       if (operationBarrier.isCurrentReset(resetGeneration)) {
@@ -231,14 +233,17 @@ resetButton.addEventListener("click", async () => {
     } catch {
       // Keep the last rendered state and surface the reset failure below.
     }
-  } finally {
-    if (operationBarrier.finishReset(resetGeneration)) {
+    if (operationBarrier.failReset(resetGeneration)) {
       runtimeStartupPending = false;
       setBusy(false);
-      if (resetError !== null) {
-        showResetError(resetError);
-      }
+      showResetError(error);
+      startResetRecoveryMonitor();
     }
+    return;
+  }
+  if (operationBarrier.finishReset(resetGeneration)) {
+    runtimeStartupPending = false;
+    setBusy(false);
   }
 });
 
@@ -264,7 +269,12 @@ promptForm.addEventListener("submit", (event) => {
 });
 
 async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<void> {
-  if (isBusy || operationBarrier.resetInFlight || isAudioBusy() || !viewState.readiness.localInferenceReady) {
+  if (
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    isAudioBusy() ||
+    !viewState.readiness.localInferenceReady
+  ) {
     return;
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
@@ -323,7 +333,10 @@ function renderAll(): void {
       ? `Run next: ${viewState.stageTurns[nextIndex]?.label ?? "scripted turn"}`
       : "Scripted story complete";
   nextTurnButton.disabled =
-    isBusy || !viewState.readiness.localInferenceReady || nextIndex >= viewState.stageTurns.length;
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    !viewState.readiness.localInferenceReady ||
+    nextIndex >= viewState.stageTurns.length;
 }
 
 function renderRuntime(readiness: RuntimeReadiness): void {
@@ -332,6 +345,12 @@ function renderRuntime(readiness: RuntimeReadiness): void {
     runtimeBadge.classList.add("is-error");
     runtimeLabel.textContent = runtimeBadgeLabel(readiness);
     prepareButton.textContent = "Fix environment override";
+    prepareButton.disabled = true;
+  } else if (readiness.status === "recovering" || readiness.status === "recovery_required") {
+    runtimeBadge.classList.add(readiness.status === "recovering" ? "is-checking" : "is-error");
+    runtimeLabel.textContent =
+      readiness.status === "recovering" ? "Reset recovery in progress" : "Reset recovery required";
+    prepareButton.textContent = "Runtime quarantined";
     prepareButton.disabled = true;
   } else if (readiness.localInferenceReady) {
     runtimeBadge.classList.add("is-ready");
@@ -347,17 +366,21 @@ function renderRuntime(readiness: RuntimeReadiness): void {
       ? "Configured local model unavailable"
       : "Runtime override unavailable";
     prepareButton.textContent = "Retry local setup";
-    prepareButton.disabled = isBusy;
+    prepareButton.disabled = isBusy || operationBarrier.operationsBlocked;
   } else {
     runtimeBadge.classList.add("is-checking");
     runtimeLabel.textContent = `${runtimeBadgeLabel(readiness)} · ${readiness.status.replaceAll("_", " ")}`;
     prepareButton.textContent = readiness.modelCached ? "Load local model" : "Prepare offline";
-    prepareButton.disabled = isBusy;
+    prepareButton.disabled = isBusy || operationBarrier.operationsBlocked;
   }
 
-  sendButton.disabled = isBusy || isAudioBusy() || !readiness.localInferenceReady;
+  sendButton.disabled =
+    isBusy || operationBarrier.operationsBlocked || isAudioBusy() || !readiness.localInferenceReady;
   promptInput.disabled =
-    isBusy || audioRecorderState.status === "transcribing" || !readiness.localInferenceReady;
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    audioRecorderState.status === "transcribing" ||
+    !readiness.localInferenceReady;
   renderTrace();
 }
 
@@ -390,7 +413,7 @@ function renderAudio(): void {
   audioPrepareButton.disabled =
     previewMode ||
     runtimeStartupPending ||
-    operationBarrier.resetInFlight ||
+    operationBarrier.operationsBlocked ||
     isBusy ||
     isAudioBusy() ||
     ["checking", "loading"].includes(readiness.status) ||
@@ -399,6 +422,7 @@ function renderAudio(): void {
   recordButton.disabled =
     previewMode ||
     isBusy ||
+    operationBarrier.operationsBlocked ||
     audioRecorderState.status === "requesting_permission" ||
     audioRecorderState.status === "transcribing" ||
     (!pipelineReady && audioRecorderState.status !== "recording");
@@ -666,13 +690,18 @@ function renderProgress(event: ProgressEvent): void {
 
 function setBusy(value: boolean): void {
   isBusy = value;
-  sendButton.disabled = value || isAudioBusy() || !viewState.readiness.localInferenceReady;
+  sendButton.disabled =
+    value || operationBarrier.operationsBlocked || isAudioBusy() || !viewState.readiness.localInferenceReady;
   promptInput.disabled =
-    value || audioRecorderState.status === "transcribing" || !viewState.readiness.localInferenceReady;
-  prepareButton.disabled = value || viewState.readiness.localInferenceReady;
+    value ||
+    operationBarrier.operationsBlocked ||
+    audioRecorderState.status === "transcribing" ||
+    !viewState.readiness.localInferenceReady;
+  prepareButton.disabled =
+    value || operationBarrier.operationsBlocked || viewState.readiness.localInferenceReady;
   resetButton.disabled = operationBarrier.resetInFlight;
-  traceToggle.disabled = operationBarrier.resetInFlight;
-  traceClose.disabled = operationBarrier.resetInFlight;
+  traceToggle.disabled = operationBarrier.operationsBlocked;
+  traceClose.disabled = operationBarrier.operationsBlocked;
   if (!value) {
     progressBar.hidden = true;
   }
@@ -707,7 +736,7 @@ async function startRecording(): Promise<void> {
     !viewState.audioReadiness.localAudioReady ||
     !viewState.readiness.localInferenceReady ||
     isBusy ||
-    operationBarrier.resetInFlight ||
+    operationBarrier.operationsBlocked ||
     isAudioBusy()
   ) {
     return;
@@ -946,6 +975,46 @@ function showResetError(error: unknown): void {
     phase: "error",
     detail: `Reset failed: ${error instanceof Error ? error.message : String(error)}`,
   });
+}
+
+function startResetRecoveryMonitor(): void {
+  if (resetRecoveryMonitor !== null) {
+    return;
+  }
+  let trackedPromise: Promise<void>;
+  trackedPromise = monitorResetRecovery().finally(() => {
+    if (resetRecoveryMonitor === trackedPromise) {
+      resetRecoveryMonitor = null;
+    }
+  });
+  resetRecoveryMonitor = trackedPromise;
+}
+
+async function monitorResetRecovery(): Promise<void> {
+  while (operationBarrier.resetQuarantined) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (demoApi === null || !operationBarrier.resetQuarantined) {
+      return;
+    }
+    try {
+      const bootstrap = await demoApi.getBootstrap();
+      viewState = bootstrap;
+      latestToolResult = bootstrap.lastToolResult;
+      renderAll();
+      if (
+        bootstrap.readiness.status !== "recovering" &&
+        bootstrap.readiness.status !== "recovery_required" &&
+        operationBarrier.releaseResetQuarantine()
+      ) {
+        resetButton.disabled = false;
+        traceToggle.disabled = false;
+        traceClose.disabled = false;
+        renderAll();
+      }
+    } catch {
+      // Keep the quarantine and retry while the main process remains unavailable.
+    }
+  }
 }
 
 async function refreshRuntimeState(): Promise<void> {

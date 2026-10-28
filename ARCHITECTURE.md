@@ -75,8 +75,11 @@ Pinned v2.2.1 accepts Whisper file transcription by URI. A measured inline
 
 > Inline audio data without streaming (ItemQueue) is not yet supported.
 
-The app therefore uses a bounded temporary WAV under the OS app temp directory and deletes it on
-success, failure, reset, and quit. Renderer code never receives filesystem or Node access.
+The app therefore uses a bounded temporary WAV under a dedicated OS app temp directory. It deletes
+the tracked file on normal success, failure, reset, and clean quit. If shutdown is bounded by an
+active native request or the file is locked, cleanup remains explicitly pending and the next launch
+purges only this app's matching `capture-*.wav` files. Renderer code never receives filesystem or
+Node access.
 
 Audio readiness is separate from layout-model readiness. The microphone control becomes stage-ready
 only when both exact model dependencies are loaded. Speech output is trace evidence, not a command:
@@ -237,9 +240,15 @@ path, not a hidden fake.
 6. Load the two models independently and expose separate readiness.
 7. Keep one planning `ChatSession`; create/dispose one `AudioSession` per reviewed capture.
 8. Cancel active ASR, delete tracked temp files, and unload Whisper on reset.
-9. Dispose sessions, unload both models, then dispose the manager on quit.
+9. Keep reset-timeout sessions quarantined until the captured request settles and an automatic
+   session replacement succeeds; require an explicit Reset retry if replacement fails.
+10. Dispose sessions, unload both models, then dispose the manager on clean quit.
+11. On startup, remove only owned `capture-*.wav` orphans from the dedicated audio temp directory;
+    retain locked files for a later cleanup retry and leave unrelated files untouched.
 
-Electron's `before-quit` handler waits for cleanup before exiting.
+Electron's `before-quit` handler waits for bounded cleanup before exiting. A timeout or locked-file
+failure is logged as an unclean shutdown with a nonzero exit code; any owned capture obligation is
+left discoverable for next-launch recovery rather than reported as clean.
 
 ## Cross-platform status
 

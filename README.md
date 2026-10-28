@@ -17,8 +17,9 @@ room plan.
   `AudioSession`, `CPUExecutionProvider`, English only.
 - **Push-to-talk boundary:** the renderer records only after a button click and permission grant,
   resamples to bounded PCM16LE/16 kHz/mono, and sends it through typed IPC. Main writes a temporary
-  WAV because v2.2.1 rejects one-shot inline audio, transcribes locally, and deletes the file in
-  every path.
+  WAV because v2.2.1 rejects one-shot inline audio. It deletes captures after normal success,
+  failure, reset, and clean quit; the next launch purges only owned `capture-*.wav` orphans left by
+  an interrupted or locked cleanup.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
   auto-submitted and never bypasses the existing structured planning/tool pipeline.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output. The application then
@@ -79,7 +80,7 @@ Prerequisites:
 
 - Windows x64 or Arm64, Linux x64 or Arm64, or Apple-silicon macOS supported by Foundry Local
   v2.2.1. Only Windows x64 was validated here.
-- Node.js 20 or newer. The validated machine used Node `24.22.1`.
+- Node.js 20 or newer. The validated machine used Node `24.22.2`.
 - npm with install scripts approved for `foundry-local-sdk` and `esbuild`.
 - Network access for the first exact-model/EP preparation, unless both are already cached and
   registered.
@@ -215,7 +216,7 @@ did not globally disable the machine network.
 |---|---|
 | `src/foundry/foundry-service.ts` | SDK lifecycle, model selection, schema-guided multi-turn planning |
 | `src/audio/audio-contract.ts` | PCM IPC bounds, WAV encoding, recorder state, editable transcript draft |
-| `src/audio/temp-audio-store.ts` | tracked temporary WAV creation and deletion |
+| `src/audio/temp-audio-store.ts` | owned temporary WAV creation, retryable cleanup, and startup orphan recovery |
 | `src/renderer/audio-capture.ts` | explicit mic capture, decode, downmix, and 16 kHz PCM resampling |
 | `src/domain/tool-contract.ts` | strict schema, stale-state checks, explicit intent/retention guards |
 | `src/domain/layout-engine.ts` | bounded option enumeration and typed tool result |

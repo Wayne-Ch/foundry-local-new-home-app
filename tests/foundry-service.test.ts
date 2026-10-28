@@ -7,7 +7,7 @@ import {
   type RequestPreflightResult,
   type Response,
 } from "foundry-local-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createInitialDemoState } from "../src/domain/demo-state";
 import { createToolInputForTests } from "../src/domain/tool-contract";
 import { FoundryLayoutService, type FoundryRuntimeError } from "../src/foundry/foundry-service";
@@ -596,7 +596,60 @@ describe("Foundry offline preparation", () => {
     expect(manager.disposeCalls).toBe(1);
   });
 
-  it("aborts reset on a bounded drain timeout without disposing a live session", async () => {
+  it("quarantines a timed-out reset until the late turn is rolled back and the session is replaced", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model, true);
+    const state = createInitialDemoState();
+    const prompt = "Can a Queen bed and a standard desk fit?";
+    const processGate = deferred();
+    const processStarted = deferred();
+    const gatedSession = new GatedSession(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: prompt,
+      }),
+      processGate.promise,
+      processStarted.resolve,
+    );
+    const sessions: Array<GatedSession | FakeSession> = [];
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createSession: () => {
+        const session = sessions.length === 0 ? gatedSession : new FakeSession();
+        sessions.push(session);
+        return session;
+      },
+      operationDrainTimeoutMs: 20,
+    });
+    await service.prepareOffline();
+
+    const turnOutcome = Promise.allSettled([service.runTurn(prompt, state)]);
+    await processStarted.promise;
+    await expect(service.reset()).rejects.toThrow("could not safely stop active native operations");
+    expect(gatedSession.disposed).toBe(false);
+    expect(service.readiness).toMatchObject({
+      localInferenceReady: false,
+      status: "recovering",
+    });
+    expect(() => service.runTurn(prompt, state)).toThrow("runtime is quarantined");
+    expect(sessions).toHaveLength(1);
+
+    processGate.resolve();
+    expect((await turnOutcome)[0]?.status).toBe("rejected");
+    await vi.waitFor(() => expect(sessions).toHaveLength(2));
+    expect(gatedSession.turnCount).toBe(0);
+    expect(gatedSession.disposeCalls).toBe(1);
+    expect(service.readiness).toMatchObject({
+      localInferenceReady: true,
+      status: "ready",
+    });
+    await service.shutdown();
+    expect(manager.disposeCalls).toBe(1);
+  });
+
+  it("keeps the runtime quarantined when automatic session replacement fails and recovers on reset", async () => {
     const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
     const manager = new FakeManager(model, true);
     const state = createInitialDemoState();
@@ -618,7 +671,13 @@ describe("Foundry offline preparation", () => {
       createManager: () => manager,
       createSession: () => {
         sessionCreateCalls += 1;
-        return sessionCreateCalls === 1 ? gatedSession : new FakeSession();
+        if (sessionCreateCalls === 1) {
+          return gatedSession;
+        }
+        if (sessionCreateCalls === 2) {
+          throw new Error("replacement session failed");
+        }
+        return new FakeSession();
       },
       operationDrainTimeoutMs: 20,
     });
@@ -627,13 +686,27 @@ describe("Foundry offline preparation", () => {
     const turnOutcome = Promise.allSettled([service.runTurn(prompt, state)]);
     await processStarted.promise;
     await expect(service.reset()).rejects.toThrow("could not safely stop active native operations");
-    expect(gatedSession.disposed).toBe(false);
-
     processGate.resolve();
     expect((await turnOutcome)[0]?.status).toBe("rejected");
-    await service.reset();
+
+    await vi.waitFor(() =>
+      expect(service.readiness).toMatchObject({
+        localInferenceReady: false,
+        status: "recovery_required",
+      }),
+    );
+    expect(service.readiness.detail).toContain("replacement session failed");
+    expect(gatedSession.turnCount).toBe(0);
     expect(gatedSession.disposeCalls).toBe(1);
+    expect(() => service.runTurn(prompt, state)).toThrow("No new turns are accepted");
+
+    await Promise.resolve();
+    await service.reset();
+    expect(sessionCreateCalls).toBe(3);
+    expect(service.readiness).toMatchObject({
+      localInferenceReady: true,
+      status: "ready",
+    });
     await service.shutdown();
-    expect(manager.disposeCalls).toBe(1);
   });
 });
