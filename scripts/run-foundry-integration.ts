@@ -1,0 +1,171 @@
+import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
+import { expandCandidateFurnitureIds } from "../src/domain/tool-contract";
+import type { DemoState, FurnitureId, LayoutToolResult } from "../src/domain/types";
+import { FoundryLayoutService } from "../src/foundry/foundry-service";
+import { stageTurns } from "../src/foundry/prompt";
+
+interface TurnEvidence {
+  readonly label: string;
+  readonly prompt: string;
+  readonly toolArguments: unknown;
+  readonly toolStatus: LayoutToolResult["status"];
+  readonly selectedOptionId: string | null;
+  readonly conflicts: readonly string[];
+  readonly assistantText: string;
+  readonly validationAttempts: number;
+  readonly durationMs: number;
+}
+
+function assertSet(actual: readonly FurnitureId[], expected: readonly FurnitureId[], label: string): void {
+  assert.deepEqual([...actual].sort(), [...expected].sort(), label);
+}
+
+async function runAndCommit(
+  service: FoundryLayoutService,
+  state: DemoState,
+  label: string,
+  prompt: string,
+  expectedFurniture: readonly FurnitureId[],
+  expectedStatus: LayoutToolResult["status"],
+): Promise<{ readonly state: DemoState; readonly evidence: TurnEvidence }> {
+  const started = performance.now();
+  const outcome = await service.runTurn(prompt, state, (_phase, detail) => {
+    process.stdout.write(`\r${label}: ${detail.padEnd(96).slice(0, 96)}`);
+  });
+  process.stdout.write("\n");
+  assertSet(
+    expandCandidateFurnitureIds(outcome.validatedInput.candidateFurnitureIds),
+    expectedFurniture,
+    `${label} furniture intent`,
+  );
+  assert.equal(outcome.toolResult.status, expectedStatus, `${label} geometry status`);
+  assert.ok(outcome.assistantText.length > 0, `${label} model summary`);
+  console.log(`${label} assistant: ${outcome.assistantText}`);
+
+  return {
+    state: applyToolResult(state, outcome.toolResult),
+    evidence: {
+      label,
+      prompt,
+      toolArguments: outcome.validatedInput,
+      toolStatus: outcome.toolResult.status,
+      selectedOptionId: outcome.toolResult.selectedOptionId,
+      conflicts: outcome.toolResult.conflicts.map((conflict) => conflict.message),
+      assistantText: outcome.assistantText,
+      validationAttempts: outcome.validationAttempts,
+      durationMs: Math.round(performance.now() - started),
+    },
+  };
+}
+
+const service = new FoundryLayoutService();
+let state = createInitialDemoState();
+const turns: TurnEvidence[] = [];
+
+try {
+  console.log("Initializing Foundry Local SDK 2.2.1...");
+  await service.initialize();
+  const readiness = await service.prepareOffline((detail) => {
+    process.stdout.write(`\rRuntime: ${detail.padEnd(96).slice(0, 96)}`);
+  });
+  process.stdout.write("\n");
+  assert.equal(readiness.localInferenceReady, true, readiness.detail);
+  assert.equal(readiness.externalEndpointUsed, false);
+  assert.equal(readiness.nonessentialTelemetryDisabled, true);
+  assert.ok(readiness.model?.supportsToolCalling, "Selected model must advertise tool calling.");
+
+  const turnA = await runAndCommit(
+    service,
+    state,
+    "Turn A",
+    stageTurns[0]?.prompt ?? "",
+    ["bed-queen", "desk-standard"],
+    "feasible",
+  );
+  state = turnA.state;
+  turns.push(turnA.evidence);
+  assert.equal(turnA.evidence.selectedOptionId, "queen-desk-standard-v1");
+
+  const turnB = await runAndCommit(
+    service,
+    state,
+    "Turn B",
+    stageTurns[1]?.prompt ?? "",
+    ["bed-king", "desk-standard"],
+    "no_feasible_option",
+  );
+  state = turnB.state;
+  turns.push(turnB.evidence);
+  assert.ok(
+    turnB.evidence.conflicts.some((conflict) => conflict.toLowerCase().includes("closet")),
+    "Turn B must surface the deterministic closet conflict.",
+  );
+  assert.ok(turnB.evidence.assistantText.includes("?"), "Turn B must ask which preference may change.");
+
+  const turnC = await runAndCommit(
+    service,
+    state,
+    "Turn C",
+    stageTurns[2]?.prompt ?? "",
+    ["bed-queen", "desk-compact", "crib-standard"],
+    "feasible",
+  );
+  state = turnC.state;
+  turns.push(turnC.evidence);
+  assert.equal(turnC.evidence.selectedOptionId, "queen-crib-compact-v1");
+
+  const failureTurn = await runAndCommit(
+    service,
+    state,
+    "Controlled failure",
+    stageTurns[3]?.prompt ?? "",
+    ["bed-king", "desk-compact", "crib-standard"],
+    "no_feasible_option",
+  );
+  state = failureTurn.state;
+  turns.push(failureTurn.evidence);
+  assert.ok(failureTurn.evidence.conflicts.length > 0);
+  assert.ok(
+    failureTurn.evidence.assistantText.includes("?"),
+    "Controlled failure must ask which preference may change.",
+  );
+
+  const correctionPrompt =
+    "Correction: do not switch to a King and remove the crib. Keep the Queen bed and compact desk.";
+  const correction = await runAndCommit(
+    service,
+    state,
+    "Adversarial correction",
+    correctionPrompt,
+    ["bed-queen", "desk-compact"],
+    "feasible",
+  );
+  state = correction.state;
+  turns.push(correction.evidence);
+  assert.equal(correction.evidence.selectedOptionId, "queen-compact-desk-v1");
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    provider: readiness.provider,
+    sdkVersion: readiness.sdkVersion,
+    model: readiness.model,
+    cachePath: readiness.cachePath,
+    appDataPath: readiness.appDataPath,
+    localInferenceReady: readiness.localInferenceReady,
+    externalEndpointUsed: readiness.externalEndpointUsed,
+    finalState: state,
+    turns,
+  };
+  await mkdir(path.join(process.cwd(), "artifacts"), { recursive: true });
+  await writeFile(
+    path.join(process.cwd(), "artifacts", "foundry-integration.json"),
+    JSON.stringify(report, null, 2),
+    "utf8",
+  );
+  console.log(JSON.stringify(report, null, 2));
+} finally {
+  await service.shutdown();
+}

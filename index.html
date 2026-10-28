@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Foundry Local New Home Layout Demo - deterministic geometry with local model tool calling."
+    />
+    <title>Foundry Local New Home Layout Demo</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="previewBanner" class="preview-banner" hidden>
+        Visual preview only · no inference is running in this browser surface
+      </div>
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">FL</div>
+          <div>
+            <p class="eyebrow">Microsoft Ignite · Level 300</p>
+            <h1>Foundry Local New Home Layout Demo</h1>
+          </div>
+        </div>
+        <div class="runtime-strip">
+          <div id="runtimeBadge" class="runtime-badge is-checking">
+            <span class="status-dot"></span>
+            <span id="runtimeLabel">Checking local runtime</span>
+          </div>
+          <button id="prepareButton" class="button button-primary" type="button">Load local model</button>
+          <button id="traceToggle" class="button button-secondary" type="button" aria-expanded="false">
+            Developer trace
+          </button>
+          <button id="resetButton" class="button button-ghost" type="button">Reset</button>
+        </div>
+      </header>
+
+      <main class="stage-grid">
+        <section class="conversation-panel panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Buyer + designer conversation</p>
+              <h2>Requirements stay conversational</h2>
+            </div>
+            <span id="turnCounter" class="turn-counter">State v0</span>
+          </div>
+
+          <fieldset id="stageSteps" class="stage-steps" aria-label="Scripted demo turns"></fieldset>
+          <button id="nextTurnButton" class="next-turn-button" type="button">
+            Run next scripted turn
+          </button>
+
+          <div id="messages" class="messages" aria-live="polite"></div>
+
+          <form id="promptForm" class="prompt-form">
+            <label for="promptInput">Manual prompt</label>
+            <div class="prompt-row">
+              <textarea
+                id="promptInput"
+                rows="2"
+                placeholder="Ask a follow-up using the verified room and catalog..."
+              ></textarea>
+              <button id="sendButton" class="button button-primary send-button" type="submit">Send</button>
+            </div>
+            <p class="input-note">Every turn must produce a validated local tool call. No cloud fallback.</p>
+          </form>
+        </section>
+
+        <section class="layout-panel panel">
+          <div class="panel-heading layout-heading">
+            <div>
+              <p class="eyebrow">Application-owned evidence</p>
+              <h2 id="layoutTitle">Verified room plan</h2>
+            </div>
+            <div id="resultBadge" class="result-badge is-neutral">Waiting for a request</div>
+          </div>
+
+          <div class="layout-content">
+            <div class="room-card">
+              <svg
+                id="roomSvg"
+                class="room-svg"
+                viewBox="-180 -260 4560 4140"
+                role="img"
+                aria-label="Bedroom layout diagram"
+              ></svg>
+              <div id="layoutNotice" class="layout-notice">
+                Verified dimensions only. Select the first scripted turn to begin.
+              </div>
+            </div>
+
+            <aside class="evidence-column">
+              <div class="evidence-card">
+                <p class="evidence-label">Deterministic verdict</p>
+                <h3 id="verdictTitle">No layout evaluated</h3>
+                <p id="verdictSummary">The model has not proposed a tool call yet.</p>
+              </div>
+
+              <div class="evidence-card">
+                <p class="evidence-label">Locked checks</p>
+                <div id="constraintChecks" class="constraint-checks"></div>
+              </div>
+
+              <div class="evidence-card">
+                <p class="evidence-label">Visible conflicts</p>
+                <div id="conflictList" class="conflict-list">
+                  <p class="muted">No conflicts to display.</p>
+                </div>
+              </div>
+
+              <div class="legend">
+                <span><i class="legend-swatch bed"></i> Bed</span>
+                <span><i class="legend-swatch desk"></i> Desk</span>
+                <span><i class="legend-swatch crib"></i> Crib</span>
+                <span><i class="legend-swatch reserved"></i> Reserved zone</span>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+
+      <div id="progressBar" class="progress-bar" hidden>
+        <div class="progress-spinner" aria-hidden="true"></div>
+        <div>
+          <strong id="progressPhase">Working locally</strong>
+          <span id="progressDetail"></span>
+        </div>
+      </div>
+
+      <section id="tracePanel" class="trace-panel" aria-hidden="true">
+        <div class="trace-header">
+          <div>
+            <p class="eyebrow">Structured evidence only · no chain-of-thought</p>
+            <h2>Developer trace</h2>
+          </div>
+          <button id="traceClose" class="button button-ghost" type="button">Close</button>
+        </div>
+        <div class="trace-grid">
+          <article>
+            <h3>Runtime + locked state</h3>
+            <pre id="runtimeTrace"></pre>
+          </article>
+          <article>
+            <h3>Model-proposed tool call</h3>
+            <pre id="toolTrace"></pre>
+          </article>
+          <article>
+            <h3>App validation + geometry</h3>
+            <pre id="geometryTrace"></pre>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="/src/renderer/renderer.ts"></script>
+  </body>
+</html>
