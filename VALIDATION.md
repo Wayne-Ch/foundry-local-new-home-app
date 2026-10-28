@@ -52,7 +52,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 27/27 pass |
+| Unit tests | 31/31 pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Turn A Queen + desk | Feasible |
