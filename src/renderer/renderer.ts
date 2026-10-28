@@ -39,7 +39,7 @@ let viewState: BootstrapPayload;
 let latestToolResult: LayoutToolResult | null = null;
 let isBusy = false;
 let audioRecorderState: AudioRecorderState = { status: "idle", elapsedMs: 0, detail: "" };
-let audioNotice = "Transcript stays editable and is never submitted automatically.";
+let audioNotice = "Editable draft only; click Send to submit.";
 const recorderOperationRef: AudioRecorderOperationRef = { current: null };
 let audioOperationId = 0;
 
@@ -186,7 +186,7 @@ resetButton.addEventListener("click", async () => {
   }
   viewState = bootstrap;
   latestToolResult = null;
-  audioNotice = "Transcript stays editable and is never submitted automatically.";
+  audioNotice = "Editable draft only; click Send to submit.";
   renderAll();
 });
 

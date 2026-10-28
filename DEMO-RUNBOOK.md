@@ -36,8 +36,9 @@ In the app:
    - planning mode: runtime-guided JSON Schema to app tool invocation.
 4. Select **Prepare microphone** and confirm the separate voice badge shows
    `whisper-tiny · CPU`.
-5. Confirm the audio trace identifies `openai-whisper-tiny-generic-cpu:4`, CPU EP, English, and no
-   external endpoint.
+5. In **Runtime + locked state**, confirm audio readiness identifies
+   `openai-whisper-tiny-generic-cpu:4`, CPU EP, English, and no external endpoint. The
+   **Speech-to-text** pane remains empty until a voice turn is transcribed.
 6. Select **Reset**, then load both models again. Reset intentionally unloads the audio model and
    deletes any capture.
 7. Close the trace for the opening shot.
@@ -54,9 +55,11 @@ Before the audience arrives:
 1. Start the actual Electron app and load both the layout and audio models.
 2. Rehearse one real voice Turn A and verify the transcript before clicking Send.
 3. Run Turn B and Turn C with typed/scripted input.
-4. Capture clearly labeled pre-run evidence for Turn B and Turn C.
+4. Capture clearly labeled pre-run evidence for Turn B and Turn C, including the ASR identity,
+   model plan, app validation, and geometry result.
 5. Reset the live app to state v0 and load both models for the talk.
-6. Confirm Developer trace contains the ASR identity, model plan, app validation, and geometry result.
+6. Confirm the live Developer trace shows exact text/audio readiness, and keep the captured pre-run
+   Turn B/Turn C evidence ready for the condensed story.
 
 Turn B and Turn C evidence is real Foundry Local output produced during rehearsal, but it is
 **pre-run**. Label it that way. The browser screenshot is recovery evidence only, never a live-demo
