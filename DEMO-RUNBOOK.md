@@ -27,7 +27,8 @@ npm run start:built
 
 For a benchmark refresh rather than routine stage preflight, run `npm run benchmark:layout`. It
 isolates each exact cached candidate in a fresh process, never downloads a model, and rewrites the
-ignored evidence file `artifacts/layout-model-benchmark.json`.
+ignored evidence file `artifacts/layout-model-benchmark.json`. The command exits nonzero if any
+requested candidate misses a required semantic scenario or if no passing selection is produced.
 
 In the app:
 
@@ -56,13 +57,14 @@ In the app:
    or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
-Observed selected-default integration timings on the validated laptop were 2.677–4.453 seconds per
-turn, all accepted on the first attempt. The isolated warm benchmark measured 2.681 seconds median
-and 3.624 seconds maximum. Do not start the first inference while still delivering setup remarks.
+Observed corrected selected-default integration timings on the validated laptop were 5.574–11.313
+seconds per turn, including bounded application-validation correction when needed. The unrestricted
+semantic benchmark measured 6.068 seconds median and 9.777 seconds maximum. Do not start the first
+inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,283 ms,
-stop-to-final at 109 ms, and 7,192 ms cached preparation. The explicit Whisper fallback prepared in
-5,248 ms and transcribed the same fixture in 258 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,258 ms,
+stop-to-final at 117 ms, and 2,824 ms cached preparation. The explicit Whisper fallback prepared in
+1,867 ms and transcribed the same fixture in 229 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow

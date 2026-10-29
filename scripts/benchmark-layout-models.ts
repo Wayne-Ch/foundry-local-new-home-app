@@ -9,15 +9,21 @@ import {
   type RequestPreflightResult,
   type Response,
 } from "foundry-local-sdk";
+import {
+  benchmarkGateFailures,
+  type ExpectedLayoutIntent,
+  evaluateScenarioQuality,
+} from "../src/domain/benchmark-quality";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import {
   buildCompareLayoutOptionsInput,
   createIntentDeltaJsonSchema,
   expandCandidateFurnitureIds,
+  formatIntentValidationCorrection,
+  type LayoutIntentDelta,
   parseAndValidateIntentDelta,
   parseAndValidateToolInput,
-  preferredLayoutIntentDelta,
   type ToolValidationError,
 } from "../src/domain/tool-contract";
 import type { DemoState, DemoStateSnapshot, FurnitureId, LayoutToolStatus } from "../src/domain/types";
@@ -28,6 +34,7 @@ import { canonicalExecutionProvider } from "../src/foundry/runtime-config";
 const SDK_VERSION = "2.2.1";
 const MAX_ATTEMPTS = 3;
 const MAX_OUTPUT_TOKENS = 256;
+const DEFAULT_MODEL_ID = "qwen3-0.6b-generic-gpu:2";
 
 const candidates = [
   {
@@ -64,6 +71,7 @@ interface ScenarioDefinition {
   readonly id: string;
   readonly prompt: string;
   readonly state: DemoState;
+  readonly expectedIntent: ExpectedLayoutIntent;
   readonly expectedFurniture: readonly FurnitureId[];
   readonly expectedStatus: LayoutToolStatus;
   readonly expectedSelectedOptionId?: string | null;
@@ -94,6 +102,8 @@ interface ScenarioEvidence {
   readonly totalMs: number;
   readonly generationMs: number;
   readonly validationMs: number;
+  readonly expectedIntent: ExpectedLayoutIntent;
+  readonly actualIntent: LayoutIntentDelta | null;
   readonly expectedFurniture: readonly FurnitureId[];
   readonly actualFurniture: readonly FurnitureId[] | null;
   readonly expectedStatus: LayoutToolStatus;
@@ -151,22 +161,15 @@ function median(values: readonly number[]): number | null {
     : (right ?? null);
 }
 
-function sameSet(actual: readonly FurnitureId[], expected: readonly FurnitureId[]): boolean {
-  return (
-    actual.length === expected.length &&
-    [...actual].sort().every((value, index) => value === [...expected].sort()[index])
-  );
-}
-
-function deterministicTurn(
+function authoredTurn(
   state: DemoState,
-  prompt: string,
+  intent: LayoutIntentDelta,
 ): {
   readonly state: DemoState;
   readonly status: LayoutToolStatus;
   readonly selectedOptionId: string | null;
 } {
-  const input = buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, prompt), state);
+  const input = buildCompareLayoutOptionsInput(intent, state);
   const result = compareKnownLayoutOptions(input, state);
   return {
     state: applyToolResult(state, result),
@@ -177,19 +180,62 @@ function deterministicTurn(
 
 function buildScenarios(): readonly ScenarioDefinition[] {
   const initial = createInitialDemoState();
-  const afterA = deterministicTurn(initial, stageTurns[0]?.prompt ?? "");
-  const afterB = deterministicTurn(afterA.state, stageTurns[1]?.prompt ?? "");
-  const afterC = deterministicTurn(afterB.state, stageTurns[2]?.prompt ?? "");
-  const afterFailure = deterministicTurn(afterC.state, stageTurns[3]?.prompt ?? "");
+  const afterA = authoredTurn(initial, {
+    bed: "queen",
+    desk: "flexible",
+    crib: "keep",
+    changedPreference: stageTurns[0]?.prompt ?? "",
+    clarification: "none",
+  });
+  const afterB = authoredTurn(afterA.state, {
+    bed: "king",
+    desk: "keep",
+    crib: "keep",
+    changedPreference: stageTurns[1]?.prompt ?? "",
+    clarification: "none",
+  });
+  const afterC = authoredTurn(afterB.state, {
+    bed: "queen",
+    desk: "flexible",
+    crib: "add",
+    changedPreference: stageTurns[2]?.prompt ?? "",
+    clarification: "none",
+  });
+  const afterFailure = authoredTurn(afterC.state, {
+    bed: "king",
+    desk: "keep",
+    crib: "keep",
+    changedPreference: stageTurns[3]?.prompt ?? "",
+    clarification: "none",
+  });
   const correctionPrompt =
-    "Correction: do not switch to a King and remove the crib. Keep the Queen bed and compact desk.";
-  const afterCorrection = deterministicTurn(afterFailure.state, correctionPrompt);
+    "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.";
+  const afterCorrection = authoredTurn(afterFailure.state, {
+    bed: "queen",
+    desk: "compact",
+    crib: "remove",
+    changedPreference: correctionPrompt,
+    clarification: "none",
+  });
+  const kingCompactCribState: DemoState = {
+    ...afterC.state,
+    stateRef: "layout-state-v50",
+    version: 50,
+    currentLayoutId: "benchmark-king-compact-crib",
+    activeFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+  };
 
   return [
     {
       id: "turn-a",
       prompt: stageTurns[0]?.prompt ?? "",
       state: initial,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["flexible", "standard"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-queen", "desk-standard"],
       expectedStatus: "feasible",
       expectedSelectedOptionId: "queen-desk-standard-v1",
@@ -199,6 +245,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "turn-b",
       prompt: stageTurns[1]?.prompt ?? "",
       state: afterA.state,
+      expectedIntent: {
+        bed: ["king"],
+        desk: ["keep", "standard"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-king", "desk-standard"],
       expectedStatus: "no_feasible_option",
       expectedSelectedOptionId: null,
@@ -208,6 +260,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "turn-c",
       prompt: stageTurns[2]?.prompt ?? "",
       state: afterB.state,
+      expectedIntent: {
+        bed: ["queen", "keep"],
+        desk: ["flexible"],
+        crib: ["add"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
       expectedStatus: "feasible",
       expectedSelectedOptionId: "queen-crib-compact-v1",
@@ -217,6 +275,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "controlled-failure",
       prompt: stageTurns[3]?.prompt ?? "",
       state: afterC.state,
+      expectedIntent: {
+        bed: ["king"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-king", "desk-compact", "crib-standard"],
       expectedStatus: "no_feasible_option",
       expectedSelectedOptionId: null,
@@ -226,6 +290,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "correction",
       prompt: correctionPrompt,
       state: afterFailure.state,
+      expectedIntent: {
+        bed: ["queen", "keep"],
+        desk: ["compact", "keep"],
+        crib: ["remove"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-queen", "desk-compact"],
       expectedStatus: "feasible",
       expectedSelectedOptionId: "queen-compact-desk-v1",
@@ -235,6 +305,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "unsupported-dresser",
       prompt: "Keep the current layout and add a dresser beside the bed.",
       state: afterCorrection.state,
+      expectedIntent: {
+        bed: ["keep", "queen"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["required"],
+      },
       expectedFurniture: ["bed-queen", "desk-compact"],
       expectedStatus: "clarification_required",
       expectedSelectedOptionId: null,
@@ -244,6 +320,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "paraphrase-queen-regular-desk",
       prompt: "Please check a queen bed with a regular-size desk.",
       state: initial,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["standard"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-queen", "desk-standard"],
       expectedStatus: "feasible",
       expectedSelectedOptionId: "queen-desk-standard-v1",
@@ -253,6 +335,12 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "paraphrase-king-keep-desk",
       prompt: "Swap only the bed for a king; leave the desk alone.",
       state: afterA.state,
+      expectedIntent: {
+        bed: ["king"],
+        desk: ["keep", "standard"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-king", "desk-standard"],
       expectedStatus: "no_feasible_option",
       expectedSelectedOptionId: null,
@@ -262,10 +350,76 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       id: "paraphrase-crib-flexible-desk",
       prompt: "Retain the queen, bring in the crib, and let the desk size adjust.",
       state: afterA.state,
+      expectedIntent: {
+        bed: ["queen", "keep"],
+        desk: ["flexible"],
+        crib: ["add"],
+        clarification: ["none"],
+      },
       expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
       expectedStatus: "feasible",
       expectedSelectedOptionId: "queen-crib-compact-v1",
       group: "paraphrase",
+    },
+    {
+      id: "paraphrase-replace-king-with-queen",
+      prompt: "Replace the King with a Queen.",
+      state: kingCompactCribState,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "feasible",
+      expectedSelectedOptionId: "queen-crib-compact-v1",
+      group: "paraphrase",
+    },
+    {
+      id: "paraphrase-from-king-to-queen",
+      prompt: "Move from King to Queen and keep the crib.",
+      state: kingCompactCribState,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "feasible",
+      expectedSelectedOptionId: "queen-crib-compact-v1",
+      group: "paraphrase",
+    },
+    {
+      id: "paraphrase-scoped-negation",
+      prompt: "Do not keep the King; use the Queen and do not remove the crib.",
+      state: kingCompactCribState,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["none"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "feasible",
+      expectedSelectedOptionId: "queen-crib-compact-v1",
+      group: "paraphrase",
+    },
+    {
+      id: "unsupported-armchair-mixed",
+      prompt: "Use a Queen bed with an armchair beside it.",
+      state: kingCompactCribState,
+      expectedIntent: {
+        bed: ["queen"],
+        desk: ["keep", "compact"],
+        crib: ["keep"],
+        clarification: ["required"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "clarification_required",
+      expectedSelectedOptionId: null,
+      group: "clarification",
     },
   ];
 }
@@ -286,9 +440,7 @@ function requestFor(
     request.addItem(Item.systemMessage(systemPrompt));
   }
   const correctionText =
-    correction === null
-      ? ""
-      : `\nREJECTED_DELTA: ${JSON.stringify(correction)}\nReturn corrected intent JSON only.`;
+    correction === null ? "" : formatIntentValidationCorrection(correction, state, prompt);
   const promptText = `${formatTurnPrompt(prompt, state)}${correctionText}`;
   const schemaText = JSON.stringify(createIntentDeltaJsonSchema(state, prompt));
   request.addItem(Item.userMessage(promptText)).setOptions({
@@ -319,6 +471,7 @@ async function runScenario(
   const scenarioStarted = performance.now();
   const attemptEvidence: AttemptEvidence[] = [];
   let priorError: ToolValidationError | null = null;
+  let actualIntent: LayoutIntentDelta | null = null;
   let actualFurniture: FurnitureId[] | null = null;
   let actualStatus: LayoutToolStatus | null = null;
   let actualSelectedOptionId: string | null = null;
@@ -424,26 +577,22 @@ async function runScenario(
       continue;
     }
 
+    actualIntent = validation.value.intentDelta;
     actualFurniture = expandCandidateFurnitureIds(validation.value.toolInput.candidateFurnitureIds);
     const result = compareKnownLayoutOptions(validation.value.toolInput, scenario.state);
     actualStatus = result.status;
     actualSelectedOptionId = result.selectedOptionId;
-    const furnitureMatches = sameSet(actualFurniture, scenario.expectedFurniture);
-    const statusMatches = actualStatus === scenario.expectedStatus;
-    const selectedMatches =
-      scenario.expectedSelectedOptionId === undefined ||
-      actualSelectedOptionId === scenario.expectedSelectedOptionId;
-    if (!furnitureMatches || !statusMatches || !selectedMatches) {
-      failure = [
-        furnitureMatches ? "" : `furniture=${actualFurniture.join(",")}`,
-        statusMatches ? "" : `status=${actualStatus}`,
-        selectedMatches ? "" : `selected=${actualSelectedOptionId}`,
-      ]
-        .filter(Boolean)
-        .join("; ");
-    } else {
-      failure = null;
-    }
+    const quality = evaluateScenarioQuality({
+      actualIntent,
+      expectedIntent: scenario.expectedIntent,
+      actualFurniture,
+      expectedFurniture: scenario.expectedFurniture,
+      actualStatus,
+      expectedStatus: scenario.expectedStatus,
+      actualSelectedOptionId,
+      expectedSelectedOptionId: scenario.expectedSelectedOptionId,
+    });
+    failure = quality.passed ? null : quality.failures.join("; ");
     break;
   }
 
@@ -458,6 +607,8 @@ async function runScenario(
     totalMs: roundMs(performance.now() - scenarioStarted),
     generationMs: roundMs(generationMs),
     validationMs: roundMs(validationMs),
+    expectedIntent: scenario.expectedIntent,
+    actualIntent,
     expectedFurniture: scenario.expectedFurniture,
     actualFurniture,
     expectedStatus: scenario.expectedStatus,
@@ -472,7 +623,13 @@ async function runScenario(
 function protectionEvidence(): Record<string, unknown> {
   const state = createInitialDemoState();
   const prompt = stageTurns[0]?.prompt ?? "";
-  const intent = preferredLayoutIntentDelta(state, prompt);
+  const intent: LayoutIntentDelta = {
+    bed: "queen",
+    desk: "flexible",
+    crib: "keep",
+    changedPreference: prompt,
+    clarification: "none",
+  };
   const extraGeometry = parseAndValidateIntentDelta(
     JSON.stringify({ ...intent, status: "feasible", widthMm: 9999 }),
     state,
@@ -604,7 +761,7 @@ async function benchmarkCandidate(
     const primarySession = new ChatSession(model);
     const scenarioEvidence: ScenarioEvidence[] = [];
     try {
-      for (const scenario of scenarios.filter((candidate) => candidate.group !== "paraphrase")) {
+      for (const scenario of scenarios.filter((candidate) => candidate.group === "staged")) {
         const evidence = await runScenario(model, primarySession, scenario);
         scenarioEvidence.push(evidence);
         peakRssMb = Math.max(peakRssMb, rssMb());
@@ -617,7 +774,7 @@ async function benchmarkCandidate(
       primarySession.dispose();
     }
 
-    for (const scenario of scenarios.filter((candidate) => candidate.group === "paraphrase")) {
+    for (const scenario of scenarios.filter((candidate) => candidate.group !== "staged")) {
       const session = new ChatSession(model);
       try {
         const evidence = await runScenario(model, session, scenario);
@@ -697,13 +854,16 @@ const report: Record<string, unknown> = {
   platform: `${process.platform}-${process.arch}`,
   contract: {
     name: "layout-intent-delta",
+    semanticSchema: "unrestricted compact intent enums",
+    qualityOracle: "independently authored expected intents, candidates, status, and selection",
     maxAttempts: MAX_ATTEMPTS,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     systemPromptBytes: bytes(systemPrompt),
     scenarioCount: scenarios.length,
   },
   noModelDownloads: true,
-  selectionRule: "Lowest warm maximum, then warm median, then model load.",
+  selectionRule:
+    "Keep the stage-validated built-in default when it passes every required scenario; otherwise use lowest warm maximum, median, then load.",
   excluded: [
     {
       family: "Qwen 9B",
@@ -724,6 +884,12 @@ try {
   const passing = candidateReports
     .filter((candidate) => candidate.passed === true)
     .sort((left, right) => {
+      if (left.exactId === DEFAULT_MODEL_ID && right.exactId !== DEFAULT_MODEL_ID) {
+        return -1;
+      }
+      if (right.exactId === DEFAULT_MODEL_ID && left.exactId !== DEFAULT_MODEL_ID) {
+        return 1;
+      }
       const maxDifference =
         Number(left.warmTurnMaxMs ?? Number.MAX_SAFE_INTEGER) -
         Number(right.warmTurnMaxMs ?? Number.MAX_SAFE_INTEGER);
@@ -737,7 +903,7 @@ try {
         ? medianDifference
         : Number(left.loadMs ?? Number.MAX_SAFE_INTEGER) - Number(right.loadMs ?? Number.MAX_SAFE_INTEGER);
     });
-  report.selected = passing[0]
+  const selected = passing[0]
     ? {
         id: passing[0].exactId,
         executionProvider: passing[0].executionProvider,
@@ -745,6 +911,14 @@ try {
         warmTurnMaxMs: passing[0].warmTurnMaxMs,
       }
     : null;
+  report.selected = selected;
+  const requiredModelIds = selectedCandidates.map((candidate) => candidate.id);
+  const gateFailures = benchmarkGateFailures(candidateReports, requiredModelIds, selected);
+  report.gate = {
+    passed: gateFailures.length === 0,
+    requiredModelIds,
+    failures: gateFailures,
+  };
 } finally {
   manager.dispose();
 }
@@ -774,3 +948,8 @@ console.log(
     2,
   ),
 );
+const gate = report.gate as { readonly passed?: boolean; readonly failures?: readonly string[] } | undefined;
+if (gate?.passed !== true) {
+  console.error(`Benchmark quality gate failed: ${(gate?.failures ?? ["Unknown gate failure."]).join(" ")}`);
+  process.exitCode = 1;
+}

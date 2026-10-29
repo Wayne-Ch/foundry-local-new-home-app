@@ -164,7 +164,7 @@ try {
   );
 
   const correctionPrompt =
-    "Correction: do not switch to a King and remove the crib. Keep the Queen bed and compact desk.";
+    "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.";
   const correction = await runAndCommit(
     service,
     state,
@@ -176,6 +176,30 @@ try {
   state = correction.state;
   turns.push(correction.evidence);
   assert.equal(correction.evidence.selectedOptionId, "queen-compact-desk-v1");
+
+  const transitionState: DemoState = {
+    ...state,
+    stateRef: "layout-state-v50",
+    version: 50,
+    currentLayoutId: "integration-king-compact-crib",
+    activeFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+  };
+  for (const [label, prompt] of [
+    ["Replace transition", "Replace the King with a Queen."],
+    ["From/to transition", "Move from King to Queen and keep the crib."],
+    ["Scoped negation", "Do not keep the King; use the Queen and do not remove the crib."],
+  ] as const) {
+    const transition = await runAndCommit(
+      service,
+      transitionState,
+      label,
+      prompt,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "feasible",
+    );
+    turns.push(transition.evidence);
+    assert.equal(transition.evidence.selectedOptionId, "queen-crib-compact-v1");
+  }
 
   const report = {
     generatedAt: new Date().toISOString(),

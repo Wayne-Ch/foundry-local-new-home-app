@@ -33,10 +33,13 @@ room plan.
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
   display transitions from `Live draft — not sent` to the exact edited submitted prompt.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
-  semantic intent delta (`bed`, `desk`, `crib`, `changedPreference`, and clarification). The
-  application derives exact catalog IDs, retained state, versions, units, locked constraints, and
-  unknown-term evidence before invoking `compare_layout_options`. Length-truncated or otherwise
-  partial JSON is rejected and never executed.
+  semantic intent delta (`bed`, `desk`, `crib`, `changedPreference`, and clarification). Every
+  supported compact intent value remains available in the runtime schema; application code validates
+  the model choice against explicit wording and accepted state, including directional replacements,
+  scoped negation, ambiguity, and fail-closed unsupported furniture. It then derives exact catalog
+  IDs, retained state, versions, units, locked constraints, and clarification evidence before
+  invoking `compare_layout_options`. Length-truncated or otherwise partial JSON is rejected and
+  never executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
@@ -52,23 +55,24 @@ The previous full `CompareLayoutOptionsInput` contract made Qwen2.5 1.5B generat
 650–730 bytes and 198–223 output tokens per attempt, while copying application-owned state. The
 five-turn baseline took 23.955–38.893 seconds and four turns needed a correction attempt.
 
-The compact contract emits roughly 160–208 bytes and 50–61 output tokens. Application code derives
-the unchanged full tool input and keeps stale-state, retained-state, unsupported-item, negation, and
-invented-ID protections. The selected exact `qwen3-0.6b-generic-gpu:2` passed all nine quality
-scenarios in one attempt each, loaded in 2.926 seconds, and measured 2.681 seconds warm median /
-3.624 seconds warm maximum. All cached Qwen3.5 0.8B/2B/4B GPU variants were also compatible with
-the pinned `ChatSession` + JSON Schema path; the larger variants were slower to load and run.
+The corrected compact contract keeps all semantic enums available and emits accepted JSON of roughly
+143–205 bytes while application code derives the unchanged full tool input and enforces stale state,
+retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
+invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 13 fixed-gate scenarios, loaded
+in 3.518 seconds, and measured 6.068 seconds warm median / 9.777 seconds warm maximum. The previous
+Qwen2.5 1.5B baseline was retained as rejected evidence because it missed both unsupported-furniture
+clarification scenarios.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.283 s**, and the final aggregate transcript **109 ms**
-after input ended. Cached model preparation took **7.192 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.258 s**, and the final aggregate transcript **117 ms**
+after input ended. Cached model preparation took **2.824 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **5.248 s** cached preparation,
-and **258 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.867 s** cached preparation,
+and **229 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
 The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
@@ -195,10 +199,10 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The October 29 selected-default integration completed the five real Qwen turns in **4.453 s,
-2.677 s, 3.152 s, 3.467 s, and 3.712 s**, all in one attempt. The isolated warm benchmark measured
-**2.681 s median / 3.624 s max** for exact `qwen3-0.6b-generic-gpu:2`. The legacy full-input
-Qwen2.5 path measured **23.955–38.893 s** and needed correction attempts on four of five turns.
+The corrected October 29 selected-default integration completed eight real Qwen turns—including
+replace/from-to and scoped-negation cases—in **5.574–11.313 s**. The unrestricted-schema benchmark
+measured **6.068 s median / 9.777 s max** for exact `qwen3-0.6b-generic-gpu:2`; every one of its 13
+semantic scenarios passed. The legacy full-input Qwen2.5 path measured **23.955–38.893 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md).

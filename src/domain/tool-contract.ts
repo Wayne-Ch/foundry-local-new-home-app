@@ -13,7 +13,7 @@ import { type DemoStateSnapshot, type FurnitureId, furnitureIds } from "./types"
 const bedIds = ["bed-queen", "bed-king"] as const;
 const deskIds = ["desk-standard", "desk-compact"] as const;
 const bedIntentValues = ["keep", "queen", "king"] as const;
-const deskIntentValues = ["keep", "standard", "compact", "flexible"] as const;
+const deskIntentValues = ["keep", "flexible", "standard", "compact"] as const;
 const cribIntentValues = ["keep", "add", "remove"] as const;
 
 export const layoutIntentDeltaSchema = z
@@ -168,14 +168,20 @@ export const layoutIntentDeltaJsonSchema = {
     bed: {
       type: "string",
       enum: bedIntentValues,
+      description:
+        "Use queen or king when the request selects that resulting bed, including the target of replace/from-to wording. Use keep only when the bed is unchanged.",
     },
     desk: {
       type: "string",
       enum: deskIntentValues,
+      description:
+        "Use standard or compact when named, flexible when a desk size is unspecified or may adjust, and keep only when the desk is unchanged.",
     },
     crib: {
       type: "string",
       enum: cribIntentValues,
+      description:
+        "Use add when the request adds or brings in a crib, remove when it removes one, and keep when unmentioned, retained, or explicitly not removed.",
     },
     changedPreference: {
       type: "string",
@@ -183,75 +189,187 @@ export const layoutIntentDeltaJsonSchema = {
     clarification: {
       type: "string",
       enum: ["none", "required"],
+      description:
+        "Use none for supported unambiguous requests. Use required only for unsupported furniture, conflicting choices, or a missing required choice.",
     },
   },
   required: ["bed", "desk", "crib", "changedPreference", "clarification"],
 } as const;
 
-function preferredFirst<T extends string>(preferred: T, values: readonly T[]): T[] {
-  return [preferred, ...values.filter((value) => value !== preferred)];
-}
-
-function sameCandidates(
-  left: CompareLayoutOptionsInput["candidateFurnitureIds"],
-  right: CompareLayoutOptionsInput["candidateFurnitureIds"],
-): boolean {
-  return left.bed === right.bed && left.desk === right.desk && left.crib === right.crib;
-}
-
-function compatibleIntentValues<Key extends "bed" | "desk" | "crib">(
-  key: Key,
-  values: readonly LayoutIntentDelta[Key][],
-  preferred: LayoutIntentDelta,
-  state: DemoStateSnapshot,
-): LayoutIntentDelta[Key][] {
-  const expectedCandidates = resolveCandidateFurnitureIds(preferred, state);
-  return preferredFirst(preferred[key], values).filter((value) =>
-    sameCandidates(resolveCandidateFurnitureIds({ ...preferred, [key]: value }, state), expectedCandidates),
-  );
-}
-
 export function createIntentDeltaJsonSchema(
-  state: DemoStateSnapshot,
+  _state: DemoStateSnapshot,
   prompt: string,
 ): Record<string, unknown> {
   const schema = structuredClone(layoutIntentDeltaJsonSchema) as Record<string, unknown>;
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  const preferred = preferredLayoutIntentDelta(state, prompt);
-  properties.bed = {
-    ...properties.bed,
-    enum: compatibleIntentValues("bed", bedIntentValues, preferred, state),
-  };
-  properties.desk = {
-    ...properties.desk,
-    enum: compatibleIntentValues("desk", deskIntentValues, preferred, state),
-  };
-  properties.crib = {
-    ...properties.crib,
-    enum: compatibleIntentValues("crib", cribIntentValues, preferred, state),
-  };
   properties.changedPreference = {
     ...properties.changedPreference,
     enum: [prompt],
   };
-  properties.clarification = {
-    ...properties.clarification,
-    enum: [preferred.clarification],
-  };
   return schema;
 }
 
-export function detectUnsupportedCatalogTerms(prompt: string): string[] {
-  const normalized = prompt.toLowerCase();
-  const terms = ["dresser", "nightstand", "bookshelf", "sofa", "bunk bed", "wardrobe", "changing table"];
-  const matches = terms.filter((term) => normalized.includes(term));
+const supportedFurniturePatterns = [
+  /\bqueen(?:[-\s]?size(?:d)?)?(?:\s+bed)?\b/,
+  /\bking(?:[-\s]?size(?:d)?)?(?:\s+bed)?\b/,
+  /\b(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?|compact|small|smaller|flexible)?\s*(?:desk|workstation)\b/,
+  /\bcrib\b/,
+] as const;
+
+const unsupportedFurnitureAliases = [
+  "chest of drawers",
+  "california king bed",
+  "changing table",
+  "entertainment center",
+  "filing cabinet",
+  "murphy bed",
+  "bedside table",
+  "coffee table",
+  "dining table",
+  "console table",
+  "accent chair",
+  "rocking chair",
+  "chaise lounge",
+  "room divider",
+  "shelving unit",
+  "bunk bed",
+  "twin bed",
+  "double bed",
+  "full bed",
+  "day bed",
+  "night stand",
+  "side table",
+  "end table",
+  "book shelf",
+  "armchair",
+  "nightstand",
+  "bassinet",
+  "cabinet",
+  "dresser",
+  "wardrobe",
+  "armoire",
+  "bookshelf",
+  "bookcase",
+  "recliner",
+  "loveseat",
+  "ottoman",
+  "credenza",
+  "sideboard",
+  "headboard",
+  "footboard",
+  "cradle",
+  "daybed",
+  "futon",
+  "vanity",
+  "hutch",
+  "locker",
+  "trunk",
+  "bench",
+  "stool",
+  "couch",
+  "sofa",
+  "chair",
+  "table",
+  "shelf",
+  "pouf",
+  "cot",
+] as const;
+
+const ordinaryNonFurnitureTerms = new Set([
+  "access",
+  "answer",
+  "change",
+  "clearance",
+  "closet",
+  "color",
+  "dimension",
+  "discussion",
+  "door",
+  "explanation",
+  "floor",
+  "layout",
+  "lighting",
+  "measurement",
+  "note",
+  "option",
+  "path",
+  "plan",
+  "preference",
+  "result",
+  "room",
+  "space",
+  "wall",
+  "warmth",
+  "window",
+]);
+
+function normalizePromptText(value: string): string {
+  return value.toLowerCase().replaceAll(/[’‘]/g, "'").replaceAll(/[–—]/g, "-").replaceAll(/\s+/g, " ").trim();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isSupportedFurniturePhrase(phrase: string): boolean {
+  return supportedFurniturePatterns.some((pattern) => pattern.test(phrase));
+}
+
+function canonicalUnsupportedFurniturePhrase(phrase: string): string | null {
+  const normalized = phrase
+    .replace(/^(?:(?:and|or)\s+)?(?:a|an|the|my|our|current)?\s*/, "")
+    .replace(/\s+(?:fit|here|there|instead|together)$/g, "")
+    .trim();
   if (
-    matches.length === 0 &&
+    normalized.length === 0 ||
+    isSupportedFurniturePhrase(normalized) ||
+    ordinaryNonFurnitureTerms.has(normalized)
+  ) {
+    return null;
+  }
+  const alias = unsupportedFurnitureAliases.find((candidate) =>
+    new RegExp(`\\b${escapeRegex(candidate)}\\b`).test(normalized),
+  );
+  if (alias !== undefined) {
+    return alias;
+  }
+  const words = normalized.split(" ");
+  const head = words.at(-1);
+  if (head === undefined || ordinaryNonFurnitureTerms.has(head)) {
+    return null;
+  }
+  return normalized;
+}
+
+export function detectUnsupportedCatalogTerms(prompt: string): string[] {
+  const normalized = normalizePromptText(prompt);
+  const matches = new Set<string>();
+  for (const alias of unsupportedFurnitureAliases) {
+    if (new RegExp(`\\b${escapeRegex(alias)}\\b`).test(normalized)) {
+      matches.add(alias);
+    }
+  }
+
+  const relationalPatterns = [
+    /\b(?:(?:a|an|the)\s+)?([a-z][a-z-]*(?:\s+[a-z][a-z-]*){0,2})\s+(?:beside|next to|near|against)\s+(?:(?:a|an|the)\s+)?(?:queen|king|bed|desk|crib)\b/g,
+    /\b(?:can|could|will|would)\s+(?:a|an|the)\s+([a-z][a-z-]*(?:\s+[a-z][a-z-]*){0,2})\s+fit\b/g,
+  ] as const;
+  for (const pattern of relationalPatterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const candidate = match[1] ? canonicalUnsupportedFurniturePhrase(match[1]) : null;
+      if (candidate !== null) {
+        matches.add(candidate);
+      }
+    }
+  }
+
+  if (
+    matches.size === 0 &&
     /\b(?:missing|unknown|unverified)\b[^.!?]{0,40}\b(?:dimension|measurement)/.test(normalized)
   ) {
     return ["requested item"];
   }
-  return matches;
+  return [...matches];
 }
 
 export interface ToolValidationError {
@@ -278,6 +396,567 @@ export interface ValidatedLayoutIntent {
 export type LayoutIntentValidationResult =
   | { readonly ok: true; readonly value: ValidatedLayoutIntent }
   | { readonly ok: false; readonly error: ToolValidationError };
+
+export function formatIntentValidationCorrection(
+  error: ToolValidationError,
+  state: DemoStateSnapshot,
+  prompt: string,
+): string {
+  const analysis = analyzeLayoutPrompt(state, prompt);
+  const requiredExactValues = {
+    ...(analysis.allowed.bed.length === 1 ? { bed: analysis.allowed.bed[0] } : {}),
+    ...(analysis.allowed.desk.length === 1 ? { desk: analysis.allowed.desk[0] } : {}),
+    ...(analysis.allowed.crib.length === 1 ? { crib: analysis.allowed.crib[0] } : {}),
+    changedPreference: prompt,
+    clarification: analysis.clarification,
+  };
+  return [
+    "",
+    "APPLICATION_VALIDATION_REJECTED:",
+    ...error.details.map((detail) => `- ${detail}`),
+    `REQUIRED_EXACT_VALUES: ${JSON.stringify(requiredExactValues)}`,
+    `ALLOWED_VALUES_FOR_THIS_REQUEST: ${JSON.stringify({
+      bed: analysis.allowed.bed,
+      desk: analysis.allowed.desk,
+      crib: analysis.allowed.crib,
+      changedPreference: [prompt],
+      clarification: [analysis.clarification],
+    })}`,
+    "Return a new complete JSON object, choosing one value from each allowed array.",
+  ].join("\n");
+}
+
+interface PromptIntentAnalysis {
+  readonly allowed: {
+    readonly bed: readonly LayoutIntentDelta["bed"][];
+    readonly desk: readonly LayoutIntentDelta["desk"][];
+    readonly crib: readonly LayoutIntentDelta["crib"][];
+  };
+  readonly preferred: {
+    readonly bed: LayoutIntentDelta["bed"];
+    readonly desk: LayoutIntentDelta["desk"];
+    readonly crib: LayoutIntentDelta["crib"];
+  };
+  readonly clarification: LayoutIntentDelta["clarification"];
+  readonly unknowns: readonly string[];
+}
+
+interface FieldIntentAnalysis<T extends string> {
+  readonly allowed: readonly T[];
+  readonly preferred: T;
+  readonly issues: readonly string[];
+  readonly mentioned: boolean;
+}
+
+type BedVariant = "queen" | "king";
+type DeskVariant = "standard" | "compact";
+
+function unique<T>(values: readonly T[]): T[] {
+  return [...new Set(values)];
+}
+
+function intentClauses(normalized: string): string[] {
+  return normalized
+    .split(/\s*(?:[.!?;]+|,\s*|\bbut\b)\s*/)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+}
+
+function currentBedVariant(state: DemoStateSnapshot): BedVariant | null {
+  const bed = currentBed(state);
+  return bed === "bed-king" ? "king" : bed === "bed-queen" ? "queen" : null;
+}
+
+function currentDeskVariant(state: DemoStateSnapshot): DeskVariant | null {
+  const desk = currentDesk(state);
+  return desk === "desk-compact" ? "compact" : desk === "desk-standard" ? "standard" : null;
+}
+
+function preservingBedValues(state: DemoStateSnapshot): readonly LayoutIntentDelta["bed"][] {
+  return currentBedVariant(state) === "king" ? ["keep", "king"] : ["keep", "queen"];
+}
+
+function preservingDeskValues(state: DemoStateSnapshot): readonly LayoutIntentDelta["desk"][] {
+  const current = currentDeskVariant(state);
+  return current === null ? ["keep", "standard"] : ["keep", current];
+}
+
+function bedTransition(clause: string): {
+  readonly sources: readonly BedVariant[];
+  readonly targets: readonly BedVariant[];
+  readonly rest: string;
+} {
+  const sources: BedVariant[] = [];
+  const targets: BedVariant[] = [];
+  const suffix = "(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?";
+  const patterns = [
+    new RegExp(
+      `\\b(?:replace|swap(?:\\s+out)?|change)\\s+(?:a\\s+|the\\s+)?(?<source>queen|king)${suffix}\\s+(?:with|for|to)\\s+(?:a\\s+|the\\s+)?(?<target>queen|king)${suffix}`,
+      "g",
+    ),
+    new RegExp(
+      `\\b(?:switch|change|move|go)\\s+from\\s+(?:a\\s+|the\\s+)?(?<source>queen|king)${suffix}\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>queen|king)${suffix}`,
+      "g",
+    ),
+    new RegExp(
+      `\\bfrom\\s+(?:a\\s+|the\\s+)?(?<source>queen|king)${suffix}\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>queen|king)${suffix}`,
+      "g",
+    ),
+    new RegExp(
+      `\\b(?:a\\s+|the\\s+)?(?<target>queen|king)${suffix}\\s+(?:instead|rather\\s+than)\\s+(?:of\\s+)?(?:a\\s+|the\\s+)?(?<source>queen|king)${suffix}`,
+      "g",
+    ),
+  ] as const;
+  let rest = clause;
+  for (const pattern of patterns) {
+    rest = rest.replace(pattern, (...args: unknown[]) => {
+      const groups = args.at(-1) as { readonly source?: BedVariant; readonly target?: BedVariant };
+      if (groups.source !== undefined && groups.target !== undefined) {
+        sources.push(groups.source);
+        targets.push(groups.target);
+      }
+      return " ";
+    });
+  }
+  return { sources, targets, rest };
+}
+
+function clauseNegatesBedVariant(clause: string, variant: BedVariant): boolean {
+  const term = `${variant}(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?`;
+  return (
+    new RegExp(
+      `\\b(?:do not|don't|never)\\s+(?:(?:keep|use|choose|select|try|prefer|want|need|switch|change|move|go)(?:\\s+the\\s+bed)?(?:\\s+to)?\\s+)(?:a\\s+|the\\s+)?${term}\\b`,
+    ).test(clause) || new RegExp(`\\b(?:not|no|without)\\s+(?:a\\s+|the\\s+)?${term}\\b`).test(clause)
+  );
+}
+
+function analyzeBedIntent(
+  state: DemoStateSnapshot,
+  normalized: string,
+): FieldIntentAnalysis<LayoutIntentDelta["bed"]> {
+  const current = currentBedVariant(state);
+  const targets = new Set<BedVariant>();
+  const excluded = new Set<BedVariant>();
+  const issues: string[] = [];
+  let mentioned = false;
+  let keepRequested = false;
+  let genericBedMention = false;
+
+  for (const clause of intentClauses(normalized)) {
+    const transition = bedTransition(clause);
+    for (let index = 0; index < transition.targets.length; index += 1) {
+      const source = transition.sources[index];
+      const target = transition.targets[index];
+      if (source !== undefined && target !== undefined) {
+        mentioned = true;
+        if (source === target) {
+          issues.push(`Clarify the bed transition because both sides name ${target}.`);
+        } else {
+          targets.add(target);
+        }
+        if (current === null || source !== current) {
+          issues.push(
+            `The request says to replace ${source}, but the current accepted bed is ${current ?? "not set"}.`,
+          );
+        }
+      }
+    }
+
+    const rest = transition.rest;
+    for (const variant of ["queen", "king"] as const) {
+      const pattern = new RegExp(`\\b${variant}(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?\\b`);
+      if (!pattern.test(rest)) {
+        continue;
+      }
+      mentioned = true;
+      if (clauseNegatesBedVariant(rest, variant)) {
+        excluded.add(variant);
+      } else {
+        targets.add(variant);
+      }
+    }
+
+    if (
+      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:queen|king|bed)\b/.test(clause) ||
+      /\b(?:queen|king|bed)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone)\b/.test(clause) ||
+      /\b(?:do not|don't|never)\s+(?:change|replace|switch)\b[^.!?]{0,20}\bbed\b/.test(clause)
+    ) {
+      keepRequested = true;
+      mentioned = true;
+    }
+    if (
+      /\b(?:remove|take out|get rid of)\b[^.!?]{0,20}\bbed\b/.test(clause) ||
+      /\b(?:without|no)\s+(?:a\s+|the\s+)?bed\b/.test(clause)
+    ) {
+      issues.push("Removing the bed is outside the supported Queen/King layout choices.");
+      mentioned = true;
+    }
+    if (/\bbed\b/.test(clause) && !/\b(?:queen|king)\b/.test(clause)) {
+      genericBedMention = true;
+      mentioned = true;
+    }
+  }
+
+  for (const target of targets) {
+    if (excluded.has(target)) {
+      issues.push(`The request both selects and rejects the ${target} bed.`);
+    }
+  }
+  if (targets.size > 1) {
+    issues.push("Clarify whether the resulting bed should be Queen or King.");
+  }
+  if (targets.size === 0 && genericBedMention && !keepRequested) {
+    issues.push("Clarify whether the requested bed should be Queen or King.");
+  }
+  if (targets.size === 0 && current !== null && excluded.has(current)) {
+    issues.push(`The request rejects the current ${current} bed without choosing its replacement.`);
+  }
+
+  if (issues.length > 0) {
+    return {
+      allowed: preservingBedValues(state),
+      preferred: "keep",
+      issues: unique(issues),
+      mentioned,
+    };
+  }
+
+  const [target] = [...targets];
+  if (target !== undefined) {
+    return {
+      allowed: unique([target, ...(keepRequested && current === target ? (["keep"] as const) : [])]),
+      preferred: target,
+      issues: [],
+      mentioned: true,
+    };
+  }
+
+  return {
+    allowed: preservingBedValues(state),
+    preferred: "keep",
+    issues: [],
+    mentioned,
+  };
+}
+
+function deskVariantFromWord(value: string): DeskVariant {
+  return /compact|small/.test(value) ? "compact" : "standard";
+}
+
+function deskTransition(clause: string): {
+  readonly sources: readonly DeskVariant[];
+  readonly targets: readonly DeskVariant[];
+  readonly rest: string;
+} {
+  const sources: DeskVariant[] = [];
+  const targets: DeskVariant[] = [];
+  const mode = "(?:standard|regular(?:[-\\s]?size(?:d)?)?|full[-\\s]?size(?:d)?|compact|small|smaller)";
+  const patterns = [
+    new RegExp(
+      `\\b(?:replace|swap(?:\\s+out)?|change)\\s+(?:a\\s+|the\\s+)?(?<source>${mode})(?:\\s+(?:desk|workstation))?\\s+(?:with|for|to)\\s+(?:a\\s+|the\\s+)?(?<target>${mode})(?:\\s+(?:desk|workstation))?`,
+      "g",
+    ),
+    new RegExp(
+      `\\bfrom\\s+(?:a\\s+|the\\s+)?(?<source>${mode})(?:\\s+(?:desk|workstation))?\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>${mode})(?:\\s+(?:desk|workstation))?`,
+      "g",
+    ),
+  ] as const;
+  let rest = clause;
+  for (const pattern of patterns) {
+    rest = rest.replace(pattern, (...args: unknown[]) => {
+      const groups = args.at(-1) as { readonly source?: string; readonly target?: string };
+      if (groups.source !== undefined && groups.target !== undefined) {
+        sources.push(deskVariantFromWord(groups.source));
+        targets.push(deskVariantFromWord(groups.target));
+      }
+      return " ";
+    });
+  }
+  return { sources, targets, rest };
+}
+
+function analyzeDeskIntent(
+  state: DemoStateSnapshot,
+  normalized: string,
+  crib: FieldIntentAnalysis<LayoutIntentDelta["crib"]>,
+): FieldIntentAnalysis<LayoutIntentDelta["desk"]> {
+  const current = currentDeskVariant(state);
+  const targets = new Set<DeskVariant>();
+  const excluded = new Set<DeskVariant>();
+  const issues: string[] = [];
+  let mentioned = false;
+  let keepRequested = false;
+  let flexibleRequested = false;
+  let genericDeskMention = false;
+
+  for (const clause of intentClauses(normalized)) {
+    const transition = deskTransition(clause);
+    for (let index = 0; index < transition.targets.length; index += 1) {
+      const source = transition.sources[index];
+      const target = transition.targets[index];
+      if (source !== undefined && target !== undefined) {
+        mentioned = true;
+        targets.add(target);
+        if (current === null || source !== current) {
+          issues.push(
+            `The request says to replace the ${source} desk, but the current accepted desk is ${current ?? "not set"}.`,
+          );
+        }
+      }
+    }
+    const rest = transition.rest;
+    const compactMention =
+      /\b(?:compact|small|smaller)\b[^.!?]{0,24}\b(?:desk|workstation)\b/.test(rest) ||
+      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:compact|small|smaller)\b/.test(rest);
+    const standardMention =
+      /\b(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?)\b[^.!?]{0,24}\b(?:desk|workstation)\b/.test(
+        rest,
+      ) ||
+      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?)\b/.test(
+        rest,
+      );
+    if (compactMention) {
+      mentioned = true;
+      if (/\b(?:do not|don't|never|not|no)\b[^.!?]{0,18}\b(?:compact|small|smaller)\b/.test(rest)) {
+        excluded.add("compact");
+      } else {
+        targets.add("compact");
+      }
+    }
+    if (standardMention) {
+      mentioned = true;
+      if (/\b(?:do not|don't|never|not|no)\b[^.!?]{0,18}\b(?:standard|regular|full[-\s]?size)\b/.test(rest)) {
+        excluded.add("standard");
+      } else {
+        targets.add("standard");
+      }
+    }
+    if (
+      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:desk|workstation)\b/.test(clause) ||
+      /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone|same)\b/.test(clause) ||
+      /\b(?:do not|don't|never)\s+(?:change|replace|switch)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(
+        clause,
+      )
+    ) {
+      keepRequested = true;
+      mentioned = true;
+    }
+    if (
+      /\b(?:flexible|adjustable)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause) ||
+      /\b(?:let|allow)\b[^.!?]{0,24}\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:change|adjust|vary)\b/.test(
+        clause,
+      ) ||
+      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:may|can|could)\b[^.!?]{0,12}\b(?:change|adjust|vary)\b/.test(
+        clause,
+      ) ||
+      /\bwhatever\b[^.!?]{0,12}\b(?:desk|workstation)\b/.test(clause)
+    ) {
+      flexibleRequested = true;
+      mentioned = true;
+    }
+    if (
+      /\b(?:remove|take out|get rid of)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause) ||
+      /\b(?:without|no)\s+(?:a\s+|the\s+)?(?:desk|workstation)\b/.test(clause) ||
+      /\b(?:do not|don't|never)\s+keep\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause)
+    ) {
+      issues.push("Removing the desk is outside the supported standard/compact layout choices.");
+      mentioned = true;
+    }
+    if (/\b(?:desk|workstation)\b/.test(clause)) {
+      genericDeskMention = true;
+      mentioned = true;
+    }
+  }
+
+  for (const target of targets) {
+    if (excluded.has(target)) {
+      issues.push(`The request both selects and rejects the ${target} desk.`);
+    }
+  }
+  if (targets.size > 1 || (targets.size > 0 && flexibleRequested)) {
+    issues.push("Clarify whether the desk should be standard, compact, or flexible.");
+  }
+  if (targets.size === 0 && current !== null && excluded.has(current)) {
+    issues.push(`The request rejects the current ${current} desk without choosing its replacement.`);
+  }
+
+  if (issues.length > 0) {
+    return {
+      allowed: preservingDeskValues(state),
+      preferred: "keep",
+      issues: unique(issues),
+      mentioned,
+    };
+  }
+  const [target] = [...targets];
+  if (target !== undefined) {
+    return {
+      allowed: unique([target, ...(keepRequested && current === target ? (["keep"] as const) : [])]),
+      preferred: target,
+      issues: [],
+      mentioned: true,
+    };
+  }
+  if (flexibleRequested || (!mentioned && crib.preferred === "add")) {
+    return {
+      allowed: ["flexible"],
+      preferred: "flexible",
+      issues: [],
+      mentioned: genericDeskMention || flexibleRequested,
+    };
+  }
+  if (genericDeskMention && !keepRequested) {
+    return {
+      allowed: unique(["flexible", current ?? "standard"]),
+      preferred: "flexible",
+      issues: [],
+      mentioned: true,
+    };
+  }
+  return {
+    allowed: preservingDeskValues(state),
+    preferred: "keep",
+    issues: [],
+    mentioned,
+  };
+}
+
+function analyzeCribIntent(
+  state: DemoStateSnapshot,
+  normalized: string,
+): FieldIntentAnalysis<LayoutIntentDelta["crib"]> {
+  const active = state.activeFurnitureIds.includes("crib-standard");
+  const actions = new Set<"add" | "remove" | "keep">();
+  const issues: string[] = [];
+  let mentioned = false;
+  let preserveRequested = false;
+
+  for (const clause of intentClauses(normalized)) {
+    if (!/\bcrib\b/.test(clause)) {
+      continue;
+    }
+    mentioned = true;
+    const doNotRemove =
+      /\b(?:do not|don't|never)\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(clause);
+    const doNotKeep = /\b(?:do not|don't|never)\s+keep\b[^.!?]{0,20}\bcrib\b/.test(clause);
+    const doNotAdd = /\b(?:do not|don't|never)\s+(?:add|include|bring in|use)\b[^.!?]{0,20}\bcrib\b/.test(
+      clause,
+    );
+    if (doNotRemove) {
+      actions.add("keep");
+    }
+    if (doNotKeep) {
+      actions.add("remove");
+    }
+    if (doNotAdd) {
+      preserveRequested = true;
+    }
+    if (
+      !doNotRemove &&
+      (/\b(?:remove|take out|drop|get rid of)\b[^.!?]{0,24}\bcrib\b/.test(clause) ||
+        /\b(?:without|no)\s+(?:a\s+|the\s+)?crib\b/.test(clause))
+    ) {
+      actions.add("remove");
+    }
+    if (
+      /\b(?:do not|don't|never)\b[^.!?]{0,40}\band\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(
+        clause,
+      )
+    ) {
+      issues.push("Clarify whether the negation also applies to removing the crib.");
+    }
+    if (
+      !doNotAdd &&
+      (/\b(?:add|include|bring in|place|use|need|want)\b[^.!?]{0,24}\bcrib\b/.test(clause) ||
+        /\bcrib\b[^.!?]{0,20}\b(?:added|included|brought in)\b/.test(clause))
+    ) {
+      actions.add("add");
+    }
+    if (
+      !doNotKeep &&
+      (/\b(?:keep|retain|leave)\s+(?:the\s+)?crib\b/.test(clause) ||
+        /\b(?:keep|retain|leave)\b[^.!?]{0,20}\b(?:desk|bed)\s+and\s+(?:the\s+)?crib\b/.test(clause) ||
+        /\bcrib\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged)\b/.test(clause))
+    ) {
+      actions.add("keep");
+    }
+  }
+
+  if (actions.size > 1) {
+    issues.push("Clarify whether the crib should be added, kept, or removed.");
+  }
+  if (actions.size === 1 && actions.has("keep") && !active && !preserveRequested) {
+    issues.push("The request says to keep the crib, but no crib is active in the accepted layout.");
+  }
+
+  if (issues.length > 0) {
+    return {
+      allowed: ["keep"],
+      preferred: "keep",
+      issues,
+      mentioned,
+    };
+  }
+  const [action] = [...actions];
+  if (action !== undefined) {
+    return {
+      allowed: [action],
+      preferred: action,
+      issues: [],
+      mentioned: true,
+    };
+  }
+  if (preserveRequested) {
+    return {
+      allowed: ["keep"],
+      preferred: "keep",
+      issues: [],
+      mentioned: true,
+    };
+  }
+  if (mentioned) {
+    return {
+      allowed: [active ? "keep" : "add"],
+      preferred: active ? "keep" : "add",
+      issues: [],
+      mentioned: true,
+    };
+  }
+  return {
+    allowed: ["keep"],
+    preferred: "keep",
+    issues: [],
+    mentioned: false,
+  };
+}
+
+export function analyzeLayoutPrompt(state: DemoStateSnapshot, prompt: string): PromptIntentAnalysis {
+  const normalized = normalizePromptText(prompt);
+  const unsupportedTerms = detectUnsupportedCatalogTerms(prompt);
+  const crib = analyzeCribIntent(state, normalized);
+  const bed = analyzeBedIntent(state, normalized);
+  const desk = analyzeDeskIntent(state, normalized, crib);
+  const unknowns = unique([
+    ...unsupportedTerms.map((term) => `Missing verified catalog dimensions for ${term}.`),
+    ...bed.issues,
+    ...desk.issues,
+    ...crib.issues,
+  ]);
+  return {
+    allowed: {
+      bed: bed.allowed,
+      desk: desk.allowed,
+      crib: crib.allowed,
+    },
+    preferred: {
+      bed: bed.preferred,
+      desk: desk.preferred,
+      crib: crib.preferred,
+    },
+    clarification: unknowns.length > 0 ? "required" : "none",
+    unknowns,
+  };
+}
 
 function parseJson(rawArguments: string):
   | { readonly ok: true; readonly value: unknown }
@@ -323,33 +1002,39 @@ export function parseAndValidateIntentDelta(
   }
 
   const intentDelta = schemaResult.data;
-  const expected = preferredLayoutIntentDelta(state, prompt);
+  const analysis = analyzeLayoutPrompt(state, prompt);
   const toolInput = buildCompareLayoutOptionsInput(intentDelta, state);
-  const expectedToolInput = buildCompareLayoutOptionsInput(expected, state);
   const details: string[] = [];
-  if (
-    JSON.stringify(toolInput.candidateFurnitureIds) !==
-    JSON.stringify(expectedToolInput.candidateFurnitureIds)
-  ) {
+  if (!analysis.allowed.bed.includes(intentDelta.bed)) {
     details.push(
-      `USER_REQUEST requires candidateFurnitureIds=${JSON.stringify(expectedToolInput.candidateFurnitureIds)}.`,
+      `bed must be one of ${analysis.allowed.bed.join(", ")} for USER_REQUEST; received ${intentDelta.bed}.`,
+    );
+  }
+  if (!analysis.allowed.desk.includes(intentDelta.desk)) {
+    details.push(
+      `desk must be one of ${analysis.allowed.desk.join(", ")} for USER_REQUEST; received ${intentDelta.desk}.`,
+    );
+  }
+  if (!analysis.allowed.crib.includes(intentDelta.crib)) {
+    details.push(
+      `crib must be one of ${analysis.allowed.crib.join(", ")} for USER_REQUEST; received ${intentDelta.crib}.`,
     );
   }
   if (intentDelta.changedPreference !== prompt) {
     details.push("changedPreference must reproduce USER_REQUEST exactly.");
   }
-  if (intentDelta.clarification !== expected.clarification) {
-    details.push(`clarification must be ${expected.clarification}.`);
+  if (intentDelta.clarification !== analysis.clarification) {
+    details.push(`clarification must be ${analysis.clarification}.`);
   }
   if (details.length > 0) {
     return {
       ok: false,
       error: {
         code:
-          intentDelta.clarification !== expected.clarification
+          intentDelta.clarification !== analysis.clarification
             ? "INCONSISTENT_CLARIFICATION"
             : "DROPPED_CONSTRAINT",
-        message: "The semantic delta dropped or changed explicit prompt intent.",
+        message: "The semantic delta conflicts with explicit prompt intent or accepted state.",
         details,
       },
     };
@@ -463,40 +1148,34 @@ export function parseAndValidateToolInput(
     };
   }
 
-  const verifiedFactTerms = [
-    "room",
-    "door",
-    "closet",
-    "window",
-    "clearance",
-    "queen",
-    "king",
-    "desk",
-    "crib",
-  ];
-  const promptUnknowns = new Set(
-    prompt
-      ? detectUnsupportedCatalogTerms(prompt).map(
-          (term) => `Missing verified catalog dimensions for ${term}.`,
-        )
-      : [],
-  );
-  const incorrectlyUnknown = input.unknowns.filter((unknown) => {
-    if (promptUnknowns.has(unknown)) {
-      return false;
+  if (!prompt) {
+    const verifiedFactTerms = [
+      "room",
+      "door",
+      "closet",
+      "window",
+      "clearance",
+      "queen",
+      "king",
+      "desk",
+      "crib",
+    ];
+    const incorrectlyUnknown = input.unknowns.filter((unknown) => {
+      const normalized = unknown.toLowerCase();
+      return verifiedFactTerms.some((term) => normalized.includes(term));
+    });
+    if (incorrectlyUnknown.length > 0) {
+      return {
+        ok: false,
+        error: {
+          code: "INCONSISTENT_CLARIFICATION",
+          message: "The tool call marked facts from the verified room plan or furniture catalog as unknown.",
+          details: incorrectlyUnknown.map(
+            (unknown) => `${unknown} is already covered by verified input data.`,
+          ),
+        },
+      };
     }
-    const normalized = unknown.toLowerCase();
-    return verifiedFactTerms.some((term) => normalized.includes(term));
-  });
-  if (incorrectlyUnknown.length > 0) {
-    return {
-      ok: false,
-      error: {
-        code: "INCONSISTENT_CLARIFICATION",
-        message: "The tool call marked facts from the verified room plan or furniture catalog as unknown.",
-        details: incorrectlyUnknown.map((unknown) => `${unknown} is already covered by verified input data.`),
-      },
-    };
   }
 
   return { ok: true, value: input };
@@ -548,20 +1227,43 @@ export function validateExplicitPromptConstraints(
   state: DemoStateSnapshot,
   prompt: string,
 ): ToolValidationError | null {
-  const expected = preferredCandidateFurnitureIds(state, prompt);
+  const analysis = analyzeLayoutPrompt(state, prompt);
   const details: string[] = [];
+  const allowedCandidates: CompareLayoutOptionsInput["candidateFurnitureIds"][] = [];
+  for (const bed of analysis.allowed.bed) {
+    for (const desk of analysis.allowed.desk) {
+      for (const crib of analysis.allowed.crib) {
+        allowedCandidates.push(
+          resolveCandidateFurnitureIds(
+            {
+              bed,
+              desk,
+              crib,
+              changedPreference: prompt,
+              clarification: analysis.clarification,
+            },
+            state,
+          ),
+        );
+      }
+    }
+  }
+  if (
+    !allowedCandidates.some(
+      (candidate) =>
+        candidate.bed === input.candidateFurnitureIds.bed &&
+        candidate.desk === input.candidateFurnitureIds.desk &&
+        candidate.crib === input.candidateFurnitureIds.crib,
+    )
+  ) {
+    details.push(
+      `USER_REQUEST allows candidateFurnitureIds=${unique(
+        allowedCandidates.map((candidate) => JSON.stringify(candidate)),
+      ).join(" or ")}.`,
+    );
+  }
 
-  if (input.candidateFurnitureIds.bed !== expected.bed) {
-    details.push(`USER_REQUEST requires candidateFurnitureIds.bed=${expected.bed}.`);
-  }
-  if (input.candidateFurnitureIds.desk !== expected.desk) {
-    details.push(`USER_REQUEST requires candidateFurnitureIds.desk=${expected.desk}.`);
-  }
-  if (input.candidateFurnitureIds.crib !== expected.crib) {
-    details.push(`USER_REQUEST requires candidateFurnitureIds.crib=${expected.crib ?? "null"}.`);
-  }
-
-  const expectedCandidateIds = new Set(expandCandidateFurnitureIds(expected));
+  const expectedCandidateIds = new Set(expandCandidateFurnitureIds(input.candidateFurnitureIds));
   const expectedRetained = state.activeFurnitureIds.filter((id) => expectedCandidateIds.has(id));
   const actualRetained = new Set(input.retainFurnitureIds);
   for (const id of expectedRetained) {
@@ -575,11 +1277,31 @@ export function validateExplicitPromptConstraints(
     }
   }
 
+  const expectedUnknowns = new Set(analysis.unknowns);
+  const actualUnknowns = new Set(input.unknowns);
+  for (const unknown of expectedUnknowns) {
+    if (!actualUnknowns.has(unknown)) {
+      details.push(`unknowns must include ${JSON.stringify(unknown)}.`);
+    }
+  }
+  for (const unknown of actualUnknowns) {
+    if (!expectedUnknowns.has(unknown)) {
+      details.push(`unknowns contains unsupported evidence ${JSON.stringify(unknown)}.`);
+    }
+  }
+  if (input.clarificationNeeded !== (analysis.clarification === "required")) {
+    details.push(`clarificationNeeded must be ${analysis.clarification === "required"}.`);
+  }
+
   return details.length === 0
     ? null
     : {
-        code: "DROPPED_CONSTRAINT",
-        message: "The structured proposal dropped an explicit user or retained-state constraint.",
+        code:
+          input.clarificationNeeded !== (analysis.clarification === "required") ||
+          expectedUnknowns.size !== actualUnknowns.size
+            ? "INCONSISTENT_CLARIFICATION"
+            : "DROPPED_CONSTRAINT",
+        message: "The structured proposal conflicts with explicit user wording or retained state.",
         details,
       };
 }
@@ -607,75 +1329,14 @@ function currentDesk(
   );
 }
 
-function isNegated(normalized: string, term: string, distance = 40): boolean {
-  return new RegExp(`\\b(?:do not|don't|not|no|without)\\b[^.!?]{0,${distance}}\\b${term}\\b`).test(
-    normalized,
-  );
-}
-
 export function preferredLayoutIntentDelta(state: DemoStateSnapshot, prompt: string): LayoutIntentDelta {
-  const normalized = prompt.toLowerCase();
-  const mentionsKing = /\bking(?:-size)?\b/.test(normalized);
-  const mentionsQueen = /\bqueen(?:-size)?\b/.test(normalized);
-  const mentionsCrib = /\bcrib\b/.test(normalized);
-  const kingNegated = isNegated(normalized, "king");
-  const queenNegated = isNegated(normalized, "queen");
-  let bed: LayoutIntentDelta["bed"] = "keep";
-  if (mentionsKing && !kingNegated) {
-    bed = "king";
-  } else if (mentionsQueen && !queenNegated) {
-    bed = "queen";
-  }
-
-  const removeCrib =
-    /\b(?:remove|without|no)\b[^.!?]{0,30}\bcrib\b/.test(normalized) ||
-    /\b(?:do not|don't)\b[^.!?]{0,30}\b(?:add|keep|use)?\s*(?:the\s+)?crib\b/.test(normalized);
-  const keepCrib =
-    /\b(?:keep|retain|leave)\s+(?:the\s+)?crib\b/.test(normalized) ||
-    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:desk|bed)\s+and\s+(?:the\s+)?crib\b/.test(normalized) ||
-    /\bcrib\b[^.!?]{0,30}\b(?:stays?|remain|unchanged)\b/.test(normalized);
-  let crib: LayoutIntentDelta["crib"] = "keep";
-  if (removeCrib) {
-    crib = "remove";
-  } else if (mentionsCrib) {
-    crib = keepCrib || state.activeFurnitureIds.includes("crib-standard") ? "keep" : "add";
-  }
-
-  const compactMention =
-    /\b(?:compact|smaller|small)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(normalized) ||
-    /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:compact|smaller|small)\b/.test(normalized);
-  const standardMention =
-    /\b(?:standard|regular|full-size)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(normalized) ||
-    /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:standard|regular|full-size)\b/.test(normalized);
-  const compactNegated = isNegated(normalized, "(?:compact|smaller|small)");
-  const standardNegated = isNegated(normalized, "(?:standard|regular|full-size)");
-  const keepDesk =
-    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:current\s+)?(?:desk|workstation)\b/.test(normalized) ||
-    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:bed|crib)\s+and\s+(?:the\s+)?(?:desk|workstation)\b/.test(
-      normalized,
-    ) ||
-    /\b(?:desk|workstation)\b[^.!?]{0,35}\b(?:stays?|remain|unchanged|alone)\b/.test(normalized);
-  const mentionsDesk = /\b(?:desk|workstation)\b/.test(normalized);
-  let desk: LayoutIntentDelta["desk"];
-  if (compactMention && !compactNegated) {
-    desk = "compact";
-  } else if (standardMention && !standardNegated) {
-    desk = "standard";
-  } else if (keepDesk) {
-    desk = "keep";
-  } else if (mentionsDesk || crib === "add") {
-    desk = "flexible";
-  } else {
-    desk = "keep";
-  }
-
-  const unknownTerms = detectUnsupportedCatalogTerms(prompt);
+  const analysis = analyzeLayoutPrompt(state, prompt);
   return {
-    bed,
-    desk,
-    crib,
+    bed: analysis.preferred.bed,
+    desk: analysis.preferred.desk,
+    crib: analysis.preferred.crib,
     changedPreference: prompt,
-    clarification: unknownTerms.length > 0 ? "required" : "none",
+    clarification: analysis.clarification,
   };
 }
 
@@ -718,9 +1379,7 @@ export function buildCompareLayoutOptionsInput(
 ): CompareLayoutOptionsInput {
   const candidateFurnitureIds = resolveCandidateFurnitureIds(intentDelta, state);
   const candidateIds = new Set(expandCandidateFurnitureIds(candidateFurnitureIds));
-  const unknowns = detectUnsupportedCatalogTerms(intentDelta.changedPreference).map(
-    (term) => `Missing verified catalog dimensions for ${term}.`,
-  );
+  const analysis = analyzeLayoutPrompt(state, intentDelta.changedPreference);
   return compareLayoutOptionsInputSchema.parse({
     roomPlanId: ROOM_PLAN_ID,
     planVersion: ROOM_PLAN_VERSION,
@@ -733,7 +1392,7 @@ export function buildCompareLayoutOptionsInput(
     candidateFurnitureIds,
     retainFurnitureIds: state.activeFurnitureIds.filter((id) => candidateIds.has(id)),
     changedPreference: intentDelta.changedPreference,
-    unknowns,
-    clarificationNeeded: intentDelta.clarification === "required",
+    unknowns: analysis.unknowns,
+    clarificationNeeded: analysis.clarification === "required",
   });
 }

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const candidates = [
@@ -11,6 +11,29 @@ const candidates = [
   "qwen3-1.7b-generic-gpu:2",
   "qwen2.5-1.5b-instruct-generic-gpu:4",
 ];
+const defaultModelId = "qwen3-0.6b-generic-gpu:2";
+const requestedIds = process.env.LAYOUT_BENCHMARK_MODELS?.split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const selectedCandidates =
+  requestedIds && requestedIds.length > 0
+    ? candidates.filter((candidate) => requestedIds.includes(candidate))
+    : candidates;
+if (selectedCandidates.length === 0) {
+  throw new Error("LAYOUT_BENCHMARK_MODELS did not match a declared exact candidate.");
+}
+const requestedRequiredIds = process.env.LAYOUT_BENCHMARK_REQUIRED_MODELS?.split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const requiredModelIds =
+  requestedRequiredIds && requestedRequiredIds.length > 0
+    ? requestedRequiredIds
+    : selectedCandidates.includes(defaultModelId)
+      ? [defaultModelId]
+      : selectedCandidates;
+if (requiredModelIds.some((requiredId) => !selectedCandidates.includes(requiredId))) {
+  throw new Error("LAYOUT_BENCHMARK_REQUIRED_MODELS must be a subset of the requested candidates.");
+}
 
 function safeName(modelId) {
   return modelId.replace(/[^a-z0-9.-]+/gi, "-");
@@ -48,10 +71,18 @@ const startedAt = new Date().toISOString();
 const candidateReports = [];
 let common = null;
 
-for (const modelId of candidates) {
+for (const modelId of selectedCandidates) {
   const outputName = `layout-model-benchmark-${safeName(modelId)}.json`;
+  const workerOutputPath = path.join(process.cwd(), "artifacts", outputName);
+  await rm(workerOutputPath, { force: true });
   const result = await runWorker(modelId, outputName);
-  if (result.code !== 0) {
+  let workerReport = null;
+  try {
+    workerReport = JSON.parse(await readFile(workerOutputPath, "utf8"));
+  } catch {
+    workerReport = null;
+  }
+  if (workerReport === null) {
     candidateReports.push({
       id: modelId,
       passed: false,
@@ -65,7 +96,6 @@ for (const modelId of candidates) {
     });
     continue;
   }
-  const workerReport = JSON.parse(await readFile(path.join(process.cwd(), "artifacts", outputName), "utf8"));
   common ??= workerReport;
   const candidate = workerReport.candidates?.[0];
   if (candidate === undefined) {
@@ -77,12 +107,22 @@ for (const modelId of candidates) {
     });
     continue;
   }
-  candidateReports.push(candidate);
+  candidateReports.push({
+    ...candidate,
+    workerExitCode: result.code,
+    workerSignal: result.signal,
+  });
 }
 
 const passing = candidateReports
   .filter((candidate) => candidate.passed === true)
   .sort((left, right) => {
+    if (left.exactId === defaultModelId && right.exactId !== defaultModelId) {
+      return -1;
+    }
+    if (right.exactId === defaultModelId && left.exactId !== defaultModelId) {
+      return 1;
+    }
     const maxDifference =
       Number(left.warmTurnMaxMs ?? Number.MAX_SAFE_INTEGER) -
       Number(right.warmTurnMaxMs ?? Number.MAX_SAFE_INTEGER);
@@ -96,6 +136,34 @@ const passing = candidateReports
       ? medianDifference
       : Number(left.loadMs ?? Number.MAX_SAFE_INTEGER) - Number(right.loadMs ?? Number.MAX_SAFE_INTEGER);
   });
+const selected = passing[0]
+  ? {
+      id: passing[0].exactId,
+      executionProvider: passing[0].executionProvider,
+      warmTurnMedianMs: passing[0].warmTurnMedianMs,
+      warmTurnMaxMs: passing[0].warmTurnMaxMs,
+    }
+  : null;
+const gateFailures = [];
+for (const requiredId of requiredModelIds) {
+  const candidate = candidateReports.find((entry) => (entry.exactId ?? entry.id) === requiredId);
+  if (candidate === undefined) {
+    gateFailures.push(`Required candidate ${requiredId} is missing.`);
+  } else if (candidate.passed !== true) {
+    gateFailures.push(`Required candidate ${requiredId} failed one or more quality scenarios.`);
+  }
+}
+if (selected === null) {
+  gateFailures.push("No passing model was selected.");
+} else {
+  const selectedCandidate = candidateReports.find(
+    (entry) => (entry.exactId ?? entry.id) === selected.id && entry.passed === true,
+  );
+  if (selectedCandidate === undefined) {
+    gateFailures.push(`Selected model ${selected.id} does not have a passing candidate result.`);
+  }
+}
+
 const report = {
   generatedAt: new Date().toISOString(),
   suiteStartedAt: startedAt,
@@ -104,7 +172,8 @@ const report = {
   platform: `${process.platform}-${process.arch}`,
   contract: common?.contract ?? null,
   isolation: "One fresh Node/Foundry Local process per exact model candidate.",
-  selectionRule: "Lowest warm maximum, then warm median, then model load.",
+  selectionRule:
+    "Keep the stage-validated built-in default when it passes every required scenario; otherwise use lowest warm maximum, median, then load.",
   noModelDownloads: true,
   excluded: common?.excluded ?? [
     {
@@ -114,14 +183,15 @@ const report = {
     },
   ],
   candidates: candidateReports,
-  selected: passing[0]
-    ? {
-        id: passing[0].exactId,
-        executionProvider: passing[0].executionProvider,
-        warmTurnMedianMs: passing[0].warmTurnMedianMs,
-        warmTurnMaxMs: passing[0].warmTurnMaxMs,
-      }
-    : null,
+  selected,
+  gate: {
+    passed: gateFailures.length === 0,
+    requiredModelIds,
+    rejectedCandidateIds: candidateReports
+      .filter((candidate) => candidate.passed !== true)
+      .map((candidate) => candidate.exactId ?? candidate.id),
+    failures: gateFailures,
+  },
 };
 
 const outputPath = path.join(process.cwd(), "artifacts", "layout-model-benchmark.json");
@@ -147,3 +217,7 @@ console.log(
     2,
   ),
 );
+if (!report.gate.passed) {
+  console.error(`Benchmark quality gate failed: ${report.gate.failures.join(" ")}`);
+  process.exitCode = 1;
+}

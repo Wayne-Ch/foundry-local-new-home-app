@@ -27,11 +27,14 @@ export const stageTurns: readonly StageTurnDefinition[] = [
 export const systemPrompt = `
 Return one JSON semantic delta for the bedroom request.
 - bed: keep, queen, or king.
-- desk: keep, standard, compact, or flexible. Use flexible when a desk may change, including adding a crib without a fixed desk size.
+- desk: keep, standard, compact, or flexible. Use flexible whenever the user requests a desk without a fixed size or adds a crib without fixing the desk size.
 - crib: keep, add, or remove.
+- Decide each dimension independently. Use keep only when that dimension is unchanged; do not use keep when the request names a new target.
 - Copy USER_REQUEST exactly into changedPreference.
-- Set clarification to required only when USER_REQUEST names unsupported furniture; otherwise use none.
-- Respect corrections and negation. "King instead" replaces Queen. "Do not switch to King" does not request King.
+- clarification defaults to none. Use required only for unsupported furniture, conflicting choices, or wording that lacks a required choice.
+- Respect transition direction and scoped negation. "Replace King with Queen" and "from King to Queen" select Queen. "Do not remove the crib" keeps it.
+- Exact mappings: "King instead" -> bed=king; "add/bring in a crib" -> crib=add; "remove the crib" -> crib=remove; "desk may adjust" -> desk=flexible.
+- dresser, armchair, cabinet, bassinet, and night stand are unsupported, so clarification=required. Queen/King beds, desks, and crib are supported.
 - Interpret requirements only. Never emit catalog IDs, state references, dimensions, placements, fit, conflicts, status, or any geometry verdict.
 `.trim();
 
@@ -49,6 +52,8 @@ export function formatTurnPrompt(userPrompt: string, state: DemoStateSnapshot): 
   return [
     `CURRENT_ACCEPTED: ${JSON.stringify(active)}`,
     `USER_REQUEST: ${userPrompt}`,
+    "Interpret each dimension relative to CURRENT_ACCEPTED: use the named transition target, and use keep for an unmentioned dimension.",
+    "Use clarification=none unless the request itself is unsupported, conflicting, or missing a required choice.",
     "Return only the required intent-delta JSON. The application owns retained state, IDs, constraints, and geometry.",
   ].join("\n");
 }

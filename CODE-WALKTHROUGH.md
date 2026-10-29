@@ -167,18 +167,18 @@ Show only:
 - no-feasible assertion;
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
-- isolated seven-candidate latency/quality table with A/B/C/failure/correction, clarification,
-  stale/invented guards, and three paraphrases;
+- corrected isolated benchmark with unrestricted intent enums, independently authored expectations,
+  A/B/C/failure/correction, two clarification cases, stale/invented guards, and six paraphrases;
 - exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
   recall;
 - explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 14 test files / 140 tests pass in Vitest's reported 1.06 seconds. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,283 ms, stop-to-final 109 ms, 7,192 ms cached
-prepare) and the explicit Whisper fallback prepared in 5,248 ms and transcribed in 258 ms.
+Current checkpoint: 15 test files / 147 tests pass in Vitest's reported 1.31 seconds. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,258 ms, stop-to-final 117 ms, 2,824 ms cached
+prepare) and the explicit Whisper fallback prepared in 1,867 ms and transcribed in 229 ms.
 
-Then return to the app for the single fresh offline controlled-failure input. The selected default
-measured 2.677–4.453 seconds in the real app integration and 2.681 seconds median / 3.624 seconds max
-after an isolated warmup.
+Then return to the app for the single fresh offline controlled-failure input. The corrected selected
+default measured 5.574–11.313 seconds in the eight-turn real integration and 6.068 seconds median /
+9.777 seconds max in the unrestricted semantic benchmark.

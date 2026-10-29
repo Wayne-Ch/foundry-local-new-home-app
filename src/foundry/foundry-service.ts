@@ -43,6 +43,7 @@ import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import {
   type CompareLayoutOptionsInput,
   createIntentDeltaJsonSchema,
+  formatIntentValidationCorrection,
   type LayoutIntentDelta,
   parseAndValidateIntentDelta,
   type ToolValidationError,
@@ -1389,7 +1390,11 @@ export class FoundryLayoutService {
       const correction =
         validationErrors.length === 0
           ? ""
-          : `\nREJECTED_DELTA: ${JSON.stringify(validationErrors.at(-1))}\nReturn corrected intent JSON only.`;
+          : formatIntentValidationCorrection(
+              validationErrors.at(-1) as ToolValidationError,
+              state,
+              userPrompt,
+            );
       const prompt = `${formatTurnPrompt(userPrompt, state)}${correction}`;
       const schema = JSON.stringify(createIntentDeltaJsonSchema(state, userPrompt));
       request.addItem(Item.userMessage(prompt)).setOptions({

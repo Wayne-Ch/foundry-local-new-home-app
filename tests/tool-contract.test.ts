@@ -10,6 +10,7 @@ import {
 } from "../src/domain/fixture";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import {
+  analyzeLayoutPrompt,
   buildCompareLayoutOptionsInput,
   createIntentDeltaJsonSchema,
   createToolInputForTests,
@@ -31,6 +32,15 @@ function stateWithQueenDesk() {
     initial,
   );
   return applyToolResult(initial, result);
+}
+
+function stateWithKingCompactCrib() {
+  return {
+    ...stateWithQueenDesk(),
+    stateRef: "layout-state-v7",
+    version: 7,
+    activeFurnitureIds: ["bed-king", "desk-compact", "crib-standard"] as const,
+  };
 }
 
 describe("strict tool-call validation", () => {
@@ -110,7 +120,6 @@ describe("strict tool-call validation", () => {
     });
     if (!validation.ok) {
       expect(validation.error.details.join(" ")).toContain("bed-king");
-      expect(validation.error.details.join(" ")).toContain("bed-queen");
     }
   });
 });
@@ -124,7 +133,7 @@ describe("adversarial semantic guards", () => {
     expect(
       preferredCandidateFurnitureIds(
         state,
-        "Correction: do not switch to a King and remove the crib. Keep the Queen bed and compact desk.",
+        "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.",
       ),
     ).toEqual({
       bed: "bed-queen",
@@ -191,14 +200,33 @@ describe("compact intent-delta contract", () => {
     });
   });
 
-  it("accepts delta words that derive the same exact candidate set", () => {
+  it("rejects semantically wrong delta words even when they derive the same candidate set", () => {
     const state = createInitialDemoState();
     const prompt = "Can a Queen-size bed and a desk fit here without blocking the closet or the door?";
+    expect(
+      parseAndValidateIntentDelta(
+        JSON.stringify({
+          bed: "queen",
+          desk: "standard",
+          crib: "remove",
+          changedPreference: prompt,
+          clarification: "none",
+        }),
+        state,
+        prompt,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
+      },
+    });
+
     const validation = parseAndValidateIntentDelta(
       JSON.stringify({
         bed: "queen",
-        desk: "standard",
-        crib: "remove",
+        desk: "flexible",
+        crib: "keep",
         changedPreference: prompt,
         clarification: "none",
       }),
@@ -219,7 +247,7 @@ describe("compact intent-delta contract", () => {
     });
   });
 
-  it("guides only intent words that preserve the application-derived candidate set", () => {
+  it("keeps every compact semantic enum unrestricted at runtime", () => {
     const state = stateWithQueenDesk();
     const schema = createIntentDeltaJsonSchema(
       state,
@@ -227,9 +255,10 @@ describe("compact intent-delta contract", () => {
     );
     const properties = schema.properties as Record<string, { readonly enum?: readonly unknown[] }>;
 
-    expect(properties.bed?.enum).toEqual(["queen", "keep"]);
-    expect(properties.desk?.enum).toEqual(["flexible", "compact"]);
-    expect(properties.crib?.enum).toEqual(["add"]);
+    expect(properties.bed?.enum).toEqual(["keep", "queen", "king"]);
+    expect(properties.desk?.enum).toEqual(["keep", "flexible", "standard", "compact"]);
+    expect(properties.crib?.enum).toEqual(["keep", "add", "remove"]);
+    expect(properties.clarification?.enum).toEqual(["none", "required"]);
   });
 
   it("rejects invented IDs, dimensions, geometry, verdicts, and changed state references", () => {
@@ -276,7 +305,7 @@ describe("compact intent-delta contract", () => {
       version: 4,
     };
     const prompt =
-      "Correction: do not switch to a King and remove the crib. Keep the Queen bed and compact desk.";
+      "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.";
     const intent = preferredLayoutIntentDelta(state, prompt);
     expect(intent).toMatchObject({
       bed: "queen",
@@ -304,16 +333,108 @@ describe("compact intent-delta contract", () => {
   ])("interprets paraphrase %s", (prompt, expected) => {
     expect(preferredLayoutIntentDelta(stateWithQueenDesk(), prompt)).toMatchObject(expected);
   });
+
+  it.each([
+    ["Replace the King with a Queen", { bed: "queen", desk: "keep", crib: "keep" }],
+    ["Move from King to Queen", { bed: "queen", desk: "keep", crib: "keep" }],
+    [
+      "Do not keep the King; use the Queen and do not remove the crib",
+      { bed: "queen", desk: "keep", crib: "keep" },
+    ],
+  ])("validates transition-aware correction %s", (prompt, expected) => {
+    const state = stateWithKingCompactCrib();
+    const intent = {
+      ...expected,
+      changedPreference: prompt,
+      clarification: "none" as const,
+    };
+    expect(parseAndValidateIntentDelta(JSON.stringify(intent), state, prompt)).toMatchObject({
+      ok: true,
+      value: {
+        intentDelta: expected,
+        toolInput: {
+          candidateFurnitureIds: {
+            bed: "bed-queen",
+            desk: "desk-compact",
+            crib: "crib-standard",
+          },
+        },
+      },
+    });
+    expect(
+      parseAndValidateIntentDelta(JSON.stringify({ ...intent, bed: "king" }), state, prompt),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
+      },
+    });
+  });
+
+  it("requires clarification for conflicting or transition-inconsistent wording", () => {
+    const state = stateWithKingCompactCrib();
+    for (const prompt of [
+      "Use either a King or Queen bed.",
+      "Keep the King but replace the King with a Queen.",
+      "Remove the crib, but do not remove the crib.",
+      "Do not switch to a King and remove the crib.",
+    ]) {
+      const analysis = analyzeLayoutPrompt(state, prompt);
+      expect(analysis.clarification).toBe("required");
+      expect(analysis.preferred).toMatchObject({
+        bed: "keep",
+        crib: "keep",
+      });
+      expect(
+        parseAndValidateIntentDelta(
+          JSON.stringify({
+            bed: "keep",
+            desk: "keep",
+            crib: "keep",
+            changedPreference: prompt,
+            clarification: "none",
+          }),
+          state,
+          prompt,
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          code: "INCONSISTENT_CLARIFICATION",
+        },
+      });
+    }
+
+    const sourceMismatch = "Replace the King with a Queen.";
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), sourceMismatch)).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+      },
+    });
+  });
 });
 
 describe("missing verified dimensions", () => {
-  it("forces clarification for unsupported catalog furniture", () => {
+  it("recognizes unsupported furniture fail-closed while preserving known intent", () => {
     const state = createInitialDemoState();
-    const prompt = "Can we add a dresser?";
+    const prompt = "Use a Queen bed with an armchair beside it.";
     const schema = createIntentDeltaJsonSchema(state, prompt);
     const properties = schema.properties as Record<string, Record<string, unknown>>;
-    expect(properties.clarification?.enum).toEqual(["required"]);
-    expect(detectUnsupportedCatalogTerms("Add a dresser and nightstand")).toEqual(["dresser", "nightstand"]);
+    expect(properties.clarification?.enum).toEqual(["none", "required"]);
+    expect(
+      detectUnsupportedCatalogTerms(
+        "Add an armchair, cabinet, bassinet, night stand, and moon pod beside the Queen.",
+      ).sort(),
+    ).toEqual(["armchair", "bassinet", "cabinet", "moon pod", "night stand"]);
+    for (const [promptText, term] of [
+      ["Put an armchair beside the Queen.", "armchair"],
+      ["Add a cabinet.", "cabinet"],
+      ["Could a bassinet fit?", "bassinet"],
+      ["Place a night stand near the King bed.", "night stand"],
+    ] as const) {
+      expect(detectUnsupportedCatalogTerms(promptText)).toContain(term);
+    }
     const validation = parseAndValidateIntentDelta(
       JSON.stringify(preferredLayoutIntentDelta(state, prompt)),
       state,
@@ -323,10 +444,28 @@ describe("missing verified dimensions", () => {
       ok: true,
       value: {
         toolInput: {
-          unknowns: ["Missing verified catalog dimensions for dresser."],
+          candidateFurnitureIds: {
+            bed: "bed-queen",
+            desk: "desk-standard",
+            crib: null,
+          },
+          unknowns: ["Missing verified catalog dimensions for armchair."],
           clarificationNeeded: true,
         },
       },
     });
+  });
+
+  it("does not mistake supported-only requests or ordinary prose for furniture", () => {
+    expect(
+      detectUnsupportedCatalogTerms(
+        "Can a Queen bed and compact desk fit while the crib remains and the door stays clear?",
+      ),
+    ).toEqual([]);
+    expect(
+      detectUnsupportedCatalogTerms(
+        "Keep the layout flexible, explain the result clearly, and do not block the door or closet.",
+      ),
+    ).toEqual([]);
   });
 });

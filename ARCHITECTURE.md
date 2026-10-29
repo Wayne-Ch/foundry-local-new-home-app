@@ -124,16 +124,16 @@ explicit recovery selection.
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 5.248 s; transcription 258 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 1.867 s; transcription 229 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.283 s; stop-to-final 109 ms; cached prepare 7.192 s; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.258 s; stop-to-final 117 ms; cached prepare 2.824 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 14 test files and 140 passing tests. The suite includes worklet startup
+Current validation covers 15 test files and 147 passing tests. The suite includes worklet startup
 cleanup, renderer reset concurrency, atomic failed-mode switching, renderer-owner reload/close
 cancellation, submitted-transcript state, bounded cancellation/reset recovery, stale chunk/partial
 rejection, and the complete-Qwen-response execution gate.
@@ -198,11 +198,16 @@ The application rejects:
 - invented IDs;
 - retained IDs not active in the previous state;
 - active unchanged IDs omitted from `retainFurnitureIds`;
-- explicit King/Queen/crib corrections that the model dropped;
+- explicit directional replacements, keep/add/remove instructions, and scoped negation that the
+  model dropped;
+- conflicting or transition-inconsistent wording unless clarification is requested;
 - verified door/closet/window/catalog facts incorrectly marked unknown.
 
-Unsupported catalog terms such as `dresser` or `nightstand` force model clarification plus
-application-derived `unknowns` and `clarificationNeeded=true`. Geometry does not run.
+Furniture recognition is fail-closed against the supported catalog vocabulary: Queen/King bed,
+standard/compact/flexible desk, and crib. Unsupported items such as `armchair`, `cabinet`,
+`bassinet`, `night stand`, or a likely furniture noun in a placement phrase force clarification plus
+application-derived `unknowns` and `clarificationNeeded=true`; supported intent in the same request
+is preserved. Geometry does not run.
 
 ## Deterministic geometry
 
@@ -258,9 +263,11 @@ The application first implemented the v2.2.1 native function-tool API:
 
 The full-input/native-call experiments were slow or unreliable because small models had to repeat
 state references, versions, catalog IDs, and constraint fields. The compact contract removes those
-application-owned fields from model generation. All seven exact cached candidates passed the
-bounded nine-scenario gate; `qwen3-0.6b-generic-gpu:2` had the best measured combination of load,
-warm median, and warm maximum among the stage-appropriate options.
+application-owned fields from model generation. Under the corrected unrestricted-enum gate,
+`qwen3-0.6b-generic-gpu:2` passed all 13 required semantic scenarios and remains the stage-validated
+built-in default. The prior Qwen2.5 baseline was retained as rejected evidence after missing both
+unsupported-furniture clarification cases; other old candidate pass claims were not carried forward
+without a corrected-gate rerun.
 
 The chosen fallback still uses the current `ChatSession` API and runtime grammar, but the model emits
 the argument object as JSON rather than a native tool marker. The app invokes the tool explicitly and
