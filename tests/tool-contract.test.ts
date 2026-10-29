@@ -497,6 +497,66 @@ describe("compact intent-delta contract", () => {
   });
 
   it.each([
+    "Do not replace the Queen with a King nor replace the standard desk with a compact desk.",
+    "Neither replace the Queen with a King nor replace the standard desk with a compact desk.",
+  ])("continues transition negation across nor: %s", (prompt) => {
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+        crib: ["keep"],
+      },
+    });
+  });
+
+  it("keeps affirmative transition conjunctions and fails closed on an unpaired nor", () => {
+    const state = stateWithQueenDesk();
+    expect(
+      analyzeLayoutPrompt(
+        state,
+        "Replace the Queen with a King and replace the standard desk with a compact desk.",
+      ),
+    ).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "king",
+        desk: "compact",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["king"],
+        desk: ["compact"],
+        crib: ["keep"],
+      },
+    });
+
+    expect(
+      analyzeLayoutPrompt(
+        state,
+        "Replace the Queen with a King nor replace the standard desk with a compact desk.",
+      ),
+    ).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+        crib: ["keep"],
+      },
+    });
+  });
+
+  it.each([
     [
       "Replace the standard desk with a compact desk.",
       stateWithQueenDesk(),
@@ -512,6 +572,35 @@ describe("compact intent-delta contract", () => {
       ...expected,
       clarification: "none",
     });
+  });
+
+  it("recognizes object-first crib removal and its negated forms", () => {
+    const state = stateWithKingCompactCrib();
+    expect(analyzeLayoutPrompt(state, "Take the crib out.")).toMatchObject({
+      clarification: "none",
+      preferred: {
+        crib: "remove",
+      },
+      allowed: {
+        crib: ["remove"],
+      },
+    });
+
+    for (const prompt of [
+      "Do not take the crib out.",
+      "Don't take the crib out.",
+      "Never take the crib out.",
+    ]) {
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "none",
+        preferred: {
+          crib: "keep",
+        },
+        allowed: {
+          crib: ["keep"],
+        },
+      });
+    }
   });
 
   it("requires clarification for conflicting or transition-inconsistent wording", () => {
@@ -599,6 +688,26 @@ describe("missing verified dimensions", () => {
     });
   });
 
+  it("fails closed for unsupported furniture requested with need or want", () => {
+    const state = stateWithQueenDesk();
+    for (const prompt of ["We need a hammock beside the desk.", "We want a hammock beside the desk."]) {
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["hammock"]);
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "required",
+        unknowns: ["Missing verified catalog dimensions for hammock."],
+      });
+      expect(buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, prompt), state)).toMatchObject({
+        candidateFurnitureIds: {
+          bed: "bed-queen",
+          desk: "desk-standard",
+          crib: null,
+        },
+        unknowns: ["Missing verified catalog dimensions for hammock."],
+        clarificationNeeded: true,
+      });
+    }
+  });
+
   it.each([
     ["Use a California King.", "california king"],
     ["Put a California King bed against the wall.", "california king"],
@@ -669,5 +778,9 @@ describe("missing verified dimensions", () => {
       [],
     );
     expect(detectUnsupportedCatalogTerms("Use a Queen bed without an armchair.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We do not need a hammock beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We don't want a hammock beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We need a clear answer beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We want the layout to stay flexible.")).toEqual([]);
   });
 });

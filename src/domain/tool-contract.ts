@@ -424,11 +424,15 @@ function promptClauseRanges(normalized: string): PromptRange[] {
 }
 
 function actionIsNegated(clause: string, actionStart: number): boolean {
-  const prefix = clause.slice(Math.max(0, actionStart - 48), actionStart);
+  const fullPrefix = clause.slice(0, actionStart);
+  const prefix = fullPrefix.slice(-48);
   return (
     /\b(?:do\s+not|don't|never)\s+(?:(?:please|ever)\s+)*(?:(?:try|want|need|plan|intend|prefer)\s+to\s+)?$/.test(
       prefix,
-    ) || /\bnot\s+to\s+$/.test(prefix)
+    ) ||
+    /\bnot\s+to\s+$/.test(prefix) ||
+    /\bneither\s+$/.test(prefix) ||
+    (/\bnor\s+$/.test(prefix) && /\b(?:do\s+not|don't|never|not\s+to|neither)\b/.test(fullPrefix))
   );
 }
 
@@ -464,7 +468,7 @@ function lexiconMatchIsRequested(normalized: string, matchStart: number): boolea
 function leadingObjectPhrase(value: string): string | null {
   const trimmed = value.trimStart();
   const delimiter =
-    /[,;.!?]|\b(?:and|or|with|for|to|from|beside|next\s+to|near|against|by|while|without|where|because|into|onto|in|on|under|between|instead|here|there)\b/;
+    /[,;.!?]|\b(?:and|or|nor|with|for|to|from|beside|next\s+to|near|against|by|while|without|where|because|into|onto|in|on|under|between|instead|here|there)\b/;
   const delimiterMatch = delimiter.exec(trimmed);
   const phrase = trimmed.slice(0, delimiterMatch?.index ?? trimmed.length).trim();
   return phrase.length > 0 ? phrase : null;
@@ -474,7 +478,7 @@ function actionObjectCandidates(
   normalized: string,
 ): readonly { readonly phrase: string; readonly start: number }[] {
   const candidates: { readonly phrase: string; readonly start: number }[] = [];
-  const directActionPattern = /\b(?:add|use|include|bring\s+in|place|put|fit|choose|select|try)\b/g;
+  const directActionPattern = /\b(?:add|use|include|bring\s+in|place|put|fit|choose|select|try|need|want)\b/g;
   const replacePattern = /\breplace\b/g;
   const modalObjectFitPattern =
     /\b(?:can|could|will|would|might)\s+(?<object>(?:a|an|the|my|our)\s+[^.!?;]{1,80}?)\s+fit\b/g;
@@ -714,30 +718,40 @@ function transitionNegationScope(
 ): TransitionNegation {
   const prefix = clause.slice(0, transitionStart);
   const suffix = clause.slice(transitionEnd);
+  const explicitTransitionNegation = String.raw`(?:do\s+not|don't|never|not(?:\s+to)?)`;
   const directNegation =
     /\b(?:do\s+not|don't|never)\s+(?:(?:please|ever)\s+)*(?:(?:try|want|need|plan|intend|prefer)\s+to\s+)?$/.test(
       prefix,
-    ) || /\bnot\s+(?:to\s+)?$/.test(prefix);
-  const explicitNegationAfterAnd = String.raw`(?:do\s+not|don't|never|not(?:\s+to)?)`;
+    ) ||
+    /\bnot\s+(?:to\s+)?$/.test(prefix) ||
+    /\bneither\s+(?:(?:please|ever|then)\s+)*$/.test(prefix);
   const unscopedActionAfter = new RegExp(
-    `^\\s+and\\s+(?!${explicitNegationAfterAnd}\\b)(?:then\\s+)?${transitionActionSource}\\b`,
+    `^\\s+(?:and|or)\\s+(?!${explicitTransitionNegation}\\b)(?:then\\s+)?${transitionActionSource}\\b`,
   ).test(suffix);
   if (directNegation) {
     return unscopedActionAfter ? "ambiguous" : "clear";
   }
 
-  const conjunctionIndex = prefix.lastIndexOf(" and ");
-  if (conjunctionIndex < 0) {
+  const norActionAfter = new RegExp(`^\\s+nor\\s+(?:then\\s+)?${transitionActionSource}\\b`).test(suffix);
+  if (norActionAfter) {
+    return "ambiguous";
+  }
+
+  const conjunction = [...prefix.matchAll(/\s+(?<word>and|or|nor)\s+/g)].at(-1);
+  if (conjunction === undefined) {
     return "none";
   }
-  const beforeConjunction = prefix.slice(0, conjunctionIndex);
-  const afterConjunction = prefix.slice(conjunctionIndex + " and ".length);
+  const beforeConjunction = prefix.slice(0, conjunction.index);
+  const afterConjunction = prefix.slice(conjunction.index + conjunction[0].length);
   const precedingNegatedAction = new RegExp(
-    `\\b(?:do\\s+not|don't|never|not\\s+to)\\b[^.!?;]{0,100}\\b${transitionActionSource}\\b`,
+    `\\b(?:do\\s+not|don't|never|not\\s+to|neither)\\b[^.!?;]{0,100}\\b${transitionActionSource}\\b`,
   ).test(beforeConjunction);
   const repeatedNegation = new RegExp(
-    `(?:^|\\s)${explicitNegationAfterAnd}\\s+(?:(?:please|ever|then)\\s+)*$`,
+    `(?:^|\\s)${explicitTransitionNegation}\\s+(?:(?:please|ever|then)\\s+)*$`,
   ).test(afterConjunction);
+  if (conjunction.groups?.word === "nor") {
+    return precedingNegatedAction ? "clear" : "ambiguous";
+  }
   return precedingNegatedAction && !repeatedNegation ? "ambiguous" : "none";
 }
 
@@ -1142,8 +1156,11 @@ function analyzeCribIntent(
       continue;
     }
     mentioned = true;
+    const actionFirstRemoval = /\b(?:remove|take out|drop|get rid of)\b[^.!?]{0,24}\bcrib\b/.test(clause);
+    const objectFirstRemoval = /\btake\s+(?:the\s+)?crib\s+out\b/.test(clause);
     const doNotRemove =
-      /\b(?:do not|don't|never)\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(clause);
+      /\b(?:do not|don't|never)\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(clause) ||
+      /\b(?:do not|don't|never)\s+take\s+(?:the\s+)?crib\s+out\b/.test(clause);
     const doNotKeep = /\b(?:do not|don't|never)\s+keep\b[^.!?]{0,20}\bcrib\b/.test(clause);
     const doNotAdd = /\b(?:do not|don't|never)\s+(?:add|include|bring in|use)\b[^.!?]{0,20}\bcrib\b/.test(
       clause,
@@ -1159,13 +1176,12 @@ function analyzeCribIntent(
     }
     if (
       !doNotRemove &&
-      (/\b(?:remove|take out|drop|get rid of)\b[^.!?]{0,24}\bcrib\b/.test(clause) ||
-        /\b(?:without|no)\s+(?:a\s+|the\s+)?crib\b/.test(clause))
+      (actionFirstRemoval || objectFirstRemoval || /\b(?:without|no)\s+(?:a\s+|the\s+)?crib\b/.test(clause))
     ) {
       actions.add("remove");
     }
     if (
-      /\b(?:do not|don't|never)\b[^.!?]{0,40}\band\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(
+      /\b(?:do not|don't|never)\b[^.!?]{0,40}\band\s+(?:(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b|take\s+(?:the\s+)?crib\s+out\b)/.test(
         clause,
       )
     ) {
