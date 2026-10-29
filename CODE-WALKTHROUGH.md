@@ -20,7 +20,7 @@ Put on screen:
 - `FoundryLocalManager.create`;
 - `modelCacheDir`;
 - `disableNonessentialTelemetry: true`;
-- exact public-catalog lookup for `qwen2.5-1.5b-instruct-generic-gpu:4`;
+- exact public-catalog lookup for `qwen3-0.6b-generic-gpu:2`;
 - one-time exact-model download when the cache is empty;
 - exact `WebGPUExecutionProvider` matching and registration;
 - exact default `nemotron-speech-streaming-en-0.6b-generic-cpu:3` selection on CPU;
@@ -74,11 +74,11 @@ Put on screen:
 const request = new Request()
   .addItem(Item.userMessage(formatTurnPrompt(userPrompt, state)))
   .setOptions({
-    search: { doSample: false, temperature: 0, seed: 42, maxOutputTokens: 1800 },
+    search: { doSample: false, temperature: 0, seed: 42, maxOutputTokens: 256 },
     toolChoice: "none",
     additionalOptions: {
       guidance_type: "json_schema",
-      guidance_data: JSON.stringify(createPlannerJsonSchema(state, { prompt: userPrompt })),
+      guidance_data: JSON.stringify(createIntentDeltaJsonSchema(state, userPrompt)),
     },
   });
 ```
@@ -88,31 +88,30 @@ Then show the three-attempt loop, the `finishReason === "stop"` gate, and
 
 Message:
 
-> One `ChatSession` owns conversation history. Each request sends only the new turn plus the current
-> application state reference. Length-truncated JSON is rolled back even if it happens to parse; only
-> a complete, validated plan can execute.
+> One `ChatSession` owns conversation history. Each request sends the new turn plus a compact summary
+> of accepted furniture. Length-truncated JSON is rolled back even if it happens to parse; only a
+> complete, validated semantic delta can be expanded into a tool input.
 
 ## 7:10–8:40 — Tool contract and fail-closed validation
 
 **File:** `src/domain/tool-contract.ts`
 
-**Symbols:** `compareLayoutOptionsInputSchema`, `parseAndValidateToolInput`,
-`validateExplicitPromptConstraints`
+**Symbols:** `layoutIntentDeltaSchema`, `parseAndValidateIntentDelta`,
+`buildCompareLayoutOptionsInput`, `compareLayoutOptionsInputSchema`
 
 Put on screen:
 
-- fixed room/rule/state-set versions;
-- bed/desk/crib catalog slots;
-- retained furniture;
-- millimetres only;
+- bed/desk/crib semantic changes and clarification;
+- application-derived fixed room/rule/state-set versions;
+- application-derived catalog slots, retained furniture, locked constraints, and millimetres;
 - stale-state rejection;
 - explicit King/Queen/crib correction guard;
 - missing verified dimension handling.
 
 Message:
 
-> Runtime grammar gives us syntactic structure. Application validation gives us state and domain
-> correctness.
+> Runtime grammar gives us a small syntactic delta. Application validation and derivation give us
+> exact state and domain correctness without asking the model to copy authority fields.
 
 ## 8:40–9:50 — Deterministic geometry and typed failure
 
@@ -130,8 +129,8 @@ Put on screen:
 
 Message:
 
-> The model never sees an API that can declare a fit. It can only propose catalog IDs; normal code
-> computes the verdict.
+> The model never sees an API that can declare a fit. It emits only semantic furniture changes;
+> normal code derives catalog IDs and computes the verdict.
 
 ## 9:50–10:50 — Evidence UI, not chain-of-thought
 
@@ -157,8 +156,8 @@ Message:
 
 ## 10:50–11:30 — Acceptance proof and transition to live offline turn
 
-**Files:** `scripts/run-foundry-integration.ts`, `scripts/run-nemotron-integration.ts`,
-`scripts/run-audio-integration.ts`
+**Files:** `scripts/run-foundry-integration.ts`, `scripts/run-layout-model-benchmarks.mjs`,
+`scripts/run-nemotron-integration.ts`, `scripts/run-audio-integration.ts`
 
 Show only:
 
@@ -168,15 +167,18 @@ Show only:
 - no-feasible assertion;
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
+- isolated seven-candidate latency/quality table with A/B/C/failure/correction, clarification,
+  stale/invented guards, and three paraphrases;
 - exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
   recall;
 - explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 14 test files / 129 tests pass in Vitest's reported 1.08 seconds. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,239 ms, stop-to-final 92 ms, 6,340 ms cached
-prepare) and the explicit Whisper fallback prepared in 1,499 ms and transcribed in 164 ms.
+Current checkpoint: 14 test files / 140 tests pass in Vitest's reported 1.06 seconds. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,283 ms, stop-to-final 109 ms, 7,192 ms cached
+prepare) and the explicit Whisper fallback prepared in 5,248 ms and transcribed in 258 ms.
 
-Then return to the app for the single fresh offline controlled-failure input. Do not attempt to run
-all four story turns live; measured Windows latency is 10.579–29.686 seconds per turn.
+Then return to the app for the single fresh offline controlled-failure input. The selected default
+measured 2.677–4.453 seconds in the real app integration and 2.681 seconds median / 3.624 seconds max
+after an isolated warmup.

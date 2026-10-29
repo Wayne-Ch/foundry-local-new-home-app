@@ -13,8 +13,8 @@ flowchart LR
   U --> R
   R --> M[Electron main process]
   M --> FL[Foundry Local SDK 2.2.1<br/>ChatSession]
-  FL --> P[Runtime-guided JSON plan]
-  P --> V[Schema + state + intent validation]
+  FL --> P[Runtime-guided semantic intent delta]
+  P --> V[Prompt validation + full tool-input derivation]
   V --> T[compare_layout_options]
   T --> G[Deterministic geometry]
   G --> E[Typed evidence]
@@ -28,8 +28,7 @@ flowchart LR
 - local English speech-to-text through a separate `AudioSession`, with exact Nemotron live
   streaming as the default and exact Whisper Tiny as an explicit fallback;
 - multi-turn language interpretation;
-- proposing catalog IDs and retained furniture;
-- emitting a structured plan under runtime JSON Schema guidance;
+- emitting only bed/desk/crib intent changes and clarification under runtime JSON Schema guidance;
 - preserving conversation history inside one `ChatSession`;
 - local model loading and hardware-accelerated inference.
 
@@ -42,7 +41,9 @@ flowchart LR
 - owner-only temporary WAV lifecycle for Whisper fallback;
 - verified room, zone, rule, and furniture dimensions;
 - accepted state and stale-state references;
-- strict ID/unit/version/schema checks;
+- exact catalog-ID selection, retained furniture, versions, units, locked constraints, required
+  room-state checks, and unsupported-term evidence;
+- strict schema and derived full-tool-input checks;
 - explicit Queen/King/crib negation and correction guards;
 - bounded option enumeration;
 - geometry, collision, clearance, and no-result decisions;
@@ -123,16 +124,16 @@ explicit recovery selection.
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 1.499 s; transcription 164 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 5.248 s; transcription 258 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.239 s; stop-to-final 92 ms; cached prepare 6.340 s; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.283 s; stop-to-final 109 ms; cached prepare 7.192 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 14 test files and 129 passing tests. The suite includes worklet startup
+Current validation covers 14 test files and 140 passing tests. The suite includes worklet startup
 cleanup, renderer reset concurrency, atomic failed-mode switching, renderer-owner reload/close
 cancellation, submitted-transcript state, bounded cancellation/reset recovery, stale chunk/partial
 rejection, and the complete-Qwen-response execution gate.
@@ -148,14 +149,14 @@ sequenceDiagram
 
   U->>A: Natural-language correction
   A->>F: New user message + current state ref
-  F-->>A: JSON-Schema-constrained structured plan
+  F-->>A: JSON-Schema-constrained semantic intent delta
   A->>A: Require terminal finishReason=stop
-  A->>A: Validate schema, IDs, units, versions, retained state
+  A->>A: Validate prompt intent; derive IDs, versions,<br/>units, constraints, retained state
   alt invalid plan
     A->>F: Bounded correction diagnostic
-    F-->>A: Corrected structured plan
+    F-->>A: Corrected semantic delta
   end
-  A->>G: compare_layout_options(validated plan)
+  A->>G: compare_layout_options(app-derived full input)
   G-->>A: feasible / conflicts / typed no-result
   A-->>U: Labeled application evidence + SVG + trace
 ```
@@ -164,34 +165,32 @@ The correction loop is capped at three attempts. A fourth blind generation is ne
 `finishReason: "length"` is treated as truncated output even if its text happens to parse as JSON;
 partial JSON is rolled back and never reaches geometry.
 
-## Structured plan contract
+## Intent-delta and tool contracts
 
-The runtime-guided plan corresponds to `compare_layout_options`:
+The runtime-guided model output is deliberately small:
 
 ```json
 {
-  "roomPlanId": "ignite-bedroom-a",
-  "planVersion": "2026-10-27.1",
-  "priorStateRef": "layout-state-v2",
-  "clearanceRuleSetId": "ignite-demo-clearance",
-  "clearanceRuleSetVersion": "1.0.0",
-  "requiredRoomStateSetId": "all-required-room-states-v1",
-  "lockedConstraintSetId": "verified-bedroom-locks-v1",
-  "unit": "mm",
-  "candidateFurnitureIds": {
-    "bed": "bed-queen",
-    "desk": "desk-compact",
-    "crib": "crib-standard"
-  },
-  "retainFurnitureIds": ["bed-queen"],
+  "bed": "queen",
+  "desk": "flexible",
+  "crib": "add",
   "changedPreference": "Keep the Queen and add a crib.",
-  "unknowns": [],
-  "clarificationNeeded": false
+  "clarification": "none"
 }
 ```
 
-The slot object prevents duplicate beds/desks while retaining exact catalog IDs. The application
-rejects:
+The schema has no catalog IDs, state references, dimensions, coordinates, fit status, conflicts, or
+geometry verdict. From that delta and the authoritative current state, application code derives the
+existing strict `CompareLayoutOptionsInput`, including:
+
+- exact room/rule/state-set versions and millimetre units;
+- exact `bed-*`, `desk-*`, and optional `crib-standard` catalog IDs;
+- active unchanged IDs in `retainFurnitureIds`;
+- the current `priorStateRef`;
+- locked constraints and required checks;
+- exact unsupported terms and typed missing-dimension messages.
+
+The application rejects:
 
 - stale `priorStateRef`;
 - wrong room/rule versions;
@@ -202,8 +201,8 @@ rejects:
 - explicit King/Queen/crib corrections that the model dropped;
 - verified door/closet/window/catalog facts incorrectly marked unknown.
 
-Unsupported catalog terms such as `dresser` or `nightstand` force
-`clarificationNeeded=true` and a typed missing-dimensions result. Geometry does not run.
+Unsupported catalog terms such as `dresser` or `nightstand` force model clarification plus
+application-derived `unknowns` and `clarificationNeeded=true`. Geometry does not run.
 
 ## Deterministic geometry
 
@@ -257,14 +256,11 @@ The application first implemented the v2.2.1 native function-tool API:
 - `parallel_tool_calls=false`;
 - typed `ToolCallItem` and `ToolResultItem`.
 
-On the cached candidates:
-
-- Qwen3 0.6B exhausted its 2,048-token output budget without a call.
-- Qwen3 1.7B was initially dominated by reasoning; disabling thinking fixed latency but it dropped
-  the crib correction.
-- Qwen2.5 0.5B emitted wrong argument types and empty state refs.
-- Qwen2.5 Coder 1.5B emitted interrupted calls.
-- Qwen2.5 1.5B emitted duplicate parallel calls or dropped replacements.
+The full-input/native-call experiments were slow or unreliable because small models had to repeat
+state references, versions, catalog IDs, and constraint fields. The compact contract removes those
+application-owned fields from model generation. All seven exact cached candidates passed the
+bounded nine-scenario gate; `qwen3-0.6b-generic-gpu:2` had the best measured combination of load,
+warm median, and warm maximum among the stage-appropriate options.
 
 The chosen fallback still uses the current `ChatSession` API and runtime grammar, but the model emits
 the argument object as JSON rather than a native tool marker. The app invokes the tool explicitly and
@@ -274,7 +270,7 @@ path, not a hidden fake.
 ## Process and cleanup
 
 1. Create one `FoundryLocalManager`.
-2. Resolve exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4` from the public catalog.
+2. Resolve exact model ID `qwen3-0.6b-generic-gpu:2` from the public catalog.
 3. Resolve exact default audio ID `nemotron-speech-streaming-en-0.6b-generic-cpu:3` from the same
    manager/catalog; resolve Whisper Tiny only after explicit fallback selection.
 4. Download either exact model once if its bounded preparation is approved and the cache is empty.

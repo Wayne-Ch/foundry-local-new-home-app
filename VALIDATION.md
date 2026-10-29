@@ -1,6 +1,6 @@
 # Validation record
 
-**Date:** October 28, 2026
+**Date:** October 29, 2026
 
 **Platform:** Windows 11 Enterprise x64, build `10.0.26300`
 
@@ -11,17 +11,17 @@
 | Item | Validated value |
 |---|---|
 | SDK | `foundry-local-sdk@2.2.1` |
-| Node | `24.22.2` |
+| Node | `26.13.0` |
 | Electron | `42.3.3` |
-| Model alias | `qwen2.5-1.5b` |
-| Exact model ID | `qwen2.5-1.5b-instruct-generic-gpu:4` |
+| Model alias | `qwen3-0.6b` |
+| Exact model ID | `qwen3-0.6b-generic-gpu:2` |
 | Target source | Built-in stage default; no model alias fallback |
-| Model cache size | 1,546 MB |
+| Model cache size | 529 MB |
 | Device | GPU |
 | Execution provider | `WebGPUExecutionProvider` |
 | EP bundle | `webgpu-ep-0.2.1-win-x64` |
 | Inference endpoint | none |
-| Planning mode | runtime JSON Schema -> app tool invocation |
+| Planning mode | runtime intent-delta JSON Schema -> app-derived tool invocation |
 | Visible response | application-rendered typed evidence |
 | Default audio model alias | `nemotron-speech-streaming-en-0.6b` |
 | Exact default audio model ID | `nemotron-speech-streaming-en-0.6b-generic-cpu:3` |
@@ -32,8 +32,11 @@
 | Explicit fallback | `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
 | Audio submission policy | live partials are display-only; final transcript is editable; never auto-submit |
 
-Qwen2.5 1.5B was the smallest cached model that passed the entire staged and adversarial acceptance.
-Qwen3 1.7B is smaller (1,421 MB) but failed the crib correction after three bounded attempts.
+The compact contract moved exact IDs, state references, versions, units, retained objects, locked
+constraints, required checks, and unknown-term construction into application code. The model emits
+only semantic bed/desk/crib changes, the user change text, and clarification. Exact
+`qwen3-0.6b-generic-gpu:2` was the fastest stage-appropriate candidate by measured warm maximum and
+also improved model load and median latency over the previous default.
 
 ## Commands run
 
@@ -42,6 +45,7 @@ npm install --no-audit --no-fund
 npm install-scripts approve esbuild foundry-local-sdk
 npm rebuild esbuild foundry-local-sdk
 npm run probe:foundry
+npm run benchmark:layout
 npm run typecheck
 npm run lint
 npm test
@@ -64,7 +68,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 14 files / 129 tests pass; Vitest reported 1.08 s |
+| Unit tests | 14 files / 140 tests pass; Vitest reported 1.06 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer-owner reload/close probe | Pass; both streams canceled, ownership session advanced, stale partial routing rejected, no uncaught exception or unhandled rejection |
@@ -75,6 +79,12 @@ npm run capture:ui
 | King + desk + crib | No feasible bounded option |
 | Adversarial negation/correction | Feasible Queen + compact desk |
 | Exact default model/EP enforced | Pass; integration asserts exact ID and canonical WebGPU EP |
+| Compact intent contract | Pass; model schema contains no IDs, state refs, dimensions, placements, fit, conflicts, or geometry verdict |
+| App-derived authority fields | Pass; exact IDs, versions, units, state ref, retained IDs, locked constraints, required checks, and unknowns are derived |
+| Candidate quality gate | 7/7 exact cached candidates passed 9/9 scenarios in one attempt each |
+| Unsupported item | Pass; dresser forces clarification and app-derived missing-dimension evidence |
+| Stale/invented protections | Pass; stale state, invented IDs, and extra geometry/verdict fields are rejected |
+| Paraphrases | Pass; Queen/regular desk, King/keep desk, and Queen/crib/flexible desk |
 | Empty-cache preparation path | Pass; direct regression covers catalog lookup, model download, EP registration, and load |
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
@@ -82,10 +92,10 @@ npm run capture:ui
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
-| Nemotron timing | Cached prepare 6,340 ms; first partial 1,239 ms; stop-to-final 92 ms |
+| Nemotron timing | Cached prepare 7,192 ms; first partial 1,283 ms; stop-to-final 109 ms |
 | Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
 | Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
-| Whisper fallback timing | Cached prepare 1,499 ms; final transcription 164 ms |
+| Whisper fallback timing | Cached prepare 5,248 ms; final transcription 258 ms |
 | Failed audio-mode switching | Pass; requested mode is shown not ready while the previously working model remains loaded when target resolution fails |
 | Transcript submission state | Pass; the exact edited prompt becomes submitted/processing and never remains labeled `not sent` after Send |
 | Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
@@ -98,39 +108,79 @@ Final command outputs from the October 28 run:
 
 | Command | Result |
 |---|---|
-| `npm run lint` | 58 files checked |
+| `npm run probe:foundry` | Pass; exact selected default cached; exact task/device/EP/cache metadata recorded for all candidates |
+| `npm run benchmark:layout` | Pass; 7 exact candidates, 9 scenarios each, isolated process per model |
+| `npm run lint` | 60 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 14 files / 129 tests; Vitest reported 1.08 s |
+| `npm test` | 14 files / 140 tests; Vitest reported 1.06 s |
 | `npm run build` | Pass; 115 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:stream-owner` | Pass; real reload and close both cancel the captured renderer-owned stream |
 | `npm run probe:microphone-permission` | Pass, including its required rebuild |
-| `npm run capture:ui` | Pass; 388,084-byte labeled screenshot, including rebuild |
-| `npm run test:audio-integration` | Pass; 1,499 ms prepare, 164 ms transcription |
-| `npm run test:nemotron-integration` | Pass; 31 partials, 1,239 ms first partial, 92 ms stop-to-final |
-| `npm run test:integration` | Pass; five real Qwen turns |
+| `npm run capture:ui` | Pass; 388,449-byte labeled screenshot, including rebuild |
+| `npm run test:audio-integration` | Pass; 5,248 ms prepare, 258 ms transcription |
+| `npm run test:nemotron-integration` | Pass; 31 partials, 1,283 ms first partial, 109 ms stop-to-final |
+| `npm run test:integration` | Pass; five real Qwen3 turns, 2.677–4.453 s, one attempt each |
 
-Observed turn durations on this machine:
+## Layout latency profile
 
-| Turn | Duration |
-|---|---:|
-| Queen + desk | 10.579 s |
-| King replacement | 19.082 s |
-| Add crib | 22.620 s |
-| Controlled failure | 26.246 s |
-| Adversarial correction | 29.686 s |
+The legacy full-input baseline used exact
+`qwen2.5-1.5b-instruct-generic-gpu:4`. It required the model to reproduce fixed IDs, versions,
+state references, retained objects, units, and clarification details.
 
-The longer turns include one bounded correction request.
+| Legacy turn | Attempts | Generation | Validation | Total | Prompt tokens | Output tokens | Prompt / schema / output bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A · Queen + desk | 1 | 23,945 ms | 4.722 ms | 23,955 ms | 748 | 210 | 1,043 / 1,812 / 697 |
+| B · King replacement | 2 | 36,029 ms | 1.066 ms | 36,037 ms | 1,285 | 198 | 1,310 / 1,758 / 653 |
+| C · Add crib | 2 | 25,789 ms | 0.698 ms | 25,795 ms | 1,820 | 212 | 1,355 / 1,754 / 700 |
+| Controlled failure | 2 | 27,797 ms | 0.558 ms | 27,806 ms | 2,378 | 223 | 1,369 / 1,773 / 729 |
+| Negation/correction | 2 | 38,882 ms | 0.721 ms | 38,893 ms | 2,943 | 219 | 1,367 / 1,769 / 721 |
 
-## Model-path evidence
+Legacy cached model load was 8,120 ms. The current selected-default app integration measured:
 
-| Candidate | Result |
-|---|---|
-| Qwen3 0.6B GPU, 529 MB | Exhausted 2,048 output tokens without a native tool call |
-| Qwen2.5 0.5B NPU, 528 MB | Invalid argument type and empty state reference |
-| Qwen2.5 Coder 1.5B GPU, 1,280 MB | Interrupted native tool-call output |
-| Qwen3 1.7B GPU, 1,421 MB | Reasoning disabled successfully; failed crib correction |
-| Qwen2.5 1.5B GPU, 1,546 MB | Full staged and adversarial flow passed |
+The legacy capture ran at task start under Node 24.22.2; the host toolchain exposed Node 26.13.0
+for the final isolated candidate suite and regression. SDK 2.2.1, hardware, cache, EP, prompts, and
+models remained fixed. The same-process-version candidate ranking is therefore the authoritative
+model-selection evidence; the legacy comparison remains the measured contract-path before/after.
+
+| Intent-delta turn | Attempts | Generation | Validation | Total | Prompt tokens | Output tokens | Prompt / schema / output bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A · Queen + desk | 1 | 4,439 ms | 6.266 ms | 4,453 ms | 218 | 57 | 269 / 472 / 190 |
+| B · King replacement | 1 | 2,673 ms | 0.779 ms | 2,677 ms | 339 | 50 | 240 / 430 / 160 |
+| C · Add crib | 1 | 3,147 ms | 1.539 ms | 3,152 ms | 462 | 59 | 280 / 460 / 198 |
+| Controlled failure | 1 | 3,462 ms | 0.559 ms | 3,467 ms | 596 | 61 | 282 / 466 / 199 |
+| Negation/correction | 1 | 3,708 ms | 0.490 ms | 3,712 ms | 731 | 60 | 288 / 476 / 208 |
+
+The real app maximum fell from 38,893 ms to 4,453 ms (**88.5% reduction**) and every turn fell to
+one attempt. In the isolated warm benchmark, the selected model measured 2,681 ms median and
+3,624 ms maximum, a **90.7% reduction** from the legacy maximum.
+
+## Exact model benchmark
+
+`npm run benchmark:layout` ran each cached candidate in a fresh process against A/B/C, controlled
+failure, correction, unsupported-dresser clarification, stale/invented protections, and three
+paraphrases. All nine model scenarios completed in one bounded attempt; all deterministic
+geometry/status results matched the baseline. Selection ranked lowest warm maximum first, then warm
+median, then model load.
+
+| Exact candidate | Task | Device / EP | Cached size | Load | Warm median / max | Attempts / failures | Peak process RSS | Result |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `qwen2.5-0.5b-instruct-vitis-npu:3` | `chat-completion` | NPU / Vitis AI | 528 MB | 8,095 ms | 5,191 / 7,039 ms | 9 / 0 | 4,625 MB | Pass |
+| `qwen3-0.6b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 529 MB | 2,926 ms | 2,681 / 3,624 ms | 9 / 0 | 9,947 MB | **Selected** |
+| `qwen3.5-0.8b-generic-gpu:2` | `vision-language-chat` | GPU / WebGPU | 1,341 MB | 9,967 ms | 2,091 / 4,140 ms | 9 / 0 | 5,471 MB | Pass |
+| `qwen3.5-2b-generic-gpu:2` | `vision-language-chat` | GPU / WebGPU | 3,201 MB | 11,034 ms | 4,414 / 5,534 ms | 9 / 0 | 7,280 MB | Pass |
+| `qwen3.5-4b-generic-gpu:2` | `vision-language-chat` | GPU / WebGPU | 5,486 MB | 11,060 ms | 9,589 / 12,710 ms | 9 / 0 | 15,364 MB | Quality pass; misses latency target |
+| `qwen3-1.7b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 1,421 MB | 4,419 ms | 5,002 / 6,519 ms | 9 / 0 | 11,018 MB | Pass |
+| `qwen2.5-1.5b-instruct-generic-gpu:4` | `chat-completion` | GPU / WebGPU | 1,546 MB | 5,472 ms | 2,818 / 3,900 ms | 9 / 0 | 3,961 MB | Pass; previous default |
+
+Peak RSS is whole-process mapped working-set evidence, not dedicated model or VRAM allocation.
+All three cached Qwen3.5 variants proved compatible with pinned v2.2.1 `ChatSession`, text-only
+requests, disabled thinking, and JSON Schema guidance despite catalog task
+`vision-language-chat`; readiness now permits that task for explicit overrides.
+
+No 9B model was downloaded: the task explicitly prohibited it, no 9B candidate was cached, and a
+larger download would work against the latency and footprint objective after a 529 MB candidate
+already passed the full gate.
 
 ## Audio model evidence
 
@@ -150,14 +200,14 @@ Catalog and measured comparison:
 
 | Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
 |---|---|---|---:|---:|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 1,499 ms current cached prepare | 164 ms, exact |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 5,248 ms current cached prepare | 258 ms, exact |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 6,340 ms current cached prepare | 31 live revisions; first 1,239 ms; final 92 ms after stop; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 7,192 ms current cached prepare | 31 live revisions; first 1,283 ms; final 109 ms after stop; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
 
 Nemotron English was downloaded once under the authorized under-1-GB policy and remains in the
 shared cache as the stage default. The current real-time run produced 31 subtitle revisions, first
-text at 1,239 ms, and final output 92 ms after the 5.53-second input ended. The UI displays those
+text at 1,283 ms, and final output 109 ms after the 5.53-second input ended. The UI displays those
 partials only in **Live draft — not sent**. On Stop, it inserts only the terminal aggregate
 `SpeechResult` into Manual prompt. On Send, that panel transitions to the exact edited submitted
 prompt and a processing/submitted label.
@@ -172,13 +222,13 @@ Final real app-service Nemotron integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 6,340 ms, cached |
+| Prepare manager/catalog/model | 7,192 ms, cached |
 | Partial revisions | 31 |
-| First partial | “Can” at 1,239 ms |
+| First partial | “Can” at 1,283 ms |
 | Final transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door” |
 | Key-word recall | 7/7 (100%) |
-| Stop-to-final | 92 ms |
-| Total paced stream | 6,004 ms |
+| Stop-to-final | 109 ms |
+| Total paced stream | 6,095 ms |
 | Endpoint | in-process SDK only |
 
 Final real app-service Whisper fallback integration:
@@ -187,10 +237,10 @@ Final real app-service Whisper fallback integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 1,499 ms, cached |
+| Prepare manager/catalog/model | 5,248 ms, cached |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 164 ms |
+| Transcription | 258 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 

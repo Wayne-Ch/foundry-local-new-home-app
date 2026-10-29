@@ -11,6 +11,7 @@ import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry
 interface TurnEvidence {
   readonly label: string;
   readonly prompt: string;
+  readonly intentDelta: unknown;
   readonly toolArguments: unknown;
   readonly toolStatus: LayoutToolResult["status"];
   readonly selectedOptionId: string | null;
@@ -19,6 +20,7 @@ interface TurnEvidence {
   readonly aggregateConflicts: readonly string[];
   readonly assistantText: string;
   readonly validationAttempts: number;
+  readonly performance: unknown;
   readonly durationMs: number;
 }
 
@@ -53,6 +55,7 @@ async function runAndCommit(
     evidence: {
       label,
       prompt,
+      intentDelta: outcome.modelIntent.parsed,
       toolArguments: outcome.validatedInput,
       toolStatus: outcome.toolResult.status,
       selectedOptionId: outcome.toolResult.selectedOptionId,
@@ -61,6 +64,7 @@ async function runAndCommit(
       aggregateConflicts: outcome.toolResult.aggregateConflicts.map((conflict) => conflict.message),
       assistantText: outcome.assistantText,
       validationAttempts: outcome.validationAttempts,
+      performance: outcome.performance,
       durationMs: Math.round(performance.now() - started),
     },
   };

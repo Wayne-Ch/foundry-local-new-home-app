@@ -9,11 +9,12 @@ import {
 } from "foundry-local-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createInitialDemoState } from "../src/domain/demo-state";
-import { createToolInputForTests } from "../src/domain/tool-contract";
+import { preferredLayoutIntentDelta } from "../src/domain/tool-contract";
 import { FoundryLayoutService, type FoundryRuntimeError } from "../src/foundry/foundry-service";
 import {
   resolveRuntimeTarget,
   VALIDATED_EXECUTION_PROVIDER,
+  VALIDATED_MODEL_ALIAS,
   VALIDATED_MODEL_ID,
 } from "../src/foundry/runtime-config";
 import { runtimeBadgeLabel } from "../src/renderer/runtime-presentation";
@@ -38,6 +39,7 @@ class FakeModel implements IModel {
     readonly provider: string,
     cached: boolean,
     readonly downloadError: Error | null = null,
+    readonly task = "chat-completion",
   ) {
     this.cached = cached;
   }
@@ -53,7 +55,7 @@ class FakeModel implements IModel {
       executionProvider: this.provider,
       providerType: "fake",
       cached: this.cached,
-      task: "chat-completion",
+      task: this.task,
       runtime: {
         deviceType: isCpuProvider(this.provider) ? DeviceType.CPU : DeviceType.GPU,
         executionProvider: this.provider,
@@ -336,7 +338,12 @@ describe("Foundry runtime target configuration", () => {
   });
 
   it("reports an incomplete exact override as invalid without loading the default model", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model);
     const service = createService(manager, { FOUNDRY_MODEL_ID: "alternate:1" });
 
@@ -363,7 +370,12 @@ describe("Foundry runtime target configuration", () => {
   });
 
   it("reports a rejected alias override as invalid without loading the default model", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model);
     const service = createService(manager, { FOUNDRY_MODEL_ALIAS: "qwen3-1.7b" });
 
@@ -392,16 +404,17 @@ describe("Foundry runtime target configuration", () => {
 
 describe("Foundry offline preparation", () => {
   it("never executes JSON returned with a truncated length finish reason", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model, true);
     const state = createInitialDemoState();
     const prompt = "Can a Queen bed and a standard desk fit?";
     const session = new GatedSession(
-      createToolInputForTests({
-        state,
-        candidateFurnitureIds: ["bed-queen", "desk-standard"],
-        changedPreference: prompt,
-      }),
+      preferredLayoutIntentDelta(state, prompt),
       Promise.resolve(),
       () => {},
       "length",
@@ -422,8 +435,46 @@ describe("Foundry offline preparation", () => {
     await service.shutdown();
   });
 
+  it("rolls back the final rejected intent delta before reporting bounded failure", async () => {
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
+    const manager = new FakeManager(model, true);
+    const state = createInitialDemoState();
+    const prompt = "Can a Queen bed and a standard desk fit?";
+    const session = new GatedSession(
+      {
+        ...preferredLayoutIntentDelta(state, prompt),
+        bed: "king",
+      },
+      Promise.resolve(),
+      () => {},
+    );
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createSession: () => session,
+    });
+    await service.prepareOffline();
+
+    await expect(service.runTurn(prompt, state)).rejects.toMatchObject<Partial<FoundryRuntimeError>>({
+      code: "INVALID_TOOL_CALL",
+    });
+    expect(session.processCalls).toBe(3);
+    expect(session.turnCount).toBe(0);
+    await service.shutdown();
+  });
+
   it("single-flights concurrent initialization and disposes the manager once", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model);
     const pathsGate = deferred();
     let managerCreateCalls = 0;
@@ -452,7 +503,12 @@ describe("Foundry offline preparation", () => {
   });
 
   it("clears a failed initialization flight so a later retry can succeed", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model);
     let managerCreateCalls = 0;
     const service = new FoundryLayoutService({
@@ -483,7 +539,12 @@ describe("Foundry offline preparation", () => {
   });
 
   it("resolves the full catalog and downloads the exact default from an empty cache", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, false);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      false,
+    );
     const manager = new FakeManager(model);
     const service = createService(manager);
 
@@ -507,7 +568,7 @@ describe("Foundry offline preparation", () => {
   it("reports an explicit model download failure", async () => {
     const model = new FakeModel(
       VALIDATED_MODEL_ID,
-      "qwen2.5-1.5b",
+      VALIDATED_MODEL_ALIAS,
       VALIDATED_EXECUTION_PROVIDER,
       false,
       new Error("network unavailable"),
@@ -540,7 +601,12 @@ describe("Foundry offline preparation", () => {
   });
 
   it("reports the exact provider when it is not discoverable", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const service = createService(new FakeManager(model, false, false));
 
     const readiness = await service.initialize();
@@ -553,7 +619,7 @@ describe("Foundry offline preparation", () => {
   });
 
   it("refuses a configured model whose catalog provider does not match", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", "CPUExecutionProvider", true);
+    const model = new FakeModel(VALIDATED_MODEL_ID, VALIDATED_MODEL_ALIAS, "CPUExecutionProvider", true);
     const service = createService(new FakeManager(model, true));
 
     const readiness = await service.initialize();
@@ -584,8 +650,41 @@ describe("Foundry offline preparation", () => {
     await service.shutdown();
   });
 
+  it("accepts a text-capable vision-language-chat override after JSON-schema compatibility", async () => {
+    const model = new FakeModel(
+      "qwen3.5-0.8b-generic-gpu:2",
+      "qwen3.5-0.8b",
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+      null,
+      "vision-language-chat",
+    );
+    const service = createService(new FakeManager(model, true), {
+      FOUNDRY_MODEL_ID: model.id,
+      FOUNDRY_EXECUTION_PROVIDER: VALIDATED_EXECUTION_PROVIDER,
+    });
+
+    await expect(service.prepareOffline()).resolves.toMatchObject({
+      localInferenceReady: true,
+      model: {
+        id: model.id,
+        executionProvider: VALIDATED_EXECUTION_PROVIDER,
+      },
+      target: {
+        source: "environment_override",
+        stageValidated: false,
+      },
+    });
+    await service.shutdown();
+  });
+
   it("waits for an active layout request before replacing its native session", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model, true);
     const state = createInitialDemoState();
     const prompt = "Can a Queen bed and a standard desk fit?";
@@ -593,11 +692,7 @@ describe("Foundry offline preparation", () => {
     const processStarted = deferred();
     const sessions: Array<GatedSession | FakeSession> = [];
     const gatedSession = new GatedSession(
-      createToolInputForTests({
-        state,
-        candidateFurnitureIds: ["bed-queen", "desk-standard"],
-        changedPreference: prompt,
-      }),
+      preferredLayoutIntentDelta(state, prompt),
       processGate.promise,
       processStarted.resolve,
     );
@@ -631,18 +726,19 @@ describe("Foundry offline preparation", () => {
   });
 
   it("quarantines a timed-out reset until the late turn is rolled back and the session is replaced", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model, true);
     const state = createInitialDemoState();
     const prompt = "Can a Queen bed and a standard desk fit?";
     const processGate = deferred();
     const processStarted = deferred();
     const gatedSession = new GatedSession(
-      createToolInputForTests({
-        state,
-        candidateFurnitureIds: ["bed-queen", "desk-standard"],
-        changedPreference: prompt,
-      }),
+      preferredLayoutIntentDelta(state, prompt),
       processGate.promise,
       processStarted.resolve,
     );
@@ -684,18 +780,19 @@ describe("Foundry offline preparation", () => {
   });
 
   it("keeps the runtime quarantined when automatic session replacement fails and recovers on reset", async () => {
-    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const model = new FakeModel(
+      VALIDATED_MODEL_ID,
+      VALIDATED_MODEL_ALIAS,
+      VALIDATED_EXECUTION_PROVIDER,
+      true,
+    );
     const manager = new FakeManager(model, true);
     const state = createInitialDemoState();
     const prompt = "Can a Queen bed and a standard desk fit?";
     const processGate = deferred();
     const processStarted = deferred();
     const gatedSession = new GatedSession(
-      createToolInputForTests({
-        state,
-        candidateFurnitureIds: ["bed-queen", "desk-standard"],
-        changedPreference: prompt,
-      }),
+      preferredLayoutIntentDelta(state, prompt),
       processGate.promise,
       processStarted.resolve,
     );

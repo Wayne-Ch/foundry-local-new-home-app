@@ -206,7 +206,7 @@ export interface RuntimeTargetIdentity {
 export interface RuntimeReadiness {
   readonly sdkVersion: "2.2.1";
   readonly provider: "Foundry Local in-process SDK";
-  readonly planningMode: "Runtime-guided JSON schema -> app tool invocation";
+  readonly planningMode: "Runtime-guided intent-delta JSON schema -> app-derived tool invocation";
   readonly responseMode: "Application-rendered typed evidence";
   readonly target: RuntimeTargetIdentity;
   readonly model: ModelIdentity | null;

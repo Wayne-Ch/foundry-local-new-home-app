@@ -24,7 +24,11 @@ import {
 } from "../src/audio/audio-types";
 import { TempAudioStore } from "../src/audio/temp-audio-store";
 import { FoundryLayoutService } from "../src/foundry/foundry-service";
-import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry/runtime-config";
+import {
+  VALIDATED_EXECUTION_PROVIDER,
+  VALIDATED_MODEL_ALIAS,
+  VALIDATED_MODEL_ID,
+} from "../src/foundry/runtime-config";
 
 const tempRoots: string[] = [];
 
@@ -364,11 +368,11 @@ async function createFixture(options: FixtureOptions = {}) {
   const store = options.createStore?.(root) ?? new TempAudioStore(root);
   const chatModel = new FakeModel(
     VALIDATED_MODEL_ID,
-    "qwen2.5-1.5b",
+    VALIDATED_MODEL_ALIAS,
     "chat-completion",
     VALIDATED_EXECUTION_PROVIDER,
     true,
-    1546,
+    529,
   );
   const audioModel = new FakeModel(
     WHISPER_AUDIO_MODEL_ID,

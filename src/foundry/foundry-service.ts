@@ -42,8 +42,9 @@ import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import {
   type CompareLayoutOptionsInput,
-  createPlannerJsonSchema,
-  parseAndValidateToolInput,
+  createIntentDeltaJsonSchema,
+  type LayoutIntentDelta,
+  parseAndValidateIntentDelta,
   type ToolValidationError,
 } from "../domain/tool-contract";
 import type {
@@ -65,7 +66,9 @@ import {
 } from "./runtime-config";
 
 const MAX_TOOL_ATTEMPTS = 3;
+const MAX_INTENT_OUTPUT_TOKENS = 256;
 const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
+const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding", "vision-language-chat"]);
 
 interface FoundryCatalogHandle {
   getCachedModels(): Promise<IModel[]>;
@@ -130,9 +133,15 @@ export interface FoundryLayoutServiceOptions {
 }
 
 export interface FoundryTurnOutcome {
+  readonly modelIntent: {
+    readonly callId: string;
+    readonly name: "interpret_layout_intent";
+    readonly arguments: string;
+    readonly parsed: LayoutIntentDelta;
+  };
   readonly toolCall: {
     readonly callId: string;
-    readonly name: string;
+    readonly name: "compare_layout_options";
     readonly arguments: string;
   };
   readonly validatedInput: CompareLayoutOptionsInput;
@@ -143,7 +152,24 @@ export interface FoundryTurnOutcome {
   readonly summaryResponse: Response | null;
   readonly validationAttempts: number;
   readonly validationErrors: readonly ToolValidationError[];
-  readonly planningMode: "json-schema-tool-plan";
+  readonly performance: {
+    readonly totalMs: number;
+    readonly geometryMs: number;
+    readonly attempts: readonly {
+      readonly attempt: number;
+      readonly promptBytes: number;
+      readonly schemaBytes: number;
+      readonly outputBytes: number;
+      readonly preflightMs: number;
+      readonly generationMs: number;
+      readonly validationMs: number;
+      readonly promptTokens: number | null;
+      readonly completionTokens: number | null;
+      readonly finishReason: Response["finishReason"] | "runtime_error";
+      readonly accepted: boolean;
+    }[];
+  };
+  readonly planningMode: "json-schema-intent-delta";
 }
 
 export class FoundryRuntimeError extends Error {
@@ -199,6 +225,10 @@ function executionProvider(model: IModel): string {
 
 function isCpuExecutionProvider(name: string): boolean {
   return canonicalExecutionProvider(name) === "CPUExecutionProvider";
+}
+
+function supportsLayoutTask(model: IModel): boolean {
+  return SUPPORTED_LAYOUT_TASKS.has(model.info.task?.toLowerCase() ?? "");
 }
 
 function modelIdentity(model: IModel): ModelIdentity {
@@ -289,7 +319,7 @@ function initialReadiness(
   return {
     sdkVersion: "2.2.1",
     provider: "Foundry Local in-process SDK",
-    planningMode: "Runtime-guided JSON schema -> app tool invocation",
+    planningMode: "Runtime-guided intent-delta JSON schema -> app-derived tool invocation",
     responseMode: "Application-rendered typed evidence",
     target,
     model: null,
@@ -1325,6 +1355,7 @@ export class FoundryLayoutService {
     generation: number,
     onPhase?: (phase: string, detail: string) => void,
   ): Promise<FoundryTurnOutcome> {
+    const turnStarted = performance.now();
     await this.initialize();
     this.#assertLayoutOperationCurrent(generation);
     if (!this.#readiness.localInferenceReady) {
@@ -1344,11 +1375,13 @@ export class FoundryLayoutService {
     let planningResponse: Response | null = null;
     let planningPreflight: RequestPreflightResult | null = null;
     let rawArguments: string | null = null;
+    let intentDelta: LayoutIntentDelta | null = null;
     let validatedInput: CompareLayoutOptionsInput | null = null;
+    const attemptPerformance: FoundryTurnOutcome["performance"]["attempts"][number][] = [];
 
     for (let attempt = 1; attempt <= MAX_TOOL_ATTEMPTS; attempt += 1) {
       const turnCountBeforeAttempt = session.turnCount;
-      onPhase?.("model-planning", `Foundry Local is planning the structured tool call (attempt ${attempt}).`);
+      onPhase?.("model-planning", `Foundry Local is extracting the intent delta (attempt ${attempt}).`);
       const request = new Request();
       if (this.#systemPromptPending) {
         request.addItem(Item.systemMessage(systemPrompt));
@@ -1356,25 +1389,29 @@ export class FoundryLayoutService {
       const correction =
         validationErrors.length === 0
           ? ""
-          : `\nPRIOR_TOOL_CALL_REJECTED: ${JSON.stringify(validationErrors.at(-1))}\nReturn a corrected tool call only.`;
-      request.addItem(Item.userMessage(`${formatTurnPrompt(userPrompt, state)}${correction}`)).setOptions({
+          : `\nREJECTED_DELTA: ${JSON.stringify(validationErrors.at(-1))}\nReturn corrected intent JSON only.`;
+      const prompt = `${formatTurnPrompt(userPrompt, state)}${correction}`;
+      const schema = JSON.stringify(createIntentDeltaJsonSchema(state, userPrompt));
+      request.addItem(Item.userMessage(prompt)).setOptions({
         search: {
           doSample: false,
           temperature: 0,
           seed: 42,
-          maxOutputTokens: 1800,
+          maxOutputTokens: MAX_INTENT_OUTPUT_TOKENS,
         },
         toolChoice: "none",
         additionalOptions: {
           ...structuredTurnOptions,
           guidance_type: "json_schema",
-          guidance_data: JSON.stringify(createPlannerJsonSchema(state, { prompt: userPrompt })),
+          guidance_data: schema,
         },
       });
 
+      const preflightStarted = performance.now();
       planningPreflight = await this.#executeLayoutRequest(request, generation, () =>
         session.preflightRequest(request),
       );
+      const preflightMs = performance.now() - preflightStarted;
       if (!planningPreflight.fits) {
         throw new FoundryRuntimeError(
           `Request needs ${planningPreflight.requiredTokens} tokens but the context limit is ${planningPreflight.contextLimitTokens}.`,
@@ -1382,24 +1419,42 @@ export class FoundryLayoutService {
         );
       }
 
+      const generationStarted = performance.now();
+      let generationMs = 0;
       try {
         planningResponse = await this.#executeLayoutRequest(request, generation, () =>
           session.processRequest(request),
         );
+        generationMs = performance.now() - generationStarted;
       } catch (error) {
+        generationMs = performance.now() - generationStarted;
         this.#rollbackSessionTurns(session, turnCountBeforeAttempt);
         this.#assertLayoutOperationCurrent(generation);
-        validationErrors.push({
+        const validationError: ToolValidationError = {
           code: "INVALID_SCHEMA",
-          message: "The native runtime rejected the generated tool call before execution.",
+          message: "The native runtime rejected the generated intent delta before execution.",
           details: [error instanceof Error ? error.message : String(error)],
+        };
+        validationErrors.push(validationError);
+        attemptPerformance.push({
+          attempt,
+          promptBytes: Buffer.byteLength(prompt, "utf8"),
+          schemaBytes: Buffer.byteLength(schema, "utf8"),
+          outputBytes: 0,
+          preflightMs,
+          generationMs,
+          validationMs: 0,
+          promptTokens: planningPreflight.promptTokens ?? null,
+          completionTokens: null,
+          finishReason: "runtime_error",
+          accepted: false,
         });
         this.#systemPromptPending = state.version === 0;
         if (attempt < MAX_TOOL_ATTEMPTS) {
           continue;
         }
         throw new FoundryRuntimeError(
-          `The model produced a runtime-rejected tool call after ${MAX_TOOL_ATTEMPTS} bounded attempts.`,
+          `The model produced a runtime-rejected intent delta after ${MAX_TOOL_ATTEMPTS} bounded attempts.`,
           "INVALID_TOOL_CALL",
           { cause: error },
         );
@@ -1407,6 +1462,7 @@ export class FoundryLayoutService {
       this.#assertLayoutOperationCurrent(generation);
       this.#systemPromptPending = false;
       if (planningResponse.finishReason !== "stop") {
+        const partialArguments = extractDefaultText(planningResponse);
         validationErrors.push({
           code: "INVALID_SCHEMA",
           message:
@@ -1414,6 +1470,19 @@ export class FoundryLayoutService {
               ? "The schema-guided planner hit its output limit; partial JSON is never executed."
               : "The schema-guided planner returned an unexpected finish reason.",
           details: [planningResponse.finishReason],
+        });
+        attemptPerformance.push({
+          attempt,
+          promptBytes: Buffer.byteLength(prompt, "utf8"),
+          schemaBytes: Buffer.byteLength(schema, "utf8"),
+          outputBytes: Buffer.byteLength(partialArguments, "utf8"),
+          preflightMs,
+          generationMs,
+          validationMs: 0,
+          promptTokens: planningResponse.usage?.promptTokens ?? planningPreflight.promptTokens ?? null,
+          completionTokens: planningResponse.usage?.completionTokens ?? null,
+          finishReason: planningResponse.finishReason,
+          accepted: false,
         });
         if (session.turnCount > turnCountBeforeAttempt) {
           session.undoTurns(session.turnCount - turnCountBeforeAttempt);
@@ -1431,6 +1500,19 @@ export class FoundryLayoutService {
           message: "The schema-guided planner returned no structured text.",
           details: [],
         });
+        attemptPerformance.push({
+          attempt,
+          promptBytes: Buffer.byteLength(prompt, "utf8"),
+          schemaBytes: Buffer.byteLength(schema, "utf8"),
+          outputBytes: 0,
+          preflightMs,
+          generationMs,
+          validationMs: 0,
+          promptTokens: planningResponse.usage?.promptTokens ?? planningPreflight.promptTokens ?? null,
+          completionTokens: planningResponse.usage?.completionTokens ?? null,
+          finishReason: planningResponse.finishReason,
+          accepted: false,
+        });
         if (session.turnCount > turnCountBeforeAttempt) {
           session.undoTurns(session.turnCount - turnCountBeforeAttempt);
         }
@@ -1442,11 +1524,27 @@ export class FoundryLayoutService {
       }
       onPhase?.(
         "tool-validating",
-        "The application is validating IDs, units, state, and locked constraints.",
+        "The application is validating intent and deriving IDs, state, units, and locked constraints.",
       );
-      const validation = parseAndValidateToolInput(rawArguments, state, userPrompt);
+      const validationStarted = performance.now();
+      const validation = parseAndValidateIntentDelta(rawArguments, state, userPrompt);
+      const validationMs = performance.now() - validationStarted;
+      attemptPerformance.push({
+        attempt,
+        promptBytes: Buffer.byteLength(prompt, "utf8"),
+        schemaBytes: Buffer.byteLength(schema, "utf8"),
+        outputBytes: Buffer.byteLength(rawArguments, "utf8"),
+        preflightMs,
+        generationMs,
+        validationMs,
+        promptTokens: planningResponse.usage?.promptTokens ?? planningPreflight.promptTokens ?? null,
+        completionTokens: planningResponse.usage?.completionTokens ?? null,
+        finishReason: planningResponse.finishReason,
+        accepted: validation.ok,
+      });
       if (validation.ok) {
-        validatedInput = validation.value;
+        intentDelta = validation.value.intentDelta;
+        validatedInput = validation.value.toolInput;
         break;
       }
 
@@ -1457,9 +1555,11 @@ export class FoundryLayoutService {
         );
       }
       validationErrors.push(validation.error);
+      if (session.turnCount > turnCountBeforeAttempt) {
+        session.undoTurns(session.turnCount - turnCountBeforeAttempt);
+      }
+      this.#systemPromptPending = state.version === 0;
       if (attempt < MAX_TOOL_ATTEMPTS) {
-        session.undoTurns(1);
-        this.#systemPromptPending = state.version === 0;
       }
     }
 
@@ -1468,28 +1568,37 @@ export class FoundryLayoutService {
       planningResponse === null ||
       planningPreflight === null ||
       rawArguments === null ||
+      intentDelta === null ||
       validatedInput === null
     ) {
       const diagnostics = validationErrors
         .map((error) => `${error.code}: ${error.message} (${error.details.join("; ")})`)
         .join(" | ");
       throw new FoundryRuntimeError(
-        `The model did not produce a valid tool call after ${MAX_TOOL_ATTEMPTS} bounded attempts. ${diagnostics}`,
+        `The model did not produce a valid intent delta after ${MAX_TOOL_ATTEMPTS} bounded attempts. ${diagnostics}`,
         "INVALID_TOOL_CALL",
       );
     }
 
     onPhase?.("geometry-running", "Running deterministic bounded geometry checks.");
     this.#assertLayoutOperationCurrent(generation);
+    const geometryStarted = performance.now();
     const toolResult = compareKnownLayoutOptions(validatedInput, state);
+    const geometryMs = performance.now() - geometryStarted;
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
     const assistantText = renderApplicationEvidence(toolResult);
 
     return {
+      modelIntent: {
+        callId: `layout-intent-${state.version + 1}`,
+        name: "interpret_layout_intent",
+        arguments: rawArguments,
+        parsed: intentDelta,
+      },
       toolCall: {
         callId: `layout-plan-${state.version + 1}`,
         name: "compare_layout_options",
-        arguments: rawArguments,
+        arguments: JSON.stringify(validatedInput),
       },
       validatedInput,
       toolResult,
@@ -1497,9 +1606,14 @@ export class FoundryLayoutService {
       planningPreflight,
       planningResponse,
       summaryResponse: null,
-      validationAttempts: validationErrors.length + 1,
+      validationAttempts: attemptPerformance.length,
       validationErrors,
-      planningMode: "json-schema-tool-plan",
+      performance: {
+        totalMs: performance.now() - turnStarted,
+        geometryMs,
+        attempts: attemptPerformance,
+      },
+      planningMode: "json-schema-intent-delta",
     };
   }
 
@@ -1776,7 +1890,7 @@ export class FoundryLayoutService {
         "MODEL_UNAVAILABLE",
       );
     }
-    if (!["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? "")) {
+    if (!supportsLayoutTask(model)) {
       throw new FoundryRuntimeError(
         `Configured exact model ${model.id} does not expose a supported chat task.`,
         "MODEL_UNAVAILABLE",
@@ -2016,7 +2130,7 @@ export class FoundryLayoutService {
     const idMatches = model.id === this.#target.modelId;
     const providerMatches = actualProvider === this.#target.executionProvider;
     const toolCapable = model.supportsToolCalling === true;
-    const taskSupported = ["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? "");
+    const taskSupported = supportsLayoutTask(model);
     const cpuProvider = isCpuExecutionProvider(this.#target.executionProvider);
     const providerInfo = cpuProvider ? undefined : this.#findProviderInfo();
     const providerDiscoverable = cpuProvider || providerInfo !== undefined;
@@ -2070,7 +2184,7 @@ export class FoundryLayoutService {
     this.#readiness = {
       sdkVersion: "2.2.1",
       provider: "Foundry Local in-process SDK",
-      planningMode: "Runtime-guided JSON schema -> app tool invocation",
+      planningMode: "Runtime-guided intent-delta JSON schema -> app-derived tool invocation",
       responseMode: "Application-rendered typed evidence",
       target: this.#target,
       model: modelIdentity(model),

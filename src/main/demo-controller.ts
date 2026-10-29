@@ -274,12 +274,14 @@ export class DemoController {
       });
       this.#assertOperationCurrent(generation);
 
-      this.#pushTrace("model-tool-call", "Model-proposed tool call", outcome.toolCall);
-      this.#pushTrace("validation", "Application validation accepted", {
+      this.#pushTrace("model-tool-call", "Model-proposed intent delta", outcome.modelIntent);
+      this.#pushTrace("validation", "Application-derived tool input accepted", {
         attempts: outcome.validationAttempts,
         priorErrors: outcome.validationErrors,
+        toolCall: outcome.toolCall,
         input: outcome.validatedInput,
         preflight: outcome.planningPreflight,
+        performance: outcome.performance,
       });
       this.#pushTrace("geometry", "Deterministic geometry result", outcome.toolResult);
 

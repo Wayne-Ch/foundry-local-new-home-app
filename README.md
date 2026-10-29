@@ -10,7 +10,7 @@ room plan.
 ## What is real
 
 - **Inference:** `foundry-local-sdk@2.2.1`, in-process through `ChatSession`.
-- **Default model target:** exact catalog ID `qwen2.5-1.5b-instruct-generic-gpu:4`.
+- **Default model target:** exact catalog ID `qwen3-0.6b-generic-gpu:2`.
 - **Execution provider:** `WebGPUExecutionProvider`, registered from the Foundry Local
   `webgpu-ep-0.2.1-win-x64` bundle.
 - **Default live speech-to-text:** exact catalog ID
@@ -32,9 +32,11 @@ room plan.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
   display transitions from `Live draft — not sent` to the exact edited submitted prompt.
-- **Structured planning:** Foundry Local runtime-enforced JSON Schema output. The application then
-  invokes `compare_layout_options` only from a complete response with `finishReason: "stop"` and a
-  validated object. Length-truncated or otherwise partial JSON is rejected and never executed.
+- **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
+  semantic intent delta (`bed`, `desk`, `crib`, `changedPreference`, and clarification). The
+  application derives exact catalog IDs, retained state, versions, units, locked constraints, and
+  unknown-term evidence before invoking `compare_layout_options`. Length-truncated or otherwise
+  partial JSON is rejected and never executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
@@ -44,16 +46,29 @@ room plan.
 There is no cloud inference or speech endpoint, OS online speech service, CLI subprocess,
 image-generation pipeline, hidden canned model response, TTS, or success-shaped fallback.
 
+## Layout model decision
+
+The previous full `CompareLayoutOptionsInput` contract made Qwen2.5 1.5B generate roughly
+650–730 bytes and 198–223 output tokens per attempt, while copying application-owned state. The
+five-turn baseline took 23.955–38.893 seconds and four turns needed a correction attempt.
+
+The compact contract emits roughly 160–208 bytes and 50–61 output tokens. Application code derives
+the unchanged full tool input and keeps stale-state, retained-state, unsupported-item, negation, and
+invented-ID protections. The selected exact `qwen3-0.6b-generic-gpu:2` passed all nine quality
+scenarios in one attempt each, loaded in 2.926 seconds, and measured 2.681 seconds warm median /
+3.624 seconds warm maximum. All cached Qwen3.5 0.8B/2B/4B GPU variants were also compatible with
+the pinned `ChatSession` + JSON Schema path; the larger variants were slower to load and run.
+
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.239 s**, and the final aggregate transcript **92 ms**
-after input ended. Cached model preparation took **6.340 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.283 s**, and the final aggregate transcript **109 ms**
+after input ended. Cached model preparation took **7.192 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.499 s** cached preparation,
-and **164 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **5.248 s** cached preparation,
+and **258 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
 The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
@@ -73,16 +88,17 @@ truncated/rejected the call, emitted parallel duplicate calls, or dropped a requ
 constraint. The app therefore uses the escalation path agreed for this demo:
 
 1. `ChatSession` performs real local multi-turn inference.
-2. Foundry Local applies a JSON Schema grammar to the model output.
-3. The app validates IDs, units, versions, state, retained furniture, and explicit corrections.
-4. The app invokes the deterministic layout tool.
+2. Foundry Local applies a compact intent-delta JSON Schema grammar to the model output.
+3. The app validates prompt intent and derives IDs, units, versions, state, retained furniture,
+   clarification evidence, and locked constraints.
+4. The app validates and invokes the full deterministic layout tool input.
 5. The visible response is labeled **Application evidence** and is rendered from the typed tool
    result. Optional free-form model summarization is intentionally disabled because it contradicted
    correct geometry during validation.
 
 This mode is shown in the developer trace as
-`Runtime-guided JSON schema -> app tool invocation`; it is not presented as a native function-call
-marker.
+`Runtime-guided intent-delta JSON schema -> app-derived tool invocation`; it is not presented as a
+native function-call marker.
 
 ## Install and run
 
@@ -90,7 +106,7 @@ Prerequisites:
 
 - Windows x64 or Arm64, Linux x64 or Arm64, or Apple-silicon macOS supported by Foundry Local
   v2.2.1. Only Windows x64 was validated here.
-- Node.js 20 or newer. The validated machine used Node `24.22.2`.
+- Node.js 20 or newer. The validated machine used Node `26.13.0`.
 - npm with install scripts approved for `foundry-local-sdk` and `esbuild`.
 - Network access for the first exact-model/EP preparation, unless both are already cached and
   registered.
@@ -144,6 +160,7 @@ Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 
 ```powershell
 npm run probe:foundry
+npm run benchmark:layout
 npm run typecheck
 npm run lint
 npm test
@@ -178,9 +195,10 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The October 28 validation completed **14 test files / 129 tests** in Vitest's reported **1.08 s**,
-with 58 files passing Biome, TypeScript passing, and the production build passing.
-The real Qwen turns measured **10.579 s, 19.082 s, 22.620 s, 26.246 s, and 29.686 s**.
+The October 29 selected-default integration completed the five real Qwen turns in **4.453 s,
+2.677 s, 3.152 s, 3.467 s, and 3.712 s**, all in one attempt. The isolated warm benchmark measured
+**2.681 s median / 3.624 s max** for exact `qwen3-0.6b-generic-gpu:2`. The legacy full-input
+Qwen2.5 path measured **23.955–38.893 s** and needed correction attempts on four of five turns.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md).
@@ -220,7 +238,7 @@ As verified on October 28, 2026:
 | CPU/NPU | AMD Ryzen AI 7 PRO 350, 8 cores / 16 logical processors |
 | GPU | AMD Radeon 860M |
 | Memory | 64 GB installed |
-| Node / npm | `24.22.2` / `11.19.1` |
+| Node / npm | `26.13.0` / `11.20.0` |
 | Electron | `42.3.3` |
 | SDK | `foundry-local-sdk@2.2.1` |
 | Runtime observed | ONNX Runtime `1.31.0`, ORT GenAI `0.18.0` |
@@ -230,7 +248,7 @@ As verified on October 28, 2026:
 The app uses separate text and audio readiness. Default live voice input is shown as fully ready only
 when:
 
-- exact layout model `qwen2.5-1.5b-instruct-generic-gpu:4` and WebGPU EP are ready;
+- exact layout model `qwen3-0.6b-generic-gpu:2` and WebGPU EP are ready;
 - exact ASR model `nemotron-speech-streaming-en-0.6b-generic-cpu:3` is cached and loaded on CPU;
 - no external inference endpoint is configured or started.
 
@@ -255,6 +273,7 @@ did not globally disable the machine network.
 | `src/domain/fixture.ts` | verified demo room, catalog dimensions, and known options |
 | `src/renderer/renderer.ts` | stage UI, SVG layout, evidence cards, developer trace |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |
+| `scripts/run-layout-model-benchmarks.mjs` | isolated exact-candidate latency and quality suite |
 | `scripts/run-nemotron-integration.ts` | real Nemotron partial/final streaming and timing acceptance |
 | `scripts/run-audio-integration.ts` | explicit Whisper Tiny fallback and cleanup acceptance |
 | `tests/` | geometry, schema, state, fixture, and semantic tests |

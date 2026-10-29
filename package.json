@@ -19,6 +19,7 @@
     "test:integration": "tsx scripts/run-foundry-integration.ts",
     "test:audio-integration": "tsx scripts/run-audio-integration.ts",
     "test:nemotron-integration": "tsx scripts/run-nemotron-integration.ts",
+    "benchmark:layout": "node scripts/run-layout-model-benchmarks.mjs",
     "probe:foundry": "tsx scripts/probe-foundry.ts",
     "probe:microphone-permission": "npm run build && node scripts/probe-electron-microphone.mjs",
     "probe:stream-owner": "npm run build && node scripts/probe-electron-stream-owner.mjs",

@@ -25,19 +25,23 @@ npm run capture:ui
 npm run start:built
 ```
 
+For a benchmark refresh rather than routine stage preflight, run `npm run benchmark:layout`. It
+isolates each exact cached candidate in a fresh process, never downloads a model, and rewrites the
+ignored evidence file `artifacts/layout-model-benchmark.json`.
+
 In the app:
 
 1. Select **Load local model**.
 2. Confirm the green badge reads
-   `qwen2.5-1.5b · GPU · WebGPUExecutionProvider`.
+   `qwen3-0.6b · GPU · WebGPUExecutionProvider`.
 3. Open **Developer trace** and confirm:
    - SDK `2.2.1`;
-   - exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4`;
+   - exact model ID `qwen3-0.6b-generic-gpu:2`;
    - `WebGPUExecutionProvider`;
    - target source `built_in_default` and `stageValidated: true`;
    - model cached, EP registered, local inference ready;
    - external endpoint used: `false`;
-   - planning mode: runtime-guided JSON Schema to app tool invocation.
+   - planning mode: runtime-guided intent-delta JSON Schema to app-derived tool invocation.
 4. Select **Prepare Nemotron live** and confirm the separate voice badge shows the exact
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
    Confirm the separately labeled Whisper Tiny record-then-transcribe fallback is visible, but do
@@ -52,13 +56,13 @@ In the app:
    or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
-Observed integration timings on the validated laptop were 10.579–29.686 seconds per turn, including
-bounded correction attempts. The preflight suite passed 14 test files / 129 tests in Vitest's
-reported 1.08 seconds. Do not start the first inference while still delivering setup remarks.
+Observed selected-default integration timings on the validated laptop were 2.677–4.453 seconds per
+turn, all accepted on the first attempt. The isolated warm benchmark measured 2.681 seconds median
+and 3.624 seconds maximum. Do not start the first inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,239 ms,
-stop-to-final at 92 ms, and 6,340 ms cached preparation. The explicit Whisper fallback prepared in
-1,499 ms and transcribed the same fixture in 164 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,283 ms,
+stop-to-final at 109 ms, and 7,192 ms cached preparation. The explicit Whisper fallback prepared in
+5,248 ms and transcribed the same fixture in 258 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow
@@ -114,8 +118,8 @@ Use exactly one voice input:
    anything.
 6. Briefly review the text, then select **Send**.
 7. While the layout model runs, explain that subtitle partials are display-only. The reviewed final
-   text enters the same validated pipeline as typed input, and only a complete Qwen JSON plan with
-   `finishReason: "stop"` can reach geometry.
+   text enters the same validated pipeline as typed input, and only a complete Qwen semantic delta
+   with `finishReason: "stop"` can be expanded into the full tool input and reach geometry.
 8. Show the real Queen + standard desk result.
 
 Then switch to clearly labeled pre-run evidence:
@@ -146,8 +150,8 @@ Open **Developer trace** and point left-to-right:
 
 - runtime/model/EP and locked state;
 - exact Nemotron identity, live/final timing, and reviewed transcript;
-- model-proposed structured plan;
-- app validation;
+- model-proposed semantic intent delta;
+- app validation plus exact tool-input derivation;
 - deterministic geometry result;
 - SVG/application evidence.
 
@@ -202,9 +206,10 @@ Expected live result:
 - prior accepted Queen + compact desk + crib layout remains active;
 - response asks which preference may change.
 
-Observed Windows latency was about 27–32 seconds. If the turn is still running, use the time to narrate
-the visible planning/validation/geometry phases. Never switch to a hidden canned response. If it does
-not complete within the segment, state that the live turn is incomplete and use the recovery buffer.
+Observed selected-default latency for this controlled failure was 3.467 seconds in the real app
+integration. Narrate the visible planning/validation/geometry phases, but never switch to a hidden
+canned response. If it does not complete within the segment, state that the live turn is incomplete
+and use the recovery buffer.
 
 Say when it completes:
 
@@ -261,7 +266,7 @@ alone—is the offline readiness gate.
 | Failure | On-stage response |
 |---|---|
 | Model unavailable | Show the red runtime state; select **Load local model** once. If still unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
-| Invalid structured plan | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
+| Invalid intent delta | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
 | No feasible layout | This is the controlled story. Ask which preference may change. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |

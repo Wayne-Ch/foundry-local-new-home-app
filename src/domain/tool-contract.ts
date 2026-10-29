@@ -12,6 +12,21 @@ import { type DemoStateSnapshot, type FurnitureId, furnitureIds } from "./types"
 
 const bedIds = ["bed-queen", "bed-king"] as const;
 const deskIds = ["desk-standard", "desk-compact"] as const;
+const bedIntentValues = ["keep", "queen", "king"] as const;
+const deskIntentValues = ["keep", "standard", "compact", "flexible"] as const;
+const cribIntentValues = ["keep", "add", "remove"] as const;
+
+export const layoutIntentDeltaSchema = z
+  .object({
+    bed: z.enum(bedIntentValues),
+    desk: z.enum(deskIntentValues),
+    crib: z.enum(cribIntentValues),
+    changedPreference: z.string().min(1).max(240),
+    clarification: z.enum(["none", "required"]),
+  })
+  .strict();
+
+export type LayoutIntentDelta = z.infer<typeof layoutIntentDeltaSchema>;
 
 export const compareLayoutOptionsInputSchema = z
   .object({
@@ -146,88 +161,83 @@ export const compareLayoutOptionsJsonSchema = {
   ],
 } as const;
 
-export const compareLayoutPlannerJsonSchema = JSON.parse(
-  JSON.stringify(compareLayoutOptionsJsonSchema, (key, value) => (key === "uniqueItems" ? undefined : value)),
-) as Record<string, unknown>;
+export const layoutIntentDeltaJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    bed: {
+      type: "string",
+      enum: bedIntentValues,
+    },
+    desk: {
+      type: "string",
+      enum: deskIntentValues,
+    },
+    crib: {
+      type: "string",
+      enum: cribIntentValues,
+    },
+    changedPreference: {
+      type: "string",
+    },
+    clarification: {
+      type: "string",
+      enum: ["none", "required"],
+    },
+  },
+  required: ["bed", "desk", "crib", "changedPreference", "clarification"],
+} as const;
 
-export function createPlannerJsonSchema(
+function preferredFirst<T extends string>(preferred: T, values: readonly T[]): T[] {
+  return [preferred, ...values.filter((value) => value !== preferred)];
+}
+
+function sameCandidates(
+  left: CompareLayoutOptionsInput["candidateFurnitureIds"],
+  right: CompareLayoutOptionsInput["candidateFurnitureIds"],
+): boolean {
+  return left.bed === right.bed && left.desk === right.desk && left.crib === right.crib;
+}
+
+function compatibleIntentValues<Key extends "bed" | "desk" | "crib">(
+  key: Key,
+  values: readonly LayoutIntentDelta[Key][],
+  preferred: LayoutIntentDelta,
   state: DemoStateSnapshot,
-  options: { readonly allowClarification?: boolean; readonly prompt?: string } = {},
+): LayoutIntentDelta[Key][] {
+  const expectedCandidates = resolveCandidateFurnitureIds(preferred, state);
+  return preferredFirst(preferred[key], values).filter((value) =>
+    sameCandidates(resolveCandidateFurnitureIds({ ...preferred, [key]: value }, state), expectedCandidates),
+  );
+}
+
+export function createIntentDeltaJsonSchema(
+  state: DemoStateSnapshot,
+  prompt: string,
 ): Record<string, unknown> {
-  const schema = structuredClone(compareLayoutPlannerJsonSchema);
+  const schema = structuredClone(layoutIntentDeltaJsonSchema) as Record<string, unknown>;
   const properties = schema.properties as Record<string, Record<string, unknown>>;
-  const retained = properties.retainFurnitureIds;
-  if (retained !== undefined) {
-    retained.maxItems = state.activeFurnitureIds.length;
-    if (state.activeFurnitureIds.length > 0) {
-      retained.items = {
-        type: "string",
-        enum: state.activeFurnitureIds,
-      };
-    }
-  }
-  const unsupportedTerms = options.prompt ? detectUnsupportedCatalogTerms(options.prompt) : [];
-  if (unsupportedTerms.length > 0) {
-    const unknowns = properties.unknowns;
-    if (unknowns !== undefined) {
-      const requiredUnknowns = unsupportedTerms.map(
-        (term) => `Missing verified catalog dimensions for ${term}.`,
-      );
-      unknowns.minItems = requiredUnknowns.length;
-      unknowns.maxItems = requiredUnknowns.length;
-      unknowns.items = {
-        type: "string",
-        enum: requiredUnknowns,
-      };
-    }
-    const clarification = properties.clarificationNeeded;
-    if (clarification !== undefined) {
-      clarification.enum = [true];
-    }
-  } else if (options.allowClarification !== true) {
-    const unknowns = properties.unknowns;
-    if (unknowns !== undefined) {
-      unknowns.maxItems = 0;
-    }
-    const clarification = properties.clarificationNeeded;
-    if (clarification !== undefined) {
-      clarification.enum = [false];
-    }
-  }
-  if (options.prompt) {
-    const preferred = preferredCandidateFurnitureIds(state, options.prompt);
-    const preferredIds = new Set(expandCandidateFurnitureIds(preferred));
-    const expectedRetained = state.activeFurnitureIds.filter((id) => preferredIds.has(id));
-    const candidate = properties.candidateFurnitureIds;
-    const candidateProperties = candidate?.properties as Record<string, Record<string, unknown>> | undefined;
-    if (candidateProperties !== undefined) {
-      candidateProperties.bed = {
-        ...candidateProperties.bed,
-        enum: preferred.bed === "bed-king" ? ["bed-king", "bed-queen"] : ["bed-queen", "bed-king"],
-      };
-      candidateProperties.desk = {
-        ...candidateProperties.desk,
-        enum:
-          preferred.desk === "desk-compact"
-            ? ["desk-compact", "desk-standard"]
-            : ["desk-standard", "desk-compact"],
-      };
-      candidateProperties.crib = {
-        ...candidateProperties.crib,
-        enum: preferred.crib === "crib-standard" ? ["crib-standard", null] : [null, "crib-standard"],
-      };
-    }
-    if (retained !== undefined) {
-      retained.minItems = expectedRetained.length;
-      retained.maxItems = expectedRetained.length;
-      if (expectedRetained.length > 0) {
-        retained.items = {
-          type: "string",
-          enum: expectedRetained,
-        };
-      }
-    }
-  }
+  const preferred = preferredLayoutIntentDelta(state, prompt);
+  properties.bed = {
+    ...properties.bed,
+    enum: compatibleIntentValues("bed", bedIntentValues, preferred, state),
+  };
+  properties.desk = {
+    ...properties.desk,
+    enum: compatibleIntentValues("desk", deskIntentValues, preferred, state),
+  };
+  properties.crib = {
+    ...properties.crib,
+    enum: compatibleIntentValues("crib", cribIntentValues, preferred, state),
+  };
+  properties.changedPreference = {
+    ...properties.changedPreference,
+    enum: [prompt],
+  };
+  properties.clarification = {
+    ...properties.clarification,
+    enum: [preferred.clarification],
+  };
   return schema;
 }
 
@@ -259,6 +269,105 @@ export interface ToolValidationError {
 export type ToolValidationResult =
   | { readonly ok: true; readonly value: CompareLayoutOptionsInput }
   | { readonly ok: false; readonly error: ToolValidationError };
+
+export interface ValidatedLayoutIntent {
+  readonly intentDelta: LayoutIntentDelta;
+  readonly toolInput: CompareLayoutOptionsInput;
+}
+
+export type LayoutIntentValidationResult =
+  | { readonly ok: true; readonly value: ValidatedLayoutIntent }
+  | { readonly ok: false; readonly error: ToolValidationError };
+
+function parseJson(rawArguments: string):
+  | { readonly ok: true; readonly value: unknown }
+  | {
+      readonly ok: false;
+      readonly error: ToolValidationError;
+    } {
+  try {
+    return { ok: true, value: JSON.parse(rawArguments) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_JSON",
+        message: "The model returned invalid JSON intent arguments.",
+        details: [error instanceof Error ? error.message : String(error)],
+      },
+    };
+  }
+}
+
+export function parseAndValidateIntentDelta(
+  rawArguments: string,
+  state: DemoStateSnapshot,
+  prompt: string,
+): LayoutIntentValidationResult {
+  const parsed = parseJson(rawArguments);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const schemaResult = layoutIntentDeltaSchema.safeParse(parsed.value);
+  if (!schemaResult.success) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+        message: "The model intent delta did not match the strict semantic schema.",
+        details: schemaResult.error.issues.map(
+          (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      },
+    };
+  }
+
+  const intentDelta = schemaResult.data;
+  const expected = preferredLayoutIntentDelta(state, prompt);
+  const toolInput = buildCompareLayoutOptionsInput(intentDelta, state);
+  const expectedToolInput = buildCompareLayoutOptionsInput(expected, state);
+  const details: string[] = [];
+  if (
+    JSON.stringify(toolInput.candidateFurnitureIds) !==
+    JSON.stringify(expectedToolInput.candidateFurnitureIds)
+  ) {
+    details.push(
+      `USER_REQUEST requires candidateFurnitureIds=${JSON.stringify(expectedToolInput.candidateFurnitureIds)}.`,
+    );
+  }
+  if (intentDelta.changedPreference !== prompt) {
+    details.push("changedPreference must reproduce USER_REQUEST exactly.");
+  }
+  if (intentDelta.clarification !== expected.clarification) {
+    details.push(`clarification must be ${expected.clarification}.`);
+  }
+  if (details.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code:
+          intentDelta.clarification !== expected.clarification
+            ? "INCONSISTENT_CLARIFICATION"
+            : "DROPPED_CONSTRAINT",
+        message: "The semantic delta dropped or changed explicit prompt intent.",
+        details,
+      },
+    };
+  }
+
+  const toolValidation = parseAndValidateToolInput(JSON.stringify(toolInput), state, prompt);
+  if (!toolValidation.ok) {
+    return toolValidation;
+  }
+
+  return {
+    ok: true,
+    value: {
+      intentDelta,
+      toolInput: toolValidation.value,
+    },
+  };
+}
 
 export function parseAndValidateToolInput(
   rawArguments: string,
@@ -365,7 +474,17 @@ export function parseAndValidateToolInput(
     "desk",
     "crib",
   ];
+  const promptUnknowns = new Set(
+    prompt
+      ? detectUnsupportedCatalogTerms(prompt).map(
+          (term) => `Missing verified catalog dimensions for ${term}.`,
+        )
+      : [],
+  );
   const incorrectlyUnknown = input.unknowns.filter((unknown) => {
+    if (promptUnknowns.has(unknown)) {
+      return false;
+    }
     const normalized = unknown.toLowerCase();
     return verifiedFactTerms.some((term) => normalized.includes(term));
   });
@@ -469,46 +588,152 @@ export function preferredCandidateFurnitureIds(
   state: DemoStateSnapshot,
   prompt: string,
 ): CompareLayoutOptionsInput["candidateFurnitureIds"] {
-  const normalized = prompt.toLowerCase();
-  const currentBed = state.activeFurnitureIds.find(
+  return resolveCandidateFurnitureIds(preferredLayoutIntentDelta(state, prompt), state);
+}
+
+function currentBed(
+  state: DemoStateSnapshot,
+): CompareLayoutOptionsInput["candidateFurnitureIds"]["bed"] | undefined {
+  return state.activeFurnitureIds.find(
     (id): id is "bed-queen" | "bed-king" => id === "bed-queen" || id === "bed-king",
   );
-  const currentDesk = state.activeFurnitureIds.find(
+}
+
+function currentDesk(
+  state: DemoStateSnapshot,
+): CompareLayoutOptionsInput["candidateFurnitureIds"]["desk"] | undefined {
+  return state.activeFurnitureIds.find(
     (id): id is "desk-standard" | "desk-compact" => id === "desk-standard" || id === "desk-compact",
   );
-  const expected: CompareLayoutOptionsInput["candidateFurnitureIds"] = {
-    bed: currentBed ?? "bed-queen",
-    desk: currentDesk ?? "desk-standard",
-    crib: state.activeFurnitureIds.includes("crib-standard") ? "crib-standard" : null,
-  };
+}
+
+function isNegated(normalized: string, term: string, distance = 40): boolean {
+  return new RegExp(`\\b(?:do not|don't|not|no|without)\\b[^.!?]{0,${distance}}\\b${term}\\b`).test(
+    normalized,
+  );
+}
+
+export function preferredLayoutIntentDelta(state: DemoStateSnapshot, prompt: string): LayoutIntentDelta {
+  const normalized = prompt.toLowerCase();
   const mentionsKing = /\bking(?:-size)?\b/.test(normalized);
   const mentionsQueen = /\bqueen(?:-size)?\b/.test(normalized);
   const mentionsCrib = /\bcrib\b/.test(normalized);
-
-  const kingNegated = /\b(?:do not|don't|not|no)\b[^.!?]{0,40}\bking\b/.test(normalized);
-  const queenNegated = /\b(?:do not|don't|not|no)\b[^.!?]{0,40}\bqueen\b/.test(normalized);
+  const kingNegated = isNegated(normalized, "king");
+  const queenNegated = isNegated(normalized, "queen");
+  let bed: LayoutIntentDelta["bed"] = "keep";
   if (mentionsKing && !kingNegated) {
-    expected.bed = "bed-king";
+    bed = "king";
   } else if (mentionsQueen && !queenNegated) {
-    expected.bed = "bed-queen";
-  }
-
-  if (normalized.includes("compact desk") || normalized.includes("smaller desk")) {
-    expected.desk = "desk-compact";
-  } else if (normalized.includes("standard desk")) {
-    expected.desk = "desk-standard";
+    bed = "queen";
   }
 
   const removeCrib =
     /\b(?:remove|without|no)\b[^.!?]{0,30}\bcrib\b/.test(normalized) ||
     /\b(?:do not|don't)\b[^.!?]{0,30}\b(?:add|keep|use)?\s*(?:the\s+)?crib\b/.test(normalized);
+  const keepCrib =
+    /\b(?:keep|retain|leave)\s+(?:the\s+)?crib\b/.test(normalized) ||
+    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:desk|bed)\s+and\s+(?:the\s+)?crib\b/.test(normalized) ||
+    /\bcrib\b[^.!?]{0,30}\b(?:stays?|remain|unchanged)\b/.test(normalized);
+  let crib: LayoutIntentDelta["crib"] = "keep";
   if (removeCrib) {
-    expected.crib = null;
+    crib = "remove";
   } else if (mentionsCrib) {
-    expected.crib = "crib-standard";
-    if (!normalized.includes("standard desk")) {
-      expected.desk = "desk-compact";
-    }
+    crib = keepCrib || state.activeFurnitureIds.includes("crib-standard") ? "keep" : "add";
   }
-  return expected;
+
+  const compactMention =
+    /\b(?:compact|smaller|small)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(normalized) ||
+    /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:compact|smaller|small)\b/.test(normalized);
+  const standardMention =
+    /\b(?:standard|regular|full-size)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(normalized) ||
+    /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:standard|regular|full-size)\b/.test(normalized);
+  const compactNegated = isNegated(normalized, "(?:compact|smaller|small)");
+  const standardNegated = isNegated(normalized, "(?:standard|regular|full-size)");
+  const keepDesk =
+    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:current\s+)?(?:desk|workstation)\b/.test(normalized) ||
+    /\b(?:keep|retain|leave)\s+(?:the\s+)?(?:bed|crib)\s+and\s+(?:the\s+)?(?:desk|workstation)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:desk|workstation)\b[^.!?]{0,35}\b(?:stays?|remain|unchanged|alone)\b/.test(normalized);
+  const mentionsDesk = /\b(?:desk|workstation)\b/.test(normalized);
+  let desk: LayoutIntentDelta["desk"];
+  if (compactMention && !compactNegated) {
+    desk = "compact";
+  } else if (standardMention && !standardNegated) {
+    desk = "standard";
+  } else if (keepDesk) {
+    desk = "keep";
+  } else if (mentionsDesk || crib === "add") {
+    desk = "flexible";
+  } else {
+    desk = "keep";
+  }
+
+  const unknownTerms = detectUnsupportedCatalogTerms(prompt);
+  return {
+    bed,
+    desk,
+    crib,
+    changedPreference: prompt,
+    clarification: unknownTerms.length > 0 ? "required" : "none",
+  };
+}
+
+export function resolveCandidateFurnitureIds(
+  intentDelta: LayoutIntentDelta,
+  state: DemoStateSnapshot,
+): CompareLayoutOptionsInput["candidateFurnitureIds"] {
+  const activeBed = currentBed(state);
+  const activeDesk = currentDesk(state);
+  const bed =
+    intentDelta.bed === "queen"
+      ? "bed-queen"
+      : intentDelta.bed === "king"
+        ? "bed-king"
+        : (activeBed ?? "bed-queen");
+  const crib =
+    intentDelta.crib === "add"
+      ? "crib-standard"
+      : intentDelta.crib === "remove"
+        ? null
+        : state.activeFurnitureIds.includes("crib-standard")
+          ? "crib-standard"
+          : null;
+  const desk =
+    intentDelta.desk === "standard"
+      ? "desk-standard"
+      : intentDelta.desk === "compact"
+        ? "desk-compact"
+        : intentDelta.desk === "keep"
+          ? (activeDesk ?? (crib === "crib-standard" ? "desk-compact" : "desk-standard"))
+          : crib === "crib-standard"
+            ? "desk-compact"
+            : (activeDesk ?? "desk-standard");
+  return { bed, desk, crib };
+}
+
+export function buildCompareLayoutOptionsInput(
+  intentDelta: LayoutIntentDelta,
+  state: DemoStateSnapshot,
+): CompareLayoutOptionsInput {
+  const candidateFurnitureIds = resolveCandidateFurnitureIds(intentDelta, state);
+  const candidateIds = new Set(expandCandidateFurnitureIds(candidateFurnitureIds));
+  const unknowns = detectUnsupportedCatalogTerms(intentDelta.changedPreference).map(
+    (term) => `Missing verified catalog dimensions for ${term}.`,
+  );
+  return compareLayoutOptionsInputSchema.parse({
+    roomPlanId: ROOM_PLAN_ID,
+    planVersion: ROOM_PLAN_VERSION,
+    priorStateRef: state.stateRef,
+    clearanceRuleSetId: CLEARANCE_RULE_SET_ID,
+    clearanceRuleSetVersion: CLEARANCE_RULE_SET_VERSION,
+    requiredRoomStateSetId: REQUIRED_ROOM_STATE_SET_ID,
+    lockedConstraintSetId: LOCKED_CONSTRAINT_SET_ID,
+    unit: "mm",
+    candidateFurnitureIds,
+    retainFurnitureIds: state.activeFurnitureIds.filter((id) => candidateIds.has(id)),
+    changedPreference: intentDelta.changedPreference,
+    unknowns,
+    clarificationNeeded: intentDelta.clarification === "required",
+  });
 }

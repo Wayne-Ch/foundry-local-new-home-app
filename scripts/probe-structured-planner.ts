@@ -1,7 +1,7 @@
 import { ChatSession, FoundryLocalManager, Item, Request, type Response } from "foundry-local-sdk";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
-import { createPlannerJsonSchema, parseAndValidateToolInput } from "../src/domain/tool-contract";
+import { createIntentDeltaJsonSchema, parseAndValidateIntentDelta } from "../src/domain/tool-contract";
 import { resolveFoundryPaths } from "../src/foundry/paths";
 import { formatTurnPrompt, stageTurns, systemPrompt } from "../src/foundry/prompt";
 import { canonicalExecutionProvider, resolveRuntimeTarget } from "../src/foundry/runtime-config";
@@ -88,12 +88,12 @@ try {
             doSample: false,
             temperature: 0,
             seed: 42,
-            maxOutputTokens: 700,
+            maxOutputTokens: 256,
           },
           toolChoice: "none",
           additionalOptions: {
             guidance_type: "json_schema",
-            guidance_data: JSON.stringify(createPlannerJsonSchema(state, { prompt: turn.prompt })),
+            guidance_data: JSON.stringify(createIntentDeltaJsonSchema(state, turn.prompt)),
             ...(model.info.supportsReasoning === true
               ? { chat_template_kwargs: JSON.stringify({ enable_thinking: false }) }
               : {}),
@@ -101,7 +101,7 @@ try {
         });
         const response = await session.processRequest(request);
         const text = responseText(response);
-        const validation = parseAndValidateToolInput(text, state, turn.prompt);
+        const validation = parseAndValidateIntentDelta(text, state, turn.prompt);
         console.log(
           JSON.stringify(
             {
@@ -116,7 +116,7 @@ try {
           ),
         );
         if (validation.ok) {
-          const result = compareKnownLayoutOptions(validation.value, state);
+          const result = compareKnownLayoutOptions(validation.value.toolInput, state);
           state = applyToolResult(state, result);
           accepted = true;
           break;
@@ -125,7 +125,7 @@ try {
         session.undoTurns(1);
       }
       if (!accepted) {
-        throw new Error(`${turn.id}: no valid structured plan`);
+        throw new Error(`${turn.id}: no valid semantic intent delta`);
       }
     }
   } finally {

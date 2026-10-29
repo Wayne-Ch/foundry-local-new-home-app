@@ -1,7 +1,7 @@
 import type { RuntimeTargetIdentity } from "../domain/types";
 
-export const VALIDATED_MODEL_ALIAS = "qwen2.5-1.5b";
-export const VALIDATED_MODEL_ID = "qwen2.5-1.5b-instruct-generic-gpu:4";
+export const VALIDATED_MODEL_ALIAS = "qwen3-0.6b";
+export const VALIDATED_MODEL_ID = "qwen3-0.6b-generic-gpu:2";
 export const VALIDATED_EXECUTION_PROVIDER = "WebGPUExecutionProvider";
 const UNSET_RUNTIME_TARGET_VALUE = "<unset>";
 

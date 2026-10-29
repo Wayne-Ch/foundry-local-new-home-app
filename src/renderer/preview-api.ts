@@ -9,7 +9,7 @@ import {
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
-import { createToolInputForTests } from "../domain/tool-contract";
+import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
 import type { DemoState, RuntimeReadiness } from "../domain/types";
 import { stageTurns } from "../foundry/prompt";
 import type { BootstrapPayload, DemoApi, PrepareOfflineResponse, RunTurnResponse } from "../shared/contracts";
@@ -17,21 +17,21 @@ import type { BootstrapPayload, DemoApi, PrepareOfflineResponse, RunTurnResponse
 const readiness: RuntimeReadiness = {
   sdkVersion: "2.2.1",
   provider: "Foundry Local in-process SDK",
-  planningMode: "Runtime-guided JSON schema -> app tool invocation",
+  planningMode: "Runtime-guided intent-delta JSON schema -> app-derived tool invocation",
   responseMode: "Application-rendered typed evidence",
   target: {
-    modelId: "qwen2.5-1.5b-instruct-generic-gpu:4",
+    modelId: "qwen3-0.6b-generic-gpu:2",
     executionProvider: "WebGPUExecutionProvider",
     source: "built_in_default",
     stageValidated: true,
   },
   model: {
-    alias: "qwen2.5-1.5b",
-    id: "qwen2.5-1.5b-instruct-generic-gpu:4",
+    alias: "qwen3-0.6b",
+    id: "qwen3-0.6b-generic-gpu:2",
     deviceType: "GPU",
     executionProvider: "WebGPUExecutionProvider",
     supportsToolCalling: true,
-    fileSizeMb: 1546,
+    fileSizeMb: 529,
   },
   modelCached: true,
   executionProviderRegistered: true,
@@ -165,15 +165,21 @@ function buildPreview(): BootstrapPayload {
         id: "preview-tool",
         timestamp: new Date().toISOString(),
         kind: "model-tool-call",
-        title: "Schema-guided model plan",
-        payload: failureInput,
+        title: "Schema-guided model intent delta",
+        payload: preferredLayoutIntentDelta(
+          {
+            ...state,
+            activeFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
+          },
+          stageTurns[3]?.prompt ?? "",
+        ),
       },
       {
         id: "preview-validation",
         timestamp: new Date().toISOString(),
         kind: "validation",
-        title: "Application validation accepted",
-        payload: { accepted: true, attempts: 2 },
+        title: "Application-derived tool input accepted",
+        payload: { accepted: true, attempts: 1, input: failureInput },
       },
       {
         id: "preview-geometry",
