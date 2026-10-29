@@ -176,7 +176,7 @@ Show only:
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 15 test files / 168 tests pass. The real audio
+Current checkpoint: 15 test files / 178 tests pass. The real audio
 fixture produced 31 Nemotron revisions (first partial 1,303 ms, stop-to-final 100 ms, 3,100 ms cached
 prepare) and the explicit Whisper fallback prepared in 1,807 ms and transcribed in 211 ms.
 

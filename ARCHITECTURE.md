@@ -174,15 +174,16 @@ The runtime-guided model output is deliberately small:
   "bed": "queen",
   "desk": "flexible",
   "crib": "add",
-  "changedPreference": "Keep the Queen and add a crib.",
   "clarification": "none"
 }
 ```
 
 The schema has no catalog IDs, state references, dimensions, coordinates, fit status, conflicts, or
-geometry verdict. From that delta and the authoritative current state, application code derives the
-existing strict `CompareLayoutOptionsInput`, including:
+geometry verdict, and it never asks the model to echo arbitrary user text. From that delta, the exact
+submitted prompt, and the authoritative current state, application code derives the existing strict
+`CompareLayoutOptionsInput`, including:
 
+- the exact submitted prompt in application-owned `changedPreference`;
 - exact room/rule/state-set versions and millimetre units;
 - exact `bed-*`, `desk-*`, and optional `crib-standard` catalog IDs;
 - active unchanged IDs in `retainFurnitureIds`;

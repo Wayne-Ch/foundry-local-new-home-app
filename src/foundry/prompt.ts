@@ -30,7 +30,7 @@ Return one JSON semantic delta for the bedroom request.
 - desk: keep, standard, compact, or flexible. Use flexible whenever the user requests a desk without a fixed size or adds a crib without fixing the desk size.
 - crib: keep, add, or remove.
 - Decide each dimension independently. Use keep only when that dimension is unchanged; do not use keep when the request names a new target.
-- Copy USER_REQUEST exactly into changedPreference.
+- Do not repeat USER_REQUEST in the JSON. The application preserves it exactly as changedPreference.
 - clarification defaults to none. Use required only for unsupported furniture, conflicting choices, or wording that lacks a required choice.
 - Respect transition direction and scoped negation. "Replace King with Queen" and "from King to Queen" select Queen. "Do not remove the crib" keeps it.
 - Exact mappings: "King instead" -> bed=king; "add/bring in a crib" -> crib=add; "remove the crib" -> crib=remove; "desk may adjust" -> desk=flexible.

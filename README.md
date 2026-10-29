@@ -33,16 +33,17 @@ room plan.
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
   display transitions from `Live draft — not sent` to the exact edited submitted prompt.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
-  semantic intent delta (`bed`, `desk`, `crib`, `changedPreference`, and clarification). Every
-  supported compact intent value remains available in the runtime schema; application code validates
-  the model choice against explicit wording and accepted state, including directional replacements,
-  scoped negation, ambiguity, and fail-closed unsupported furniture. Clearly negated replacements
-  preserve the accepted item; ambiguous multi-action negation requires clarification and preserves
-  every slot. Action-object extraction distinguishes unsupported variants such as California King
-  and twin beds from the supported regular King, without treating clearance prose as furniture. The
-  app then derives exact catalog IDs, retained state, versions, units, locked constraints, and
-  clarification evidence before invoking `compare_layout_options`. Length-truncated or otherwise
-  partial JSON is rejected and never executed.
+  semantic intent delta (`bed`, `desk`, `crib`, and clarification). Every supported compact intent
+  value remains available in the runtime schema; application code injects the exact submitted prompt
+  as `changedPreference` and validates the model choice against explicit wording and accepted state,
+  including directional replacements, scoped negation, ambiguity, and fail-closed unsupported
+  furniture. Clearly negated replacements preserve the accepted item; ambiguous multi-action
+  negation requires clarification and preserves every slot. Action-object extraction distinguishes
+  unsupported variants such as California King and twin beds from the supported regular King,
+  without treating clearance prose as furniture. The app then derives exact catalog IDs, retained
+  state, versions, units, locked constraints, and bounded clarification evidence before invoking
+  `compare_layout_options`. Length-truncated or otherwise partial JSON is rejected and never
+  executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.

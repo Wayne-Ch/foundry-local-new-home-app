@@ -34,11 +34,11 @@
 
 The compact contract moved exact IDs, state references, versions, units, retained objects, locked
 constraints, required checks, and unknown-term construction into application code. The model emits
-only semantic bed/desk/crib changes, the user change text, and clarification. The runtime schema now
-keeps every compact intent value available; application validation handles directional transitions,
-scoped negation, ambiguity, retained state, and fail-closed furniture recognition. Exact
-`qwen3-0.6b-generic-gpu:2` remains the stage-validated built-in default after passing the corrected
-semantic gate.
+only semantic bed/desk/crib changes and clarification; the application preserves the exact submitted
+prompt as `changedPreference`. The runtime schema keeps every compact intent value available;
+application validation handles directional transitions, scoped negation, ambiguity, retained state,
+and fail-closed furniture recognition. Exact `qwen3-0.6b-generic-gpu:2` remains the stage-validated
+built-in default after passing the corrected semantic gate.
 
 ## Commands run
 
@@ -74,7 +74,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 15 files / 168 tests pass; Vitest reported 1.49 s |
+| Unit tests | 15 files / 178 tests pass; Vitest reported 2.30 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer-owner reload/close probe | Pass; both streams canceled, ownership session advanced, stale partial routing rejected, no uncaught exception or unhandled rejection |
@@ -119,7 +119,7 @@ Final command outputs from the October 29 run:
 | `npm run benchmark:layout` | Pass; required Qwen3 default passed 16/16 in an isolated exact-model process |
 | `npm run lint` | 62 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 15 files / 168 tests; Vitest reported 1.49 s |
+| `npm test` | 15 files / 178 tests; Vitest reported 2.30 s |
 | `npm run build` | Pass; 115 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:stream-owner` | Pass; real reload and close both cancel the captured renderer-owned stream |

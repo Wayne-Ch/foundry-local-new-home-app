@@ -43,6 +43,18 @@ function stateWithKingCompactCrib() {
   };
 }
 
+function expectBuiltToolInput(
+  intent: Parameters<typeof buildCompareLayoutOptionsInput>[0],
+  state: Parameters<typeof buildCompareLayoutOptionsInput>[1],
+) {
+  const result = buildCompareLayoutOptionsInput(intent, state);
+  expect(result).toMatchObject({ ok: true });
+  if (!result.ok) {
+    throw new Error(result.error.details.join(" "));
+  }
+  return result.value;
+}
+
 describe("strict tool-call validation", () => {
   it("accepts a current, millimetre-based, known-ID call", () => {
     const state = createInitialDemoState();
@@ -170,7 +182,6 @@ describe("compact intent-delta contract", () => {
       bed: "king",
       desk: "keep",
       crib: "keep",
-      changedPreference: prompt,
       clarification: "none",
     });
 
@@ -259,6 +270,86 @@ describe("compact intent-delta contract", () => {
     expect(properties.desk?.enum).toEqual(["keep", "flexible", "standard", "compact"]);
     expect(properties.crib?.enum).toEqual(["keep", "add", "remove"]);
     expect(properties.clarification?.enum).toEqual(["none", "required"]);
+    expect(properties.changedPreference).toBeUndefined();
+    expect(schema.required).not.toContain("changedPreference");
+  });
+
+  it("injects and preserves submitted prompts beyond the former 240-character cap", () => {
+    const state = stateWithQueenDesk();
+    const prompt = `Keep the Queen bed and standard desk. ${"Keep the layout clear. ".repeat(16)}`.trim();
+    expect(prompt.length).toBeGreaterThan(240);
+    const preferred = preferredLayoutIntentDelta(state, prompt);
+    const validation = parseAndValidateIntentDelta(
+      JSON.stringify({
+        bed: preferred.bed,
+        desk: preferred.desk,
+        crib: preferred.crib,
+        clarification: preferred.clarification,
+      }),
+      state,
+      prompt,
+    );
+    expect(validation).toMatchObject({
+      ok: true,
+      value: {
+        intentDelta: {
+          changedPreference: prompt,
+        },
+        toolInput: {
+          changedPreference: prompt,
+        },
+      },
+    });
+  });
+
+  it("bounds application-generated unknowns and returns validation results instead of throwing", () => {
+    const state = stateWithQueenDesk();
+    const longTerm = `${"ornate ".repeat(40)}hammock`;
+    const prompt = `We need a ${longTerm} beside the desk.`;
+    const preferred = preferredLayoutIntentDelta(state, prompt);
+    const built = buildCompareLayoutOptionsInput(preferred, state);
+    expect(built).toMatchObject({
+      ok: true,
+      value: {
+        clarificationNeeded: true,
+      },
+    });
+    if (built.ok) {
+      expect(built.value.unknowns).toHaveLength(1);
+      expect(built.value.unknowns[0]?.length).toBeLessThanOrEqual(160);
+    }
+
+    const malformed = {
+      ...preferred,
+      bed: "california-king",
+      changedPreference: "",
+    } as unknown as Parameters<typeof buildCompareLayoutOptionsInput>[0];
+    let malformedResult: ReturnType<typeof buildCompareLayoutOptionsInput> | undefined;
+    expect(() => {
+      malformedResult = buildCompareLayoutOptionsInput(malformed, state);
+    }).not.toThrow();
+    expect(malformedResult).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+      },
+    });
+
+    const oversizedUnknownInput = createToolInputForTests({
+      state,
+      candidateFurnitureIds: ["bed-queen", "desk-standard"],
+      retainFurnitureIds: ["bed-queen", "desk-standard"],
+      changedPreference: "keep the accepted layout",
+      unknowns: ["x".repeat(161)],
+      clarificationNeeded: true,
+    });
+    expect(() => parseAndValidateToolInput(JSON.stringify(oversizedUnknownInput), state)).not.toThrow();
+    expect(parseAndValidateToolInput(JSON.stringify(oversizedUnknownInput), state)).toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+      },
+    });
   });
 
   it("rejects invented IDs, dimensions, geometry, verdicts, and changed state references", () => {
@@ -277,7 +368,7 @@ describe("compact intent-delta contract", () => {
       ).toMatchObject({ ok: false, error: { code: "INVALID_SCHEMA" } });
     }
 
-    const derived = buildCompareLayoutOptionsInput(valid, state);
+    const derived = expectBuiltToolInput(valid, state);
     expect(
       parseAndValidateToolInput(
         JSON.stringify({ ...derived, priorStateRef: "layout-state-v99" }),
@@ -312,7 +403,7 @@ describe("compact intent-delta contract", () => {
       desk: "compact",
       crib: "remove",
     });
-    expect(buildCompareLayoutOptionsInput(intent, state)).toMatchObject({
+    expect(expectBuiltToolInput(intent, state)).toMatchObject({
       priorStateRef: "layout-state-v4",
       candidateFurnitureIds: {
         bed: "bed-queen",
@@ -499,6 +590,7 @@ describe("compact intent-delta contract", () => {
   it.each([
     "Do not replace the Queen with a King nor replace the standard desk with a compact desk.",
     "Neither replace the Queen with a King nor replace the standard desk with a compact desk.",
+    "Neither replace the Queen with a King, nor replace the standard desk with a compact desk.",
   ])("continues transition negation across nor: %s", (prompt) => {
     expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
       clarification: "none",
@@ -511,6 +603,44 @@ describe("compact intent-delta contract", () => {
         bed: ["keep"],
         desk: ["keep"],
         crib: ["keep"],
+      },
+    });
+  });
+
+  it("continues coordinated negation across transition and removal action types", () => {
+    const state = {
+      ...stateWithQueenDesk(),
+      activeFurnitureIds: ["bed-queen", "desk-standard", "crib-standard"] as const,
+    };
+    const prompt = "Do not replace the Queen with a King nor take the crib out.";
+    expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep", "standard"],
+        crib: ["keep"],
+      },
+    });
+    expect(
+      parseAndValidateIntentDelta(
+        JSON.stringify({
+          bed: "king",
+          desk: "keep",
+          crib: "remove",
+          clarification: "none",
+        }),
+        state,
+        prompt,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
       },
     });
   });
@@ -532,6 +662,20 @@ describe("compact intent-delta contract", () => {
       allowed: {
         bed: ["king"],
         desk: ["compact"],
+        crib: ["keep"],
+      },
+    });
+
+    expect(analyzeLayoutPrompt(state, "Nor replace the Queen with a King.")).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
         crib: ["keep"],
       },
     });
@@ -585,11 +729,22 @@ describe("compact intent-delta contract", () => {
         crib: ["remove"],
       },
     });
+    expect(analyzeLayoutPrompt(state, "Take out the crib.")).toMatchObject({
+      clarification: "none",
+      preferred: {
+        crib: "remove",
+      },
+      allowed: {
+        crib: ["remove"],
+      },
+    });
 
     for (const prompt of [
       "Do not take the crib out.",
       "Don't take the crib out.",
       "Never take the crib out.",
+      "Do not ever take the crib out.",
+      "Do not ever take out the crib.",
     ]) {
       expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
         clarification: "none",
@@ -601,6 +756,25 @@ describe("compact intent-delta contract", () => {
         },
       });
     }
+  });
+
+  it("preserves affirmative and across transition and removal actions", () => {
+    const state = {
+      ...stateWithQueenDesk(),
+      activeFurnitureIds: ["bed-queen", "desk-standard", "crib-standard"] as const,
+    };
+    expect(analyzeLayoutPrompt(state, "Replace the Queen with a King and take the crib out.")).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "king",
+        desk: "keep",
+        crib: "remove",
+      },
+      allowed: {
+        bed: ["king"],
+        crib: ["remove"],
+      },
+    });
   });
 
   it("requires clarification for conflicting or transition-inconsistent wording", () => {
@@ -690,21 +864,26 @@ describe("missing verified dimensions", () => {
 
   it("fails closed for unsupported furniture requested with need or want", () => {
     const state = stateWithQueenDesk();
-    for (const prompt of ["We need a hammock beside the desk.", "We want a hammock beside the desk."]) {
-      expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["hammock"]);
-      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
-        clarification: "required",
-        unknowns: ["Missing verified catalog dimensions for hammock."],
-      });
-      expect(buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, prompt), state)).toMatchObject({
+    for (const prompt of [
+      "We need a hammock beside the desk.",
+      "We want a hammock beside the desk.",
+      "I want a moon pod near the bed.",
+    ]) {
+      const term = prompt.includes("moon pod") ? "moon pod" : "hammock";
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual([term]);
+      const analysis = analyzeLayoutPrompt(state, prompt);
+      expect(analysis.clarification).toBe("required");
+      expect(analysis.unknowns).toContain(`Missing verified catalog dimensions for ${term}.`);
+      const built = expectBuiltToolInput(preferredLayoutIntentDelta(state, prompt), state);
+      expect(built).toMatchObject({
         candidateFurnitureIds: {
           bed: "bed-queen",
           desk: "desk-standard",
           crib: null,
         },
-        unknowns: ["Missing verified catalog dimensions for hammock."],
         clarificationNeeded: true,
       });
+      expect(built.unknowns).toContain(`Missing verified catalog dimensions for ${term}.`);
     }
   });
 
@@ -741,7 +920,7 @@ describe("missing verified dimensions", () => {
       bed: "keep",
       clarification: "required",
     });
-    expect(buildCompareLayoutOptionsInput(preferred, state)).toMatchObject({
+    expect(expectBuiltToolInput(preferred, state)).toMatchObject({
       candidateFurnitureIds: {
         bed: "bed-queen",
       },
@@ -780,6 +959,10 @@ describe("missing verified dimensions", () => {
     expect(detectUnsupportedCatalogTerms("Use a Queen bed without an armchair.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We do not need a hammock beside the desk.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We don't want a hammock beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We do not need or want a hammock beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We no longer need a chair.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We do not need a chair, nor do we want a lamp.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We want the result in a table.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We need a clear answer beside the desk.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We want the layout to stay flexible.")).toEqual([]);
   });

@@ -21,12 +21,22 @@ export const layoutIntentDeltaSchema = z
     bed: z.enum(bedIntentValues),
     desk: z.enum(deskIntentValues),
     crib: z.enum(cribIntentValues),
-    changedPreference: z.string().min(1).max(240),
+    changedPreference: z.string().min(1),
     clarification: z.enum(["none", "required"]),
   })
   .strict();
 
 export type LayoutIntentDelta = z.infer<typeof layoutIntentDeltaSchema>;
+
+const generatedLayoutIntentDeltaSchema = z
+  .object({
+    bed: z.enum(bedIntentValues),
+    desk: z.enum(deskIntentValues),
+    crib: z.enum(cribIntentValues),
+    changedPreference: z.string().min(1).optional(),
+    clarification: z.enum(["none", "required"]),
+  })
+  .strict();
 
 export const compareLayoutOptionsInputSchema = z
   .object({
@@ -56,7 +66,7 @@ export const compareLayoutOptionsInputSchema = z
           });
         }
       }),
-    changedPreference: z.string().max(240),
+    changedPreference: z.string(),
     unknowns: z.array(z.string().min(1).max(160)).max(8),
     clarificationNeeded: z.boolean(),
   })
@@ -131,7 +141,7 @@ export const compareLayoutOptionsJsonSchema = {
     },
     changedPreference: {
       type: "string",
-      description: "Briefly state what the user changed from the prior accepted layout.",
+      description: "Exact submitted request preserved by the application.",
     },
     unknowns: {
       type: "array",
@@ -183,9 +193,6 @@ export const layoutIntentDeltaJsonSchema = {
       description:
         "Use add when the request adds or brings in a crib, remove when it removes one, and keep when unmentioned, retained, or explicitly not removed.",
     },
-    changedPreference: {
-      type: "string",
-    },
     clarification: {
       type: "string",
       enum: ["none", "required"],
@@ -193,20 +200,14 @@ export const layoutIntentDeltaJsonSchema = {
         "Use none for supported unambiguous requests. Use required only for unsupported furniture, conflicting choices, or a missing required choice.",
     },
   },
-  required: ["bed", "desk", "crib", "changedPreference", "clarification"],
+  required: ["bed", "desk", "crib", "clarification"],
 } as const;
 
 export function createIntentDeltaJsonSchema(
   _state: DemoStateSnapshot,
-  prompt: string,
+  _prompt: string,
 ): Record<string, unknown> {
-  const schema = structuredClone(layoutIntentDeltaJsonSchema) as Record<string, unknown>;
-  const properties = schema.properties as Record<string, Record<string, unknown>>;
-  properties.changedPreference = {
-    ...properties.changedPreference,
-    enum: [prompt],
-  };
-  return schema;
+  return structuredClone(layoutIntentDeltaJsonSchema) as Record<string, unknown>;
 }
 
 const supportedFurniturePatterns = [
@@ -353,6 +354,58 @@ function normalizePromptText(value: string): string {
   return value.toLowerCase().replaceAll(/[’‘]/g, "'").replaceAll(/[–—]/g, "-").replaceAll(/\s+/g, " ").trim();
 }
 
+type ActionNegationScope = "none" | "clear" | "ambiguous";
+
+const semanticActionSource =
+  "(?:replace|swap(?:\\s+out)?|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|bring\\s+in|place|put|fit|remove|take\\s+out|drop|get\\s+rid\\s+of)";
+const interveningActionModifierSource = "(?:(?:[a-z]+ly|also|even|ever|just|please|still|then)\\s+)*";
+const optionalIntentWrapperSource = "(?:(?:try|want|need|plan|intend|prefer)\\s+to\\s+)?";
+
+function hasDirectActionNegation(prefix: string): boolean {
+  return (
+    new RegExp(
+      `\\b(?:do\\s+not|don't|never)\\s+${interveningActionModifierSource}${optionalIntentWrapperSource}$`,
+    ).test(prefix) ||
+    new RegExp(`\\bno\\s+longer\\s+${interveningActionModifierSource}$`).test(prefix) ||
+    /\bnot\s+(?:to\s+)?$/.test(prefix) ||
+    new RegExp(`\\bneither\\s+${interveningActionModifierSource}$`).test(prefix)
+  );
+}
+
+function hasLeadingUnpairedNor(prefix: string): boolean {
+  return new RegExp(`^\\s*,?\\s*nor\\s+${interveningActionModifierSource}$`).test(prefix);
+}
+
+function actionNegationScope(clause: string, actionStart: number): ActionNegationScope {
+  const prefix = clause.slice(0, actionStart);
+  if (hasDirectActionNegation(prefix)) {
+    return "clear";
+  }
+  if (hasLeadingUnpairedNor(prefix)) {
+    return "ambiguous";
+  }
+
+  const conjunction = [...prefix.matchAll(/(?:,\s*|\s+)(and|or|nor)\s+/g)].at(-1);
+  if (conjunction === undefined) {
+    return "none";
+  }
+  const word = conjunction[1];
+  const beforeConjunction = prefix.slice(0, conjunction.index);
+  const precedingNegatedAction = new RegExp(
+    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,240}\\b${semanticActionSource}\\b`,
+  ).test(beforeConjunction);
+  if (word === "nor") {
+    return precedingNegatedAction ? "clear" : "ambiguous";
+  }
+  if (!precedingNegatedAction) {
+    return "none";
+  }
+  const coordinatedVerbChain = new RegExp(
+    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,80}\\b${semanticActionSource}\\s*$`,
+  ).test(beforeConjunction);
+  return coordinatedVerbChain ? "clear" : "ambiguous";
+}
+
 function isSupportedFurniturePhrase(phrase: string): boolean {
   return supportedFurniturePatterns.some((pattern) => pattern.test(phrase));
 }
@@ -423,17 +476,25 @@ function promptClauseRanges(normalized: string): PromptRange[] {
   return ranges;
 }
 
-function actionIsNegated(clause: string, actionStart: number): boolean {
-  const fullPrefix = clause.slice(0, actionStart);
-  const prefix = fullPrefix.slice(-48);
-  return (
-    /\b(?:do\s+not|don't|never)\s+(?:(?:please|ever)\s+)*(?:(?:try|want|need|plan|intend|prefer)\s+to\s+)?$/.test(
-      prefix,
-    ) ||
-    /\bnot\s+to\s+$/.test(prefix) ||
-    /\bneither\s+$/.test(prefix) ||
-    (/\bnor\s+$/.test(prefix) && /\b(?:do\s+not|don't|never|not\s+to|neither)\b/.test(fullPrefix))
-  );
+function requestObjectContainsTerm(clause: string, action: RegExpMatchArray, termStart: number): boolean {
+  if (action.index === undefined) {
+    return false;
+  }
+  const between = clause.slice(action.index + action[0].length, termStart);
+  if (
+    /\b(?:about|as|beside|near|against|by|while|without|where|because|into|onto|in|on|under|between|instead|here|there)\b/.test(
+      between,
+    )
+  ) {
+    return false;
+  }
+  if (action[0] !== "replace" && /\b(?:for|from|of|to)\b/.test(between)) {
+    return false;
+  }
+  return !between
+    .split(/[^a-z]+/)
+    .filter(Boolean)
+    .some((word) => ordinaryNonFurnitureTerms.has(word));
 }
 
 function lexiconMatchIsRequested(normalized: string, matchStart: number): boolean {
@@ -456,7 +517,10 @@ function lexiconMatchIsRequested(normalized: string, matchStart: number): boolea
   ];
   const nearestAction = actions.at(-1);
   if (nearestAction !== undefined) {
-    return !actionIsNegated(clause, nearestAction.index);
+    return (
+      actionNegationScope(clause, nearestAction.index) === "none" &&
+      requestObjectContainsTerm(clause, nearestAction, localStart)
+    );
   }
   const modalObjectFitPattern =
     /\b(?:can|could|will|would|might)\s+(?:a|an|the|my|our)\s+[^.!?;]{1,80}?\s+fit\b/g;
@@ -485,7 +549,7 @@ function actionObjectCandidates(
   for (const clauseRange of promptClauseRanges(normalized)) {
     const clause = normalized.slice(clauseRange.start, clauseRange.end);
     for (const match of clause.matchAll(directActionPattern)) {
-      if (actionIsNegated(clause, match.index)) {
+      if (actionNegationScope(clause, match.index) !== "none") {
         continue;
       }
       const phrase = leadingObjectPhrase(clause.slice(match.index + match[0].length));
@@ -497,7 +561,7 @@ function actionObjectCandidates(
       }
     }
     for (const match of clause.matchAll(replacePattern)) {
-      if (actionIsNegated(clause, match.index)) {
+      if (actionNegationScope(clause, match.index) !== "none") {
         continue;
       }
       const restStart = match.index + match[0].length;
@@ -588,6 +652,20 @@ export function detectUnsupportedCatalogTerms(prompt: string): string[] {
   return matches;
 }
 
+const maxUnknownLength = 160;
+const unsupportedUnknownPrefix = "Missing verified catalog dimensions for ";
+const unsupportedUnknownSuffix = ".";
+
+function unsupportedFurnitureUnknown(term: string): string {
+  const normalized = term.replaceAll(/\s+/g, " ").trim() || "requested item";
+  const maxTermLength = maxUnknownLength - unsupportedUnknownPrefix.length - unsupportedUnknownSuffix.length;
+  const bounded =
+    normalized.length <= maxTermLength
+      ? normalized
+      : `${normalized.slice(0, maxTermLength - 3).trimEnd()}...`;
+  return `${unsupportedUnknownPrefix}${bounded}${unsupportedUnknownSuffix}`;
+}
+
 export interface ToolValidationError {
   readonly code:
     | "INVALID_JSON"
@@ -623,7 +701,6 @@ export function formatIntentValidationCorrection(
     ...(analysis.allowed.bed.length === 1 ? { bed: analysis.allowed.bed[0] } : {}),
     ...(analysis.allowed.desk.length === 1 ? { desk: analysis.allowed.desk[0] } : {}),
     ...(analysis.allowed.crib.length === 1 ? { crib: analysis.allowed.crib[0] } : {}),
-    changedPreference: prompt,
     clarification: analysis.clarification,
   };
   return [
@@ -635,7 +712,6 @@ export function formatIntentValidationCorrection(
       bed: analysis.allowed.bed,
       desk: analysis.allowed.desk,
       crib: analysis.allowed.crib,
-      changedPreference: [prompt],
       clarification: [analysis.clarification],
     })}`,
     "Return a new complete JSON object, choosing one value from each allowed array.",
@@ -673,7 +749,7 @@ function unique<T>(values: readonly T[]): T[] {
 
 function intentClauses(normalized: string): string[] {
   return normalized
-    .split(/\s*(?:[.!?;]+|,\s*|\bbut\b)\s*/)
+    .split(/\s*(?:[.!?;]+|,(?!\s*(?:and|or|nor)\b)|\bbut\b)\s*/)
     .map((clause) => clause.trim())
     .filter(Boolean);
 }
@@ -697,62 +773,39 @@ function preservingDeskValues(state: DemoStateSnapshot): readonly LayoutIntentDe
   return current === null ? ["keep", "standard"] : ["keep", current];
 }
 
-type TransitionNegation = "none" | "clear" | "ambiguous";
-const ambiguousTransitionNegationIssue = "Clarify which transition actions are covered by the negation.";
+const ambiguousActionNegationIssue = "Clarify which actions are covered by the negation.";
 
 interface ParsedTransition<T extends string> {
   readonly source: T;
   readonly target: T;
-  readonly negation: TransitionNegation;
+  readonly negation: ActionNegationScope;
   readonly start: number;
   readonly end: number;
 }
-
-const transitionActionSource =
-  "(?:replace|swap(?:\\s+out)?|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|bring\\s+in|place|put|fit|remove|take\\s+out|drop|get\\s+rid\\s+of)";
 
 function transitionNegationScope(
   clause: string,
   transitionStart: number,
   transitionEnd: number,
-): TransitionNegation {
-  const prefix = clause.slice(0, transitionStart);
+): ActionNegationScope {
   const suffix = clause.slice(transitionEnd);
-  const explicitTransitionNegation = String.raw`(?:do\s+not|don't|never|not(?:\s+to)?)`;
-  const directNegation =
-    /\b(?:do\s+not|don't|never)\s+(?:(?:please|ever)\s+)*(?:(?:try|want|need|plan|intend|prefer)\s+to\s+)?$/.test(
-      prefix,
-    ) ||
-    /\bnot\s+(?:to\s+)?$/.test(prefix) ||
-    /\bneither\s+(?:(?:please|ever|then)\s+)*$/.test(prefix);
+  const prefixScope = actionNegationScope(clause, transitionStart);
+  if (prefixScope === "ambiguous") {
+    return "ambiguous";
+  }
+  const explicitTransitionNegation = `(?:(?:do\\s+not|don't|never)\\s+${interveningActionModifierSource}|not(?:\\s+to)?\\s+)`;
   const unscopedActionAfter = new RegExp(
-    `^\\s+(?:and|or)\\s+(?!${explicitTransitionNegation}\\b)(?:then\\s+)?${transitionActionSource}\\b`,
+    `^\\s*,?\\s*(?:and|or)\\s+(?!${explicitTransitionNegation})(?:then\\s+)?${semanticActionSource}\\b`,
   ).test(suffix);
-  if (directNegation) {
+  if (prefixScope === "clear") {
     return unscopedActionAfter ? "ambiguous" : "clear";
   }
 
-  const norActionAfter = new RegExp(`^\\s+nor\\s+(?:then\\s+)?${transitionActionSource}\\b`).test(suffix);
+  const norActionAfter = new RegExp(`^\\s*,?\\s*nor\\s+(?:then\\s+)?${semanticActionSource}\\b`).test(suffix);
   if (norActionAfter) {
     return "ambiguous";
   }
-
-  const conjunction = [...prefix.matchAll(/\s+(?<word>and|or|nor)\s+/g)].at(-1);
-  if (conjunction === undefined) {
-    return "none";
-  }
-  const beforeConjunction = prefix.slice(0, conjunction.index);
-  const afterConjunction = prefix.slice(conjunction.index + conjunction[0].length);
-  const precedingNegatedAction = new RegExp(
-    `\\b(?:do\\s+not|don't|never|not\\s+to|neither)\\b[^.!?;]{0,100}\\b${transitionActionSource}\\b`,
-  ).test(beforeConjunction);
-  const repeatedNegation = new RegExp(
-    `(?:^|\\s)${explicitTransitionNegation}\\s+(?:(?:please|ever|then)\\s+)*$`,
-  ).test(afterConjunction);
-  if (conjunction.groups?.word === "nor") {
-    return precedingNegatedAction ? "clear" : "ambiguous";
-  }
-  return precedingNegatedAction && !repeatedNegation ? "ambiguous" : "none";
+  return "none";
 }
 
 function parseTransitions<T extends string>(
@@ -826,7 +879,7 @@ function clauseNegatesBedVariant(clause: string, variant: BedVariant): boolean {
   const term = `${variant}(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?`;
   return (
     new RegExp(
-      `\\b(?:do not|don't|never)\\s+(?:(?:keep|use|choose|select|try|prefer|want|need|switch|change|move|go)(?:\\s+the\\s+bed)?(?:\\s+to)?\\s+)(?:a\\s+|the\\s+)?${term}\\b`,
+      `\\b(?:do not|don't|never)\\s+${interveningActionModifierSource}(?:(?:keep|use|choose|select|try|prefer|want|need|switch|change|move|go)(?:\\s+the\\s+bed)?(?:\\s+to)?\\s+)(?:a\\s+|the\\s+)?${term}\\b`,
     ).test(clause) || new RegExp(`\\b(?:not|no|without)\\s+(?:a\\s+|the\\s+)?${term}\\b`).test(clause)
   );
 }
@@ -853,7 +906,7 @@ function analyzeBedIntent(
         keepRequested = true;
         excluded.add(parsed.target);
         if (parsed.negation === "ambiguous") {
-          issues.push(ambiguousTransitionNegationIssue);
+          issues.push(ambiguousActionNegationIssue);
         }
         continue;
       }
@@ -1005,7 +1058,7 @@ function analyzeDeskIntent(
         keepRequested = true;
         excluded.add(parsed.target);
         if (parsed.negation === "ambiguous") {
-          issues.push(ambiguousTransitionNegationIssue);
+          issues.push(ambiguousActionNegationIssue);
         }
         continue;
       }
@@ -1141,6 +1194,19 @@ function analyzeDeskIntent(
   };
 }
 
+function actionScopesForPatterns(
+  clause: string,
+  patterns: readonly RegExp[],
+): readonly ActionNegationScope[] {
+  const starts = new Set<number>();
+  for (const pattern of patterns) {
+    for (const match of clause.matchAll(pattern)) {
+      starts.add(match.index);
+    }
+  }
+  return [...starts].map((start) => actionNegationScope(clause, start));
+}
+
 function analyzeCribIntent(
   state: DemoStateSnapshot,
   normalized: string,
@@ -1156,50 +1222,44 @@ function analyzeCribIntent(
       continue;
     }
     mentioned = true;
-    const actionFirstRemoval = /\b(?:remove|take out|drop|get rid of)\b[^.!?]{0,24}\bcrib\b/.test(clause);
-    const objectFirstRemoval = /\btake\s+(?:the\s+)?crib\s+out\b/.test(clause);
-    const doNotRemove =
-      /\b(?:do not|don't|never)\s+(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b/.test(clause) ||
-      /\b(?:do not|don't|never)\s+take\s+(?:the\s+)?crib\s+out\b/.test(clause);
-    const doNotKeep = /\b(?:do not|don't|never)\s+keep\b[^.!?]{0,20}\bcrib\b/.test(clause);
-    const doNotAdd = /\b(?:do not|don't|never)\s+(?:add|include|bring in|use)\b[^.!?]{0,20}\bcrib\b/.test(
-      clause,
-    );
-    if (doNotRemove) {
+    const removalScopes = actionScopesForPatterns(clause, [
+      /\b(?:remove|take\s+out|drop|get\s+rid\s+of)\b[^.!?]{0,24}\bcrib\b/g,
+      /\btake\s+(?:the\s+)?crib\s+out\b/g,
+    ]);
+    if (removalScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (removalScopes.includes("clear")) {
       actions.add("keep");
     }
-    if (doNotKeep) {
+    if (removalScopes.includes("none") || /\b(?:without|no)\s+(?:a\s+|the\s+)?crib\b/.test(clause)) {
       actions.add("remove");
     }
-    if (doNotAdd) {
+
+    const addScopes = actionScopesForPatterns(clause, [
+      /\b(?:add|include|bring\s+in|place|use|need|want)\b[^.!?]{0,24}\bcrib\b/g,
+    ]);
+    if (addScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (addScopes.includes("clear")) {
       preserveRequested = true;
     }
-    if (
-      !doNotRemove &&
-      (actionFirstRemoval || objectFirstRemoval || /\b(?:without|no)\s+(?:a\s+|the\s+)?crib\b/.test(clause))
-    ) {
-      actions.add("remove");
-    }
-    if (
-      /\b(?:do not|don't|never)\b[^.!?]{0,40}\band\s+(?:(?:remove|take out|drop|get rid of)\b[^.!?]{0,20}\bcrib\b|take\s+(?:the\s+)?crib\s+out\b)/.test(
-        clause,
-      )
-    ) {
-      issues.push("Clarify whether the negation also applies to removing the crib.");
-    }
-    if (
-      !doNotAdd &&
-      (/\b(?:add|include|bring in|place|use|need|want)\b[^.!?]{0,24}\bcrib\b/.test(clause) ||
-        /\bcrib\b[^.!?]{0,20}\b(?:added|included|brought in)\b/.test(clause))
-    ) {
+    if (addScopes.includes("none") || /\bcrib\b[^.!?]{0,20}\b(?:added|included|brought in)\b/.test(clause)) {
       actions.add("add");
     }
-    if (
-      !doNotKeep &&
-      (/\b(?:keep|retain|leave)\s+(?:the\s+)?crib\b/.test(clause) ||
-        /\b(?:keep|retain|leave)\b[^.!?]{0,20}\b(?:desk|bed)\s+and\s+(?:the\s+)?crib\b/.test(clause) ||
-        /\bcrib\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged)\b/.test(clause))
-    ) {
+
+    const keepScopes = actionScopesForPatterns(clause, [
+      /\b(?:keep|retain|leave)\s+(?:the\s+)?crib\b/g,
+      /\b(?:keep|retain|leave)\b[^.!?]{0,20}\b(?:desk|bed)\s+and\s+(?:the\s+)?crib\b/g,
+    ]);
+    if (keepScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (keepScopes.includes("clear")) {
+      actions.add("remove");
+    }
+    if (keepScopes.includes("none") || /\bcrib\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged)\b/.test(clause)) {
       actions.add("keep");
     }
   }
@@ -1260,10 +1320,11 @@ export function analyzeLayoutPrompt(state: DemoStateSnapshot, prompt: string): P
   const bed = analyzeBedIntent(state, supportedIntentText);
   const desk = analyzeDeskIntent(state, supportedIntentText, crib);
   const ambiguousTransitionScope =
-    bed.issues.includes(ambiguousTransitionNegationIssue) ||
-    desk.issues.includes(ambiguousTransitionNegationIssue);
+    bed.issues.includes(ambiguousActionNegationIssue) ||
+    desk.issues.includes(ambiguousActionNegationIssue) ||
+    crib.issues.includes(ambiguousActionNegationIssue);
   const unknowns = unique([
-    ...unsupportedTerms.map((term) => `Missing verified catalog dimensions for ${term}.`),
+    ...unsupportedTerms.map(unsupportedFurnitureUnknown),
     ...bed.issues,
     ...desk.issues,
     ...crib.issues,
@@ -1313,23 +1374,44 @@ export function parseAndValidateIntentDelta(
   if (!parsed.ok) {
     return parsed;
   }
-  const schemaResult = layoutIntentDeltaSchema.safeParse(parsed.value);
-  if (!schemaResult.success) {
+  const generatedSchemaResult = generatedLayoutIntentDeltaSchema.safeParse(parsed.value);
+  if (!generatedSchemaResult.success) {
     return {
       ok: false,
       error: {
         code: "INVALID_SCHEMA",
         message: "The model intent delta did not match the strict semantic schema.",
-        details: schemaResult.error.issues.map(
+        details: generatedSchemaResult.error.issues.map(
           (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
         ),
       },
     };
   }
 
-  const intentDelta = schemaResult.data;
+  const intentSchemaResult = layoutIntentDeltaSchema.safeParse({
+    ...generatedSchemaResult.data,
+    changedPreference: prompt,
+  });
+  if (!intentSchemaResult.success) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+        message: "The submitted request could not be preserved in the semantic delta.",
+        details: intentSchemaResult.error.issues.map(
+          (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      },
+    };
+  }
+
+  const intentDelta = intentSchemaResult.data;
   const analysis = analyzeLayoutPrompt(state, prompt);
-  const toolInput = buildCompareLayoutOptionsInput(intentDelta, state);
+  const toolInputResult = buildCompareLayoutOptionsInput(intentDelta, state);
+  if (!toolInputResult.ok) {
+    return toolInputResult;
+  }
+  const toolInput = toolInputResult.value;
   const details: string[] = [];
   if (!analysis.allowed.bed.includes(intentDelta.bed)) {
     details.push(
@@ -1346,7 +1428,10 @@ export function parseAndValidateIntentDelta(
       `crib must be one of ${analysis.allowed.crib.join(", ")} for USER_REQUEST; received ${intentDelta.crib}.`,
     );
   }
-  if (intentDelta.changedPreference !== prompt) {
+  if (
+    generatedSchemaResult.data.changedPreference !== undefined &&
+    generatedSchemaResult.data.changedPreference !== prompt
+  ) {
     details.push("changedPreference must reproduce USER_REQUEST exactly.");
   }
   if (intentDelta.clarification !== analysis.clarification) {
@@ -1702,11 +1787,26 @@ export function resolveCandidateFurnitureIds(
 export function buildCompareLayoutOptionsInput(
   intentDelta: LayoutIntentDelta,
   state: DemoStateSnapshot,
-): CompareLayoutOptionsInput {
-  const candidateFurnitureIds = resolveCandidateFurnitureIds(intentDelta, state);
+): ToolValidationResult {
+  const intentSchemaResult = layoutIntentDeltaSchema.safeParse(intentDelta);
+  if (!intentSchemaResult.success) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+        message: "The application could not derive tool input from an invalid semantic delta.",
+        details: intentSchemaResult.error.issues.map(
+          (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      },
+    };
+  }
+
+  const validIntentDelta = intentSchemaResult.data;
+  const candidateFurnitureIds = resolveCandidateFurnitureIds(validIntentDelta, state);
   const candidateIds = new Set(expandCandidateFurnitureIds(candidateFurnitureIds));
-  const analysis = analyzeLayoutPrompt(state, intentDelta.changedPreference);
-  return compareLayoutOptionsInputSchema.parse({
+  const analysis = analyzeLayoutPrompt(state, validIntentDelta.changedPreference);
+  const schemaResult = compareLayoutOptionsInputSchema.safeParse({
     roomPlanId: ROOM_PLAN_ID,
     planVersion: ROOM_PLAN_VERSION,
     priorStateRef: state.stateRef,
@@ -1717,8 +1817,21 @@ export function buildCompareLayoutOptionsInput(
     unit: "mm",
     candidateFurnitureIds,
     retainFurnitureIds: state.activeFurnitureIds.filter((id) => candidateIds.has(id)),
-    changedPreference: intentDelta.changedPreference,
+    changedPreference: validIntentDelta.changedPreference,
     unknowns: analysis.unknowns,
     clarificationNeeded: analysis.clarification === "required",
   });
+  if (!schemaResult.success) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_SCHEMA",
+        message: "The application-derived tool input did not match the strict schema.",
+        details: schemaResult.error.issues.map(
+          (issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      },
+    };
+  }
+  return { ok: true, value: schemaResult.data };
 }

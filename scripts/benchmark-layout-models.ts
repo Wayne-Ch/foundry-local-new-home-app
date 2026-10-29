@@ -169,8 +169,11 @@ function authoredTurn(
   readonly status: LayoutToolStatus;
   readonly selectedOptionId: string | null;
 } {
-  const input = buildCompareLayoutOptionsInput(intent, state);
-  const result = compareKnownLayoutOptions(input, state);
+  const inputResult = buildCompareLayoutOptionsInput(intent, state);
+  if (!inputResult.ok) {
+    throw new Error(inputResult.error.details.join(" "));
+  }
+  const result = compareKnownLayoutOptions(inputResult.value, state);
   return {
     state: applyToolResult(state, result),
     status: result.status,
@@ -680,7 +683,11 @@ function protectionEvidence(): Record<string, unknown> {
     state,
     prompt,
   );
-  const toolInput = buildCompareLayoutOptionsInput(intent, state);
+  const toolInputResult = buildCompareLayoutOptionsInput(intent, state);
+  if (!toolInputResult.ok) {
+    return { extraGeometry, derivedToolInput: toolInputResult };
+  }
+  const toolInput = toolInputResult.value;
   const stale = parseAndValidateToolInput(
     JSON.stringify({ ...toolInput, priorStateRef: "layout-state-v999" }),
     state,
