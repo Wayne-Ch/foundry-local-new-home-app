@@ -352,6 +352,66 @@ describe("compact intent-delta contract", () => {
     });
   });
 
+  it("caps derived unknown evidence deterministically at the schema maximum", () => {
+    const state = stateWithQueenDesk();
+    const eightPrompt =
+      "Add an armchair, cabinet, bassinet, night stand, moon pod, sofa, bench, and stool beside the desk.";
+    const ninePrompt =
+      "Add an armchair, cabinet, bassinet, night stand, moon pod, sofa, bench, stool, and dresser beside the desk.";
+    const expectedFirstSeven = [
+      "Missing verified catalog dimensions for armchair.",
+      "Missing verified catalog dimensions for cabinet.",
+      "Missing verified catalog dimensions for bassinet.",
+      "Missing verified catalog dimensions for night stand.",
+      "Missing verified catalog dimensions for moon pod.",
+      "Missing verified catalog dimensions for sofa.",
+      "Missing verified catalog dimensions for bench.",
+    ];
+
+    const eightUnknowns = analyzeLayoutPrompt(state, eightPrompt).unknowns;
+    expect(eightUnknowns).toHaveLength(8);
+    expect(
+      buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, eightPrompt), state),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        unknowns: eightUnknowns,
+        clarificationNeeded: true,
+      },
+    });
+
+    const nineUnknowns = analyzeLayoutPrompt(state, ninePrompt).unknowns;
+    expect(nineUnknowns).toEqual([
+      ...expectedFirstSeven,
+      "Additional clarification evidence omitted: 2 more items.",
+    ]);
+    expect(analyzeLayoutPrompt(state, ninePrompt).unknowns).toEqual(nineUnknowns);
+
+    const built = buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, ninePrompt), state);
+    expect(built).toMatchObject({
+      ok: true,
+      value: {
+        unknowns: nineUnknowns,
+        clarificationNeeded: true,
+      },
+    });
+    expect(
+      parseAndValidateIntentDelta(
+        JSON.stringify(preferredLayoutIntentDelta(state, ninePrompt)),
+        state,
+        ninePrompt,
+      ),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      analyzeLayoutPrompt(state, "Add an armchair, another armchair, a cabinet, and another cabinet.")
+        .unknowns,
+    ).toEqual([
+      "Missing verified catalog dimensions for armchair.",
+      "Missing verified catalog dimensions for cabinet.",
+    ]);
+  });
+
   it("rejects invented IDs, dimensions, geometry, verdicts, and changed state references", () => {
     const state = createInitialDemoState();
     const prompt = "Can a Queen bed and a standard desk fit?";
@@ -700,6 +760,80 @@ describe("compact intent-delta contract", () => {
     });
   });
 
+  it("routes direct bed, desk, and crib actions through fail-closed negation scope", () => {
+    const state = stateWithQueenDesk();
+    const coordinated = "Neither choose a compact desk, nor add a crib.";
+    expect(analyzeLayoutPrompt(state, coordinated)).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+    });
+    expect(preferredCandidateFurnitureIds(state, coordinated)).toEqual({
+      bed: "bed-queen",
+      desk: "desk-standard",
+      crib: null,
+    });
+    expect(
+      parseAndValidateIntentDelta(
+        JSON.stringify({
+          bed: "keep",
+          desk: "compact",
+          crib: "add",
+          clarification: "none",
+        }),
+        state,
+        coordinated,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
+      },
+    });
+
+    for (const prompt of [
+      "Nor choose a King bed.",
+      "Nor choose a compact desk.",
+      "Do not now choose a King bed.",
+      "Do not now choose a compact desk.",
+    ]) {
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "required",
+        preferred: {
+          bed: "keep",
+          desk: "keep",
+          crib: "keep",
+        },
+        allowed: {
+          bed: ["keep"],
+          desk: ["keep"],
+          crib: ["keep"],
+        },
+      });
+    }
+
+    const cribState = stateWithKingCompactCrib();
+    expect(analyzeLayoutPrompt(cribState, "Do not now take the crib out.")).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+        crib: ["keep"],
+      },
+    });
+    expect(preferredCandidateFurnitureIds(cribState, "Do not now take the crib out.").crib).toBe(
+      "crib-standard",
+    );
+  });
+
   it.each([
     [
       "Replace the standard desk with a compact desk.",
@@ -888,6 +1022,32 @@ describe("missing verified dimensions", () => {
   });
 
   it.each([
+    ["We need one chair beside the desk.", "chair"],
+    ["We need two chairs beside the desk.", "chair"],
+    ["Add multiple lamps beside the bed.", "lamp"],
+    ["Could several benches fit near the wall?", "bench"],
+    ["Place 3 stools beside the desk.", "stool"],
+  ] as const)("normalizes quantified or plural unsupported furniture in %s", (prompt, term) => {
+    const state = stateWithQueenDesk();
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([term]);
+    const analysis = analyzeLayoutPrompt(state, prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(analysis.unknowns).toContain(`Missing verified catalog dimensions for ${term}.`);
+    const built = expectBuiltToolInput(preferredLayoutIntentDelta(state, prompt), state);
+    expect(built.clarificationNeeded).toBe(true);
+    expect(built.unknowns).toContain(`Missing verified catalog dimensions for ${term}.`);
+  });
+
+  it.each([
+    "We do not need two chairs beside the desk.",
+    "Do not add multiple lamps beside the bed.",
+    "We no longer need several benches.",
+    "Keep the Queen bed without any chairs.",
+  ])("ignores negated quantified or plural furniture requests: %s", (prompt) => {
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+  });
+
+  it.each([
     ["Use a California King.", "california king"],
     ["Put a California King bed against the wall.", "california king"],
     ["Add a twin.", "twin bed"],
@@ -964,6 +1124,30 @@ describe("missing verified dimensions", () => {
     expect(detectUnsupportedCatalogTerms("We do not need a chair, nor do we want a lamp.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We want the result in a table.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We need a clear answer beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We need two clear answers beside the desk.")).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("We need multiple layout options in a summary table.")).toEqual([]);
     expect(detectUnsupportedCatalogTerms("We want the layout to stay flexible.")).toEqual([]);
+  });
+
+  it.each([
+    "Return a table of results.",
+    "Use a summary table for the comparison.",
+    "Provide table output for the layout options.",
+    "Format the answer as a comparison table.",
+    "Put the findings into a results table.",
+  ])("does not classify presentation-format table prose as furniture: %s", (prompt) => {
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+  });
+
+  it.each([
+    "Add a table beside the bed.",
+    "Add a 1200 mm table beside the bed.",
+    "Could a table fit near the wall?",
+  ])("keeps physical table requests fail-closed: %s", (prompt) => {
+    const state = stateWithQueenDesk();
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
+    const analysis = analyzeLayoutPrompt(state, prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(analysis.unknowns).toContain("Missing verified catalog dimensions for table.");
   });
 });

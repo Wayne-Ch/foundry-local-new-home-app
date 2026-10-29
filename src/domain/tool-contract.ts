@@ -15,6 +15,8 @@ const deskIds = ["desk-standard", "desk-compact"] as const;
 const bedIntentValues = ["keep", "queen", "king"] as const;
 const deskIntentValues = ["keep", "flexible", "standard", "compact"] as const;
 const cribIntentValues = ["keep", "add", "remove"] as const;
+const maxUnknownCount = 8;
+const maxUnknownLength = 160;
 
 export const layoutIntentDeltaSchema = z
   .object({
@@ -67,7 +69,7 @@ export const compareLayoutOptionsInputSchema = z
         }
       }),
     changedPreference: z.string(),
-    unknowns: z.array(z.string().min(1).max(160)).max(8),
+    unknowns: z.array(z.string().min(1).max(maxUnknownLength)).max(maxUnknownCount),
     clarificationNeeded: z.boolean(),
   })
   .strict();
@@ -145,8 +147,8 @@ export const compareLayoutOptionsJsonSchema = {
     },
     unknowns: {
       type: "array",
-      maxItems: 8,
-      items: { type: "string" },
+      maxItems: maxUnknownCount,
+      items: { type: "string", maxLength: maxUnknownLength },
       description: "List missing verified facts. Never infer measurements.",
     },
     clarificationNeeded: {
@@ -298,8 +300,10 @@ const ordinaryNonFurnitureTerms = new Set([
   "discussion",
   "door",
   "explanation",
+  "finding",
   "finish",
   "floor",
+  "format",
   "guidance",
   "idea",
   "language",
@@ -309,9 +313,11 @@ const ordinaryNonFurnitureTerms = new Set([
   "message",
   "note",
   "option",
+  "output",
   "path",
   "plan",
   "preference",
+  "report",
   "result",
   "room",
   "route",
@@ -350,8 +356,99 @@ const likelyFurnitureHeads = new Set([
   "unit",
 ]);
 
+const furnitureQualifierSource =
+  "(?:a\\s+(?:couple|pair)\\s+of|a|an|the|my|our|current|another|some|any|one|two|three|four|five|six|seven|eight|nine|ten|several|multiple|many|few|both|(?:couple|pair)\\s+of|\\d+)";
+
+const pluralFurnitureHeads = new Map<string, string>([
+  ["armchairs", "armchair"],
+  ["armoires", "armoire"],
+  ["bassinets", "bassinet"],
+  ["beds", "bed"],
+  ["benches", "bench"],
+  ["bookcases", "bookcase"],
+  ["bookshelves", "bookshelf"],
+  ["cabinets", "cabinet"],
+  ["chairs", "chair"],
+  ["chests", "chest"],
+  ["cots", "cot"],
+  ["couches", "couch"],
+  ["cradles", "cradle"],
+  ["credenzas", "credenza"],
+  ["daybeds", "daybed"],
+  ["desks", "desk"],
+  ["dressers", "dresser"],
+  ["easels", "easel"],
+  ["footboards", "footboard"],
+  ["futons", "futon"],
+  ["headboards", "headboard"],
+  ["hutches", "hutch"],
+  ["lamps", "lamp"],
+  ["lockers", "locker"],
+  ["loveseats", "loveseat"],
+  ["ottomans", "ottoman"],
+  ["pods", "pod"],
+  ["poufs", "pouf"],
+  ["racks", "rack"],
+  ["recliners", "recliner"],
+  ["rockers", "rocker"],
+  ["seats", "seat"],
+  ["shelves", "shelf"],
+  ["sideboards", "sideboard"],
+  ["sofas", "sofa"],
+  ["stands", "stand"],
+  ["stools", "stool"],
+  ["tables", "table"],
+  ["trunks", "trunk"],
+  ["units", "unit"],
+  ["vanities", "vanity"],
+  ["wardrobes", "wardrobe"],
+  ["workstations", "workstation"],
+]);
+
+const presentationTableSources = [
+  "\\btable\\s+of\\s+(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?)\\b",
+  "\\b(?:summary|results?|comparison|output|data|markdown|presentation|formatted|report|findings)\\s+tables?\\b",
+  "\\btables?\\s+(?:output|format|summary|results?|view|report)\\b",
+  "\\b(?:in|as|into)\\s+(?:a\\s+)?tables?\\b",
+] as const;
+
 function normalizePromptText(value: string): string {
   return value.toLowerCase().replaceAll(/[’‘]/g, "'").replaceAll(/[–—]/g, "-").replaceAll(/\s+/g, " ").trim();
+}
+
+function singularizeFurnitureHead(phrase: string): string {
+  const words = phrase.split(" ");
+  const head = words.at(-1);
+  if (head === undefined) {
+    return phrase;
+  }
+  const singular = pluralFurnitureHeads.get(head);
+  if (singular === undefined) {
+    return phrase;
+  }
+  words[words.length - 1] = singular;
+  return words.join(" ");
+}
+
+function isOrdinaryNonFurnitureWord(word: string): boolean {
+  if (ordinaryNonFurnitureTerms.has(word)) {
+    return true;
+  }
+  if (word.endsWith("ies") && ordinaryNonFurnitureTerms.has(`${word.slice(0, -3)}y`)) {
+    return true;
+  }
+  return word.endsWith("s") && ordinaryNonFurnitureTerms.has(word.slice(0, -1));
+}
+
+function isPresentationTableReference(value: string, tableStart: number): boolean {
+  return presentationTableSources.some((source) =>
+    [...value.matchAll(new RegExp(source, "g"))].some(
+      (match) =>
+        match.index <= tableStart &&
+        tableStart < match.index + match[0].length &&
+        /\btables?\b/.test(match[0]),
+    ),
+  );
 }
 
 type ActionNegationScope = "none" | "clear" | "ambiguous";
@@ -360,6 +457,8 @@ const semanticActionSource =
   "(?:replace|swap(?:\\s+out)?|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|bring\\s+in|place|put|fit|remove|take\\s+out|drop|get\\s+rid\\s+of)";
 const interveningActionModifierSource = "(?:(?:[a-z]+ly|also|even|ever|just|please|still|then)\\s+)*";
 const optionalIntentWrapperSource = "(?:(?:try|want|need|plan|intend|prefer)\\s+to\\s+)?";
+const coordinatedActionWrapperSource =
+  "(?:(?:do|did|would|could|should)\\s+(?:i|we|you|they|he|she|it)\\s+)?";
 
 function hasDirectActionNegation(prefix: string): boolean {
   return (
@@ -376,34 +475,56 @@ function hasLeadingUnpairedNor(prefix: string): boolean {
   return new RegExp(`^\\s*,?\\s*nor\\s+${interveningActionModifierSource}$`).test(prefix);
 }
 
+function hasPotentialActionNegation(prefix: string): boolean {
+  return (
+    /\b(?:do\s+not|don't|never|no\s+longer|neither)\b[^.!?;]{0,240}$/.test(prefix) ||
+    /\bnot(?:\s+to)?\b[^.!?;]{0,240}$/.test(prefix) ||
+    /\bnor\b[^.!?;]{0,240}$/.test(prefix)
+  );
+}
+
+function hasOnlyKnownActionLead(value: string): boolean {
+  return new RegExp(`^${coordinatedActionWrapperSource}${interveningActionModifierSource}$`).test(value);
+}
+
 function actionNegationScope(clause: string, actionStart: number): ActionNegationScope {
   const prefix = clause.slice(0, actionStart);
   if (hasDirectActionNegation(prefix)) {
     return "clear";
   }
-  if (hasLeadingUnpairedNor(prefix)) {
-    return "ambiguous";
-  }
 
   const conjunction = [...prefix.matchAll(/(?:,\s*|\s+)(and|or|nor)\s+/g)].at(-1);
   if (conjunction === undefined) {
+    if (hasLeadingUnpairedNor(prefix) || hasPotentialActionNegation(prefix)) {
+      return "ambiguous";
+    }
     return "none";
   }
   const word = conjunction[1];
   const beforeConjunction = prefix.slice(0, conjunction.index);
+  const afterConjunction = prefix.slice(conjunction.index + conjunction[0].length);
   const precedingNegatedAction = new RegExp(
     `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,240}\\b${semanticActionSource}\\b`,
   ).test(beforeConjunction);
   if (word === "nor") {
-    return precedingNegatedAction ? "clear" : "ambiguous";
+    return precedingNegatedAction && hasOnlyKnownActionLead(afterConjunction) ? "clear" : "ambiguous";
   }
   if (!precedingNegatedAction) {
-    return "none";
+    return hasPotentialActionNegation(prefix) ? "ambiguous" : "none";
   }
   const coordinatedVerbChain = new RegExp(
     `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,80}\\b${semanticActionSource}\\s*$`,
   ).test(beforeConjunction);
-  return coordinatedVerbChain ? "clear" : "ambiguous";
+  return coordinatedVerbChain && hasOnlyKnownActionLead(afterConjunction) ? "clear" : "ambiguous";
+}
+
+function targetNegationScope(clause: string, targetStart: number): ActionNegationScope {
+  const prefix = clause.slice(0, targetStart);
+  if (/\b(?:not|no|without)\s+(?:(?:a|an|the|my|our|any)\s+)?$/.test(prefix)) {
+    return "clear";
+  }
+  const nearestAction = [...prefix.matchAll(new RegExp(`\\b${semanticActionSource}\\b`, "g"))].at(-1);
+  return actionNegationScope(clause, nearestAction?.index ?? targetStart);
 }
 
 function isSupportedFurniturePhrase(phrase: string): boolean {
@@ -428,11 +549,15 @@ function lexiconMatches(value: string): readonly { readonly term: string; readon
 }
 
 function canonicalUnsupportedFurniturePhrase(phrase: string): string | null {
-  const hasDeterminer = /^(?:(?:and|or)\s+)?(?:a|an|the|my|our|current|another|some)\s+/.test(phrase.trim());
-  const normalized = phrase
-    .replace(/^(?:(?:and|or)\s+)?(?:(?:a|an|the|my|our|current|another|some)\s+)?/, "")
-    .replace(/\s+(?:fit|here|there|instead|together)$/g, "")
-    .trim();
+  const trimmed = phrase.trim();
+  const qualifier = new RegExp(`^(?:(?:and|or)\\s+)?${furnitureQualifierSource}\\s+`).exec(trimmed);
+  const hasDeterminer = qualifier !== null;
+  const normalized = singularizeFurnitureHead(
+    trimmed
+      .slice(qualifier?.[0].length ?? 0)
+      .replace(/\s+(?:fit|here|there|instead|together)$/g, "")
+      .trim(),
+  );
   if (normalized.length === 0 || isSupportedFurniturePhrase(normalized)) {
     return null;
   }
@@ -447,7 +572,7 @@ function canonicalUnsupportedFurniturePhrase(phrase: string): string | null {
   const head = words.at(-1);
   if (
     head === undefined ||
-    words.some((word) => ordinaryNonFurnitureTerms.has(word)) ||
+    words.some(isOrdinaryNonFurnitureWord) ||
     (!hasDeterminer && !likelyFurnitureHeads.has(head))
   ) {
     return null;
@@ -522,8 +647,10 @@ function lexiconMatchIsRequested(normalized: string, matchStart: number): boolea
       requestObjectContainsTerm(clause, nearestAction, localStart)
     );
   }
-  const modalObjectFitPattern =
-    /\b(?:can|could|will|would|might)\s+(?:a|an|the|my|our)\s+[^.!?;]{1,80}?\s+fit\b/g;
+  const modalObjectFitPattern = new RegExp(
+    `\\b(?:can|could|will|would|might)\\s+(?:${furnitureQualifierSource}\\s+)?[^.!?;]{1,80}?\\s+fit\\b`,
+    "g",
+  );
   return [...clause.matchAll(modalObjectFitPattern)].some(
     (match) => match.index <= localStart && localStart < match.index + match[0].length,
   );
@@ -544,8 +671,10 @@ function actionObjectCandidates(
   const candidates: { readonly phrase: string; readonly start: number }[] = [];
   const directActionPattern = /\b(?:add|use|include|bring\s+in|place|put|fit|choose|select|try|need|want)\b/g;
   const replacePattern = /\breplace\b/g;
-  const modalObjectFitPattern =
-    /\b(?:can|could|will|would|might)\s+(?<object>(?:a|an|the|my|our)\s+[^.!?;]{1,80}?)\s+fit\b/g;
+  const modalObjectFitPattern = new RegExp(
+    `\\b(?:can|could|will|would|might)\\s+(?<object>(?:${furnitureQualifierSource}\\s+)?[^.!?;]{1,80}?)\\s+fit\\b`,
+    "g",
+  );
   for (const clauseRange of promptClauseRanges(normalized)) {
     const clause = normalized.slice(clauseRange.start, clauseRange.end);
     for (const match of clause.matchAll(directActionPattern)) {
@@ -601,13 +730,22 @@ function actionObjectCandidates(
 function findUnsupportedCatalogTerms(normalized: string): string[] {
   const matches: { readonly term: string; readonly start: number }[] = [];
   for (const match of lexiconMatches(normalized)) {
-    if (lexiconMatchIsRequested(normalized, match.start)) {
+    if (
+      !(match.term === "table" && isPresentationTableReference(normalized, match.start)) &&
+      lexiconMatchIsRequested(normalized, match.start)
+    ) {
       matches.push(match);
     }
   }
   for (const candidate of actionObjectCandidates(normalized)) {
     const term = canonicalUnsupportedFurniturePhrase(candidate.phrase);
-    if (term !== null) {
+    const candidateWindow = normalized.slice(candidate.start, candidate.start + candidate.phrase.length + 32);
+    const localTableStart = candidateWindow.search(/\btables?\b/);
+    const presentationTable =
+      term === "table" &&
+      localTableStart >= 0 &&
+      isPresentationTableReference(normalized, candidate.start + localTableStart);
+    if (term !== null && !presentationTable) {
       matches.push({ term, start: candidate.start });
     }
   }
@@ -652,9 +790,28 @@ export function detectUnsupportedCatalogTerms(prompt: string): string[] {
   return matches;
 }
 
-const maxUnknownLength = 160;
 const unsupportedUnknownPrefix = "Missing verified catalog dimensions for ";
 const unsupportedUnknownSuffix = ".";
+
+function boundedUnknown(value: string): string {
+  const normalized = value.replaceAll(/\s+/g, " ").trim();
+  return normalized.length <= maxUnknownLength
+    ? normalized
+    : `${normalized.slice(0, maxUnknownLength - 3).trimEnd()}...`;
+}
+
+function boundedUnknowns(values: readonly string[]): string[] {
+  const distinct = unique(values.map(boundedUnknown).filter(Boolean));
+  if (distinct.length <= maxUnknownCount) {
+    return distinct;
+  }
+  const retained = distinct.slice(0, maxUnknownCount - 1);
+  const omittedCount = distinct.length - retained.length;
+  return [
+    ...retained,
+    `Additional clarification evidence omitted: ${omittedCount} more item${omittedCount === 1 ? "" : "s"}.`,
+  ];
+}
 
 function unsupportedFurnitureUnknown(term: string): string {
   const normalized = term.replaceAll(/\s+/g, " ").trim() || "requested item";
@@ -875,15 +1032,6 @@ function bedTransition(clause: string): {
   return parseTransitions(clause, patterns, (value) => value as BedVariant);
 }
 
-function clauseNegatesBedVariant(clause: string, variant: BedVariant): boolean {
-  const term = `${variant}(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?`;
-  return (
-    new RegExp(
-      `\\b(?:do not|don't|never)\\s+${interveningActionModifierSource}(?:(?:keep|use|choose|select|try|prefer|want|need|switch|change|move|go)(?:\\s+the\\s+bed)?(?:\\s+to)?\\s+)(?:a\\s+|the\\s+)?${term}\\b`,
-    ).test(clause) || new RegExp(`\\b(?:not|no|without)\\s+(?:a\\s+|the\\s+)?${term}\\b`).test(clause)
-  );
-}
-
 function analyzeBedIntent(
   state: DemoStateSnapshot,
   normalized: string,
@@ -923,32 +1071,60 @@ function analyzeBedIntent(
     }
 
     const rest = transition.rest;
-    for (const variant of ["queen", "king"] as const) {
-      const pattern = new RegExp(`\\b${variant}(?:[-\\s]?size(?:d)?)?(?:\\s+bed)?\\b`);
-      if (!pattern.test(rest)) {
+    const variantPattern = /\b(?<variant>queen|king)(?:[-\s]?size(?:d)?)?(?:\s+bed)?\b/g;
+    for (const match of rest.matchAll(variantPattern)) {
+      const variant = match.groups?.variant as BedVariant | undefined;
+      if (variant === undefined) {
         continue;
       }
       mentioned = true;
-      if (clauseNegatesBedVariant(rest, variant)) {
+      const scope = targetNegationScope(rest, match.index);
+      if (scope !== "none") {
         excluded.add(variant);
+        keepRequested = true;
+        if (scope === "ambiguous") {
+          issues.push(ambiguousActionNegationIssue);
+        }
       } else {
         targets.add(variant);
       }
     }
 
+    const keepScopes = actionScopesForPatterns(clause, [
+      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:queen|king|bed)\b/g,
+    ]);
+    if (keepScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
     if (
-      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:queen|king|bed)\b/.test(clause) ||
-      /\b(?:queen|king|bed)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone)\b/.test(clause) ||
-      /\b(?:do not|don't|never)\s+(?:change|replace|switch)\b[^.!?]{0,20}\bbed\b/.test(clause)
+      keepScopes.includes("none") ||
+      /\b(?:queen|king|bed)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone)\b/.test(clause)
     ) {
       keepRequested = true;
       mentioned = true;
     }
-    if (
-      /\b(?:remove|take out|get rid of)\b[^.!?]{0,20}\bbed\b/.test(clause) ||
-      /\b(?:without|no)\s+(?:a\s+|the\s+)?bed\b/.test(clause)
-    ) {
+    const changeScopes = actionScopesForPatterns(clause, [
+      /\b(?:change|replace|switch)\b[^.!?]{0,20}\bbed\b/g,
+    ]);
+    if (changeScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (changeScopes.includes("clear")) {
+      keepRequested = true;
+      mentioned = true;
+    }
+    const removalScopes = actionScopesForPatterns(clause, [
+      /\b(?:remove|take\s+out|get\s+rid\s+of)\b[^.!?]{0,20}\bbed\b/g,
+    ]);
+    if (removalScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (removalScopes.includes("none") || /\b(?:without|no)\s+(?:a\s+|the\s+)?bed\b/.test(clause)) {
       issues.push("Removing the bed is outside the supported Queen/King layout choices.");
+      mentioned = true;
+    }
+    if (removalScopes.includes("clear")) {
+      keepRequested = true;
       mentioned = true;
     }
     if (/\bbed\b/.test(clause) && !/\b(?:queen|king)\b/.test(clause)) {
@@ -1012,26 +1188,60 @@ function deskVariantFromWord(value: string): DeskVariant {
   return /compact|small/.test(value) ? "compact" : "standard";
 }
 
+const deskModeSource =
+  "(?:standard|regular(?:[-\\s]?size(?:d)?)?|full[-\\s]?size(?:d)?|compact|small|smaller)";
+
 function deskTransition(clause: string): {
   readonly transitions: readonly ParsedTransition<DeskVariant>[];
   readonly rest: string;
 } {
-  const mode = "(?:standard|regular(?:[-\\s]?size(?:d)?)?|full[-\\s]?size(?:d)?|compact|small|smaller)";
   const patterns = [
     new RegExp(
-      `\\b(?:replace|swap(?:\\s+out)?|change)\\s+(?:a\\s+|the\\s+)?(?<source>${mode})(?:\\s+(?:desk|workstation))?\\s+(?:with|for|to)\\s+(?:a\\s+|the\\s+)?(?<target>${mode})(?:\\s+(?:desk|workstation))?`,
+      `\\b(?:replace|swap(?:\\s+out)?|change)\\s+(?:a\\s+|the\\s+)?(?<source>${deskModeSource})(?:\\s+(?:desk|workstation))?\\s+(?:with|for|to)\\s+(?:a\\s+|the\\s+)?(?<target>${deskModeSource})(?:\\s+(?:desk|workstation))?`,
       "g",
     ),
     new RegExp(
-      `\\b(?:switch|change|move|go)\\s+from\\s+(?:a\\s+|the\\s+)?(?<source>${mode})(?:\\s+(?:desk|workstation))?\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>${mode})(?:\\s+(?:desk|workstation))?`,
+      `\\b(?:switch|change|move|go)\\s+from\\s+(?:a\\s+|the\\s+)?(?<source>${deskModeSource})(?:\\s+(?:desk|workstation))?\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>${deskModeSource})(?:\\s+(?:desk|workstation))?`,
       "g",
     ),
     new RegExp(
-      `\\bfrom\\s+(?:a\\s+|the\\s+)?(?<source>${mode})(?:\\s+(?:desk|workstation))?\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>${mode})(?:\\s+(?:desk|workstation))?`,
+      `\\bfrom\\s+(?:a\\s+|the\\s+)?(?<source>${deskModeSource})(?:\\s+(?:desk|workstation))?\\s+to\\s+(?:a\\s+|the\\s+)?(?<target>${deskModeSource})(?:\\s+(?:desk|workstation))?`,
       "g",
     ),
   ] as const;
   return parseTransitions(clause, patterns, deskVariantFromWord);
+}
+
+function deskVariantMentions(
+  clause: string,
+): readonly { readonly variant: DeskVariant; readonly start: number; readonly end: number }[] {
+  const candidates: { readonly variant: DeskVariant; readonly start: number; readonly end: number }[] = [];
+  const patterns = [
+    new RegExp(`\\b(?<mode>${deskModeSource})\\b[^.!?]{0,24}?\\b(?:desk|workstation)\\b`, "g"),
+    new RegExp(`\\b(?:desk|workstation)\\b[^.!?]{0,24}?\\b(?<mode>${deskModeSource})\\b`, "g"),
+  ] as const;
+  for (const pattern of patterns) {
+    for (const match of clause.matchAll(pattern)) {
+      const mode = match.groups?.mode;
+      if (mode !== undefined) {
+        candidates.push({
+          variant: deskVariantFromWord(mode),
+          start: match.index,
+          end: match.index + match[0].length,
+        });
+      }
+    }
+  }
+  const mentions: typeof candidates = [];
+  for (const candidate of candidates.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  )) {
+    if (mentions.some((mention) => candidate.start < mention.end && candidate.end > mention.start)) {
+      continue;
+    }
+    mentions.push(candidate);
+  }
+  return mentions;
 }
 
 function analyzeDeskIntent(
@@ -1070,61 +1280,86 @@ function analyzeDeskIntent(
       }
     }
     const rest = transition.rest;
-    const compactMention =
-      /\b(?:compact|small|smaller)\b[^.!?]{0,24}\b(?:desk|workstation)\b/.test(rest) ||
-      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:compact|small|smaller)\b/.test(rest);
-    const standardMention =
-      /\b(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?)\b[^.!?]{0,24}\b(?:desk|workstation)\b/.test(
-        rest,
-      ) ||
-      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?)\b/.test(
-        rest,
-      );
-    if (compactMention) {
+    const variantMentions = deskVariantMentions(rest);
+    for (const mention of variantMentions) {
       mentioned = true;
-      if (/\b(?:do not|don't|never|not|no)\b[^.!?]{0,18}\b(?:compact|small|smaller)\b/.test(rest)) {
-        excluded.add("compact");
+      const scope = targetNegationScope(rest, mention.start);
+      if (scope !== "none") {
+        excluded.add(mention.variant);
+        keepRequested = true;
+        if (scope === "ambiguous") {
+          issues.push(ambiguousActionNegationIssue);
+        }
       } else {
-        targets.add("compact");
+        targets.add(mention.variant);
       }
     }
-    if (standardMention) {
-      mentioned = true;
-      if (/\b(?:do not|don't|never|not|no)\b[^.!?]{0,18}\b(?:standard|regular|full[-\s]?size)\b/.test(rest)) {
-        excluded.add("standard");
-      } else {
-        targets.add("standard");
-      }
+
+    const keepScopes = actionScopesForPatterns(clause, [
+      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:desk|workstation)\b/g,
+    ]);
+    if (keepScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
     }
     if (
-      /\b(?:keep|retain|leave)\b[^.!?]{0,30}\b(?:desk|workstation)\b/.test(clause) ||
-      /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone|same)\b/.test(clause) ||
-      /\b(?:do not|don't|never)\s+(?:change|replace|switch)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(
-        clause,
-      )
+      keepScopes.includes("none") ||
+      /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged|alone|same)\b/.test(clause)
     ) {
       keepRequested = true;
       mentioned = true;
     }
-    if (
-      /\b(?:flexible|adjustable)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause) ||
-      /\b(?:let|allow)\b[^.!?]{0,24}\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:change|adjust|vary)\b/.test(
-        clause,
-      ) ||
-      /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:may|can|could)\b[^.!?]{0,12}\b(?:change|adjust|vary)\b/.test(
-        clause,
-      ) ||
-      /\bwhatever\b[^.!?]{0,12}\b(?:desk|workstation)\b/.test(clause)
-    ) {
-      flexibleRequested = true;
+
+    const changeScopes = actionScopesForPatterns(clause, [
+      /\b(?:change|replace|switch)\b[^.!?]{0,20}\b(?:desk|workstation)\b/g,
+    ]);
+    if (changeScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (changeScopes.includes("clear")) {
+      keepRequested = true;
       mentioned = true;
     }
+
+    const flexibleScopes = [
+      ...targetScopesForPatterns(clause, [
+        /\b(?:flexible|adjustable)\b[^.!?]{0,20}\b(?:desk|workstation)\b/g,
+        /\b(?:desk|workstation)\b[^.!?]{0,20}\b(?:flexible|adjustable)\b/g,
+        /\bwhatever\b[^.!?]{0,12}\b(?:desk|workstation)\b/g,
+      ]),
+      ...actionScopesForPatterns(clause, [
+        /\b(?:let|allow)\b[^.!?]{0,24}\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:change|adjust|vary)\b/g,
+        /\b(?:desk|workstation)\b[^.!?]{0,24}\b(?:may|can|could)\b[^.!?]{0,12}\b(?:change|adjust|vary)\b/g,
+      ]),
+    ];
+    if (flexibleScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
+    if (flexibleScopes.length > 0) {
+      mentioned = true;
+    }
+    if (flexibleScopes.includes("clear")) {
+      keepRequested = true;
+    }
+    if (flexibleScopes.includes("none")) {
+      flexibleRequested = true;
+    }
+
+    const removalScopes = actionScopesForPatterns(clause, [
+      /\b(?:remove|take\s+out|get\s+rid\s+of)\b[^.!?]{0,20}\b(?:desk|workstation)\b/g,
+    ]);
+    if (removalScopes.includes("ambiguous")) {
+      issues.push(ambiguousActionNegationIssue);
+    }
     if (
-      /\b(?:remove|take out|get rid of)\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause) ||
+      removalScopes.includes("none") ||
       /\b(?:without|no)\s+(?:a\s+|the\s+)?(?:desk|workstation)\b/.test(clause) ||
-      /\b(?:do not|don't|never)\s+keep\b[^.!?]{0,20}\b(?:desk|workstation)\b/.test(clause)
+      (keepScopes.includes("clear") && variantMentions.length === 0)
     ) {
       issues.push("Removing the desk is outside the supported standard/compact layout choices.");
+      mentioned = true;
+    }
+    if (removalScopes.includes("clear")) {
+      keepRequested = true;
       mentioned = true;
     }
     if (/\b(?:desk|workstation)\b/.test(clause)) {
@@ -1207,6 +1442,19 @@ function actionScopesForPatterns(
   return [...starts].map((start) => actionNegationScope(clause, start));
 }
 
+function targetScopesForPatterns(
+  clause: string,
+  patterns: readonly RegExp[],
+): readonly ActionNegationScope[] {
+  const starts = new Set<number>();
+  for (const pattern of patterns) {
+    for (const match of clause.matchAll(pattern)) {
+      starts.add(match.index);
+    }
+  }
+  return [...starts].map((start) => targetNegationScope(clause, start));
+}
+
 function analyzeCribIntent(
   state: DemoStateSnapshot,
   normalized: string,
@@ -1237,7 +1485,7 @@ function analyzeCribIntent(
     }
 
     const addScopes = actionScopesForPatterns(clause, [
-      /\b(?:add|include|bring\s+in|place|use|need|want)\b[^.!?]{0,24}\bcrib\b/g,
+      /\b(?:add|include|bring\s+in|place|use|need|want|choose|select|try|prefer)\b[^.!?]{0,24}\bcrib\b/g,
     ]);
     if (addScopes.includes("ambiguous")) {
       issues.push(ambiguousActionNegationIssue);
@@ -1262,6 +1510,12 @@ function analyzeCribIntent(
     if (keepScopes.includes("none") || /\bcrib\b[^.!?]{0,20}\b(?:stays?|remains?|unchanged)\b/.test(clause)) {
       actions.add("keep");
     }
+    if (removalScopes.length + addScopes.length + keepScopes.length === 0) {
+      const directTargetScopes = targetScopesForPatterns(clause, [/\bcrib\b/g]);
+      if (directTargetScopes.includes("ambiguous")) {
+        issues.push(ambiguousActionNegationIssue);
+      }
+    }
   }
 
   if (actions.size > 1) {
@@ -1275,7 +1529,7 @@ function analyzeCribIntent(
     return {
       allowed: ["keep"],
       preferred: "keep",
-      issues,
+      issues: unique(issues),
       mentioned,
     };
   }
@@ -1323,7 +1577,7 @@ export function analyzeLayoutPrompt(state: DemoStateSnapshot, prompt: string): P
     bed.issues.includes(ambiguousActionNegationIssue) ||
     desk.issues.includes(ambiguousActionNegationIssue) ||
     crib.issues.includes(ambiguousActionNegationIssue);
-  const unknowns = unique([
+  const unknowns = boundedUnknowns([
     ...unsupportedTerms.map(unsupportedFurnitureUnknown),
     ...bed.issues,
     ...desk.issues,
