@@ -234,6 +234,23 @@ function audioTarget(mode: AudioMode): {
     : { id: WHISPER_AUDIO_MODEL_ID, alias: WHISPER_AUDIO_MODEL_ALIAS };
 }
 
+function isSameAudioNativeModel(
+  current: IModel,
+  currentMode: AudioMode | null,
+  candidate: IModel,
+  candidateMode: AudioMode,
+): boolean {
+  if (currentMode !== candidateMode || current.id !== candidate.id) {
+    return false;
+  }
+  return (
+    current === candidate ||
+    (current.alias === candidate.alias &&
+      current.path === candidate.path &&
+      executionProvider(current) === executionProvider(candidate))
+  );
+}
+
 function extractDefaultText(response: Response): string {
   const parts: string[] = [];
   for (const item of response.output) {
@@ -1049,8 +1066,8 @@ export class FoundryLayoutService {
   }
 
   async #prepareAudioOffline(generation: number, mode: AudioMode): Promise<AudioReadiness> {
-    const model = await this.#initializeAudio(generation, mode);
-    const alreadyActive = this.#audioModel === model && this.#audioMode === mode;
+    const candidate = await this.#initializeAudio(generation, mode);
+    const model = this.#activeAudioModelFor(mode, candidate) ?? candidate;
     try {
       this.#assertAudioOperationCurrent(generation);
       if (!model.isCached) {
@@ -1137,9 +1154,9 @@ export class FoundryLayoutService {
       this.#assertAudioOperationCurrent(generation);
       return readiness;
     } catch (error) {
-      if (!alreadyActive && this.#audioModel !== model) {
+      if (this.#activeAudioModelFor(mode, model) === null) {
         try {
-          await this.#discardAudioCandidate(model);
+          await this.#discardAudioCandidate(mode, model);
         } catch (cleanupError) {
           const detail = `Audio preparation failed and ${model.id} could not be unloaded: ${
             cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
@@ -1163,7 +1180,9 @@ export class FoundryLayoutService {
   async #activateAudioModel(generation: number, mode: AudioMode, model: IModel): Promise<void> {
     this.#assertAudioOperationCurrent(generation);
     const previous = this.#audioModel;
-    if (previous !== null && previous !== model) {
+    const retainPrevious =
+      previous !== null && isSameAudioNativeModel(previous, this.#audioMode, model, mode);
+    if (previous !== null && !retainPrevious) {
       try {
         if (await previous.isLoaded()) {
           await previous.unload();
@@ -1183,12 +1202,20 @@ export class FoundryLayoutService {
       }
     }
     this.#assertAudioOperationCurrent(generation);
-    this.#audioModel = model;
+    this.#audioModel = retainPrevious ? previous : model;
     this.#audioMode = mode;
   }
 
-  async #discardAudioCandidate(model: IModel): Promise<void> {
-    if (model !== this.#audioModel && (await model.isLoaded())) {
+  #activeAudioModelFor(mode: AudioMode, candidate: IModel): IModel | null {
+    const active = this.#audioModel;
+    if (active === null || !isSameAudioNativeModel(active, this.#audioMode, candidate, mode)) {
+      return null;
+    }
+    return active;
+  }
+
+  async #discardAudioCandidate(mode: AudioMode, model: IModel): Promise<void> {
+    if (this.#activeAudioModelFor(mode, model) === null && (await model.isLoaded())) {
       await model.unload();
     }
   }

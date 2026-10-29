@@ -28,12 +28,16 @@ import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry
 
 const tempRoots: string[] = [];
 
+interface FakeModelState {
+  loaded: boolean;
+  loadCalls: number;
+  unloadCalls: number;
+  loadGate: Promise<void> | null;
+  loadError: Error | null;
+}
+
 class FakeModel implements IModel {
-  loaded = false;
-  loadCalls = 0;
-  unloadCalls = 0;
-  loadGate: Promise<void> | null = null;
-  loadError: Error | null = null;
+  readonly #state: FakeModelState;
 
   constructor(
     readonly id: string,
@@ -42,7 +46,48 @@ class FakeModel implements IModel {
     readonly provider: string,
     readonly supportsTools: boolean,
     readonly sizeMb: number,
-  ) {}
+    state?: FakeModelState,
+  ) {
+    this.#state = state ?? {
+      loaded: false,
+      loadCalls: 0,
+      unloadCalls: 0,
+      loadGate: null,
+      loadError: null,
+    };
+  }
+
+  get loaded(): boolean {
+    return this.#state.loaded;
+  }
+
+  set loaded(value: boolean) {
+    this.#state.loaded = value;
+  }
+
+  get loadCalls(): number {
+    return this.#state.loadCalls;
+  }
+
+  get unloadCalls(): number {
+    return this.#state.unloadCalls;
+  }
+
+  get loadGate(): Promise<void> | null {
+    return this.#state.loadGate;
+  }
+
+  set loadGate(value: Promise<void> | null) {
+    this.#state.loadGate = value;
+  }
+
+  get loadError(): Error | null {
+    return this.#state.loadError;
+  }
+
+  set loadError(value: Error | null) {
+    this.#state.loadError = value;
+  }
 
   get info(): ModelInfo {
     return {
@@ -114,7 +159,7 @@ class FakeModel implements IModel {
   }
 
   async load(): Promise<void> {
-    this.loadCalls += 1;
+    this.#state.loadCalls += 1;
     await this.loadGate;
     if (this.loadError !== null) {
       throw this.loadError;
@@ -123,7 +168,7 @@ class FakeModel implements IModel {
   }
 
   async unload(): Promise<void> {
-    this.unloadCalls += 1;
+    this.#state.unloadCalls += 1;
     this.loaded = false;
   }
 
@@ -144,6 +189,18 @@ class FakeModel implements IModel {
   createEmbeddingClient(): never {
     throw new Error("Unused.");
   }
+
+  freshWrapper(): FakeModel {
+    return new FakeModel(
+      this.id,
+      this.alias,
+      this.task,
+      this.provider,
+      this.supportsTools,
+      this.sizeMb,
+      this.#state,
+    );
+  }
 }
 
 class FakeManager {
@@ -154,6 +211,7 @@ class FakeManager {
   constructor(
     readonly chatModel: FakeModel,
     readonly audioModels: readonly FakeModel[],
+    readonly freshAudioModelWrappers = false,
   ) {
     this.catalog = {
       getModelVariant: async (id: string) => {
@@ -161,7 +219,9 @@ class FakeManager {
         if (model === undefined || this.unavailableAudioModelIds.has(id)) {
           throw new Error(`Unknown model ${id}`);
         }
-        return model;
+        return this.freshAudioModelWrappers && model.task === "automatic-speech-recognition"
+          ? model.freshWrapper()
+          : model;
       },
       getCachedModels: async () =>
         [chatModel, ...audioModels].filter((model) => !this.unavailableAudioModelIds.has(model.id)),
@@ -294,6 +354,7 @@ interface FixtureOptions {
   readonly onCreateManager?: () => void;
   readonly operationDrainTimeoutMs?: number;
   readonly prepareRoot?: (root: string) => Promise<void>;
+  readonly freshAudioModelWrappers?: boolean;
 }
 
 async function createFixture(options: FixtureOptions = {}) {
@@ -325,7 +386,7 @@ async function createFixture(options: FixtureOptions = {}) {
     false,
     696,
   );
-  const manager = new FakeManager(chatModel, [audioModel, nemotronModel]);
+  const manager = new FakeManager(chatModel, [audioModel, nemotronModel], options.freshAudioModelWrappers);
   const audioSession = options.audioSession ?? new FakeAudioSession(options.audioError ?? null);
   const service = new FoundryLayoutService({
     resolvePaths: async () => {
@@ -891,8 +952,35 @@ describe("Nemotron streaming audio service", () => {
     await service.shutdown();
   });
 
-  it("keeps ready Nemotron loaded but reports an unavailable Whisper switch as not ready", async () => {
-    const { service, nemotronModel, audioModel, manager } = await createFixture();
+  it("keeps Nemotron loaded until a distinct Whisper wrapper finishes loading", async () => {
+    const { service, nemotronModel, audioModel } = await createFixture({
+      freshAudioModelWrappers: true,
+    });
+    await service.prepareAudioOffline("nemotron_streaming");
+    const whisperLoad = deferred();
+    audioModel.loadGate = whisperLoad.promise;
+
+    const switchPreparation = service.prepareAudioOffline("whisper_file");
+    await vi.waitFor(() => expect(audioModel.loadCalls).toBe(1));
+    expect(nemotronModel.loaded).toBe(true);
+    expect(nemotronModel.unloadCalls).toBe(0);
+
+    whisperLoad.resolve();
+    await expect(switchPreparation).resolves.toMatchObject({
+      activeMode: "whisper_file",
+      localAudioReady: true,
+      model: { id: WHISPER_AUDIO_MODEL_ID },
+    });
+    expect(audioModel.loaded).toBe(true);
+    expect(nemotronModel.loaded).toBe(false);
+    expect(nemotronModel.unloadCalls).toBe(1);
+    await service.shutdown();
+  });
+
+  it("recovers ready Nemotron through fresh wrappers after an unavailable Whisper switch", async () => {
+    const { service, nemotronModel, audioModel, manager } = await createFixture({
+      freshAudioModelWrappers: true,
+    });
     await service.prepareAudioOffline("nemotron_streaming");
     manager.unavailableAudioModelIds.add(WHISPER_AUDIO_MODEL_ID);
 
@@ -911,15 +999,24 @@ describe("Nemotron streaming audio service", () => {
     expect(audioModel.loadCalls).toBe(0);
 
     manager.unavailableAudioModelIds.delete(WHISPER_AUDIO_MODEL_ID);
-    await expect(service.prepareAudioOffline("nemotron_streaming")).resolves.toMatchObject({
+    const recovered = await service.prepareAudioOffline("nemotron_streaming");
+    expect(recovered).toMatchObject({
       activeMode: "nemotron_streaming",
       localAudioReady: true,
+      model: { id: NEMOTRON_AUDIO_MODEL_ID },
     });
+    expect(nemotronModel.loaded).toBe(true);
+    expect(nemotronModel.unloadCalls).toBe(0);
+
+    const stream = await service.startAudioStream(() => {});
+    await service.cancelAudioStream(stream.streamId);
     await service.shutdown();
   });
 
-  it("keeps ready Whisper loaded but reports an unavailable Nemotron switch as not ready", async () => {
-    const { service, nemotronModel, audioModel, manager } = await createFixture();
+  it("recovers ready Whisper through fresh wrappers after an unavailable Nemotron switch", async () => {
+    const { service, nemotronModel, audioModel, manager } = await createFixture({
+      freshAudioModelWrappers: true,
+    });
     await service.prepareAudioOffline("whisper_file");
     manager.unavailableAudioModelIds.add(NEMOTRON_AUDIO_MODEL_ID);
 
@@ -939,9 +1036,18 @@ describe("Nemotron streaming audio service", () => {
     expect(nemotronModel.loadCalls).toBe(0);
 
     manager.unavailableAudioModelIds.delete(NEMOTRON_AUDIO_MODEL_ID);
-    await expect(service.prepareAudioOffline("whisper_file")).resolves.toMatchObject({
+    const recovered = await service.prepareAudioOffline("whisper_file");
+    expect(recovered).toMatchObject({
       activeMode: "whisper_file",
       localAudioReady: true,
+      model: { id: WHISPER_AUDIO_MODEL_ID },
+    });
+    expect(audioModel.loaded).toBe(true);
+    expect(audioModel.unloadCalls).toBe(0);
+
+    await expect(service.transcribeAudio(capture)).resolves.toMatchObject({
+      mode: "whisper_file",
+      model: { id: WHISPER_AUDIO_MODEL_ID },
     });
     await service.shutdown();
   });
