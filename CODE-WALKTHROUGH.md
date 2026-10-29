@@ -37,7 +37,7 @@ Message:
 ## 5:30–6:10 — Minimal local audio checkpoint
 
 **Files:** `src/renderer/audio-capture.ts`, `src/audio/audio-contract.ts`,
-`src/foundry/foundry-service.ts`
+`src/main/audio-stream-owner.ts`, `src/main/main.ts`, `src/foundry/foundry-service.ts`
 
 **Symbols:** `LivePcmCapture`, `StreamingPcm16Resampler`, `BoundedAudioChunkPump`,
 `validateAudioStreamChunk`, `startAudioStream`, `finishAudioStream`, `transcribeAudio`
@@ -49,8 +49,11 @@ Put on screen:
 - ordered 100 ms renderer chunks, eight-chunk pump bound, typed IPC, and main/native queue bounds;
 - native v2.2.1 `AudioSession`, `Item.audioDescriptor`, `ItemQueue`, `Item.bytes`, and
   `markFinished`;
+- main-owned renderer/frame/session/stream identity, with cancellation on reload, renderer loss,
+  destruction, or window close and no partial forwarding to a replacement renderer;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
+- Send transition to the exact edited submitted prompt and submitted/processing label;
 - explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
 
 Message:
@@ -171,9 +174,9 @@ Show only:
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 13 test files / 120 tests pass in Vitest's reported 1.10 seconds. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,284 ms, stop-to-final 115 ms, 6,037 ms cached
-prepare) and the explicit Whisper fallback prepared in 5,073 ms and transcribed in 239 ms.
+Current checkpoint: 14 test files / 129 tests pass in Vitest's reported 1.08 seconds. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,239 ms, stop-to-final 92 ms, 6,340 ms cached
+prepare) and the explicit Whisper fallback prepared in 1,499 ms and transcribed in 164 ms.
 
 Then return to the app for the single fresh offline controlled-failure input. Do not attempt to run
-all four story turns live; measured Windows latency is 11.167–29.263 seconds per turn.
+all four story turns live; measured Windows latency is 10.579–29.686 seconds per turn.

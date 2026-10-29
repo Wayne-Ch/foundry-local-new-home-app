@@ -53,6 +53,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 ```
@@ -63,9 +64,10 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 13 files / 120 tests pass; Vitest reported 1.10 s |
+| Unit tests | 14 files / 129 tests pass; Vitest reported 1.08 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
+| Electron renderer-owner reload/close probe | Pass; both streams canceled, ownership session advanced, stale partial routing rejected, no uncaught exception or unhandled rejection |
 | Electron microphone permission probe | Pass |
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
@@ -80,39 +82,43 @@ npm run capture:ui
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
-| Nemotron timing | Cached prepare 6,037 ms; first partial 1,284 ms; stop-to-final 115 ms |
+| Nemotron timing | Cached prepare 6,340 ms; first partial 1,239 ms; stop-to-final 92 ms |
 | Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
 | Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
-| Whisper fallback timing | Cached prepare 5,073 ms; final transcription 239 ms |
+| Whisper fallback timing | Cached prepare 1,499 ms; final transcription 164 ms |
+| Failed audio-mode switching | Pass; requested mode is shown not ready while the previously working model remains loaded when target resolution fails |
+| Transcript submission state | Pass; the exact edited prompt becomes submitted/processing and never remains labeled `not sent` after Send |
 | Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
 | Reset timeout quarantine | Pass; late native turn is rolled back, controls remain blocked, and the session is replaced before readiness returns |
 | Audio temp cleanup | Pass; real integration capture files before/after both empty |
 | Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
 
-Final command wall-clock timings from the October 28 run:
+Final command outputs from the October 28 run:
 
-| Command | Result | Wall clock |
-|---|---|---:|
-| `npm run lint` | 55 files checked | 1,130 ms |
-| `npm run typecheck` | Pass | 3,457 ms |
-| `npm test` | 13 files / 120 tests; Vitest reported 1.10 s | 2,503 ms |
-| `npm run build` | Pass; 115 renderer modules | 4,597 ms |
-| `npm run smoke:electron` | Pass, including its required rebuild | 10,008 ms |
-| `npm run probe:microphone-permission` | Pass, including its required rebuild | 5,779 ms |
-| `npm run capture:ui` | Pass; 388,515-byte labeled screenshot, including rebuild | 10,420 ms |
-| `npm run test:audio-integration` | Pass | 6,701 ms |
-| `npm run test:nemotron-integration` | Pass | 13,492 ms |
+| Command | Result |
+|---|---|
+| `npm run lint` | 58 files checked |
+| `npm run typecheck` | Pass |
+| `npm test` | 14 files / 129 tests; Vitest reported 1.08 s |
+| `npm run build` | Pass; 115 renderer modules |
+| `npm run smoke:electron` | Pass, including its required rebuild |
+| `npm run probe:stream-owner` | Pass; real reload and close both cancel the captured renderer-owned stream |
+| `npm run probe:microphone-permission` | Pass, including its required rebuild |
+| `npm run capture:ui` | Pass; 388,084-byte labeled screenshot, including rebuild |
+| `npm run test:audio-integration` | Pass; 1,499 ms prepare, 164 ms transcription |
+| `npm run test:nemotron-integration` | Pass; 31 partials, 1,239 ms first partial, 92 ms stop-to-final |
+| `npm run test:integration` | Pass; five real Qwen turns |
 
 Observed turn durations on this machine:
 
 | Turn | Duration |
 |---|---:|
-| Queen + desk | 11.167 s |
-| King replacement | 19.068 s |
-| Add crib | 22.554 s |
-| Controlled failure | 25.766 s |
-| Adversarial correction | 29.263 s |
+| Queen + desk | 10.579 s |
+| King replacement | 19.082 s |
+| Add crib | 22.620 s |
+| Controlled failure | 26.246 s |
+| Adversarial correction | 29.686 s |
 
 The longer turns include one bounded correction request.
 
@@ -144,16 +150,17 @@ Catalog and measured comparison:
 
 | Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
 |---|---|---|---:|---:|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 5,073 ms current cached prepare | 239 ms, exact |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 1,499 ms current cached prepare | 164 ms, exact |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 6,037 ms current cached prepare | 31 live revisions; first 1,284 ms; final 115 ms after stop; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 6,340 ms current cached prepare | 31 live revisions; first 1,239 ms; final 92 ms after stop; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
 
 Nemotron English was downloaded once under the authorized under-1-GB policy and remains in the
 shared cache as the stage default. The current real-time run produced 31 subtitle revisions, first
-text at 1,284 ms, and final output 115 ms after the 5.53-second input ended. The UI displays those
+text at 1,239 ms, and final output 92 ms after the 5.53-second input ended. The UI displays those
 partials only in **Live draft — not sent**. On Stop, it inserts only the terminal aggregate
-`SpeechResult` into Manual prompt. The user must click Send.
+`SpeechResult` into Manual prompt. On Send, that panel transitions to the exact edited submitted
+prompt and a processing/submitted label.
 
 Whisper Tiny remains cached as the explicit smaller fallback. It records first and then returns one
 final transcript; it is never selected silently. The similarly named Nemotron 3.5 multilingual
@@ -165,13 +172,13 @@ Final real app-service Nemotron integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 6,037 ms, cached |
+| Prepare manager/catalog/model | 6,340 ms, cached |
 | Partial revisions | 31 |
-| First partial | “Can” at 1,284 ms |
+| First partial | “Can” at 1,239 ms |
 | Final transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door” |
 | Key-word recall | 7/7 (100%) |
-| Stop-to-final | 115 ms |
-| Total paced stream | 6,058 ms |
+| Stop-to-final | 92 ms |
+| Total paced stream | 6,004 ms |
 | Endpoint | in-process SDK only |
 
 Final real app-service Whisper fallback integration:
@@ -180,10 +187,10 @@ Final real app-service Whisper fallback integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 5,073 ms, cached |
+| Prepare manager/catalog/model | 1,499 ms, cached |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 239 ms |
+| Transcription | 164 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 
@@ -206,6 +213,9 @@ Final real app-service Whisper fallback integration:
   partials and a final transcript.
 - A separate fresh process explicitly loaded Whisper Tiny and completed deterministic fallback ASR
   with no residual audio file.
+- A real Electron reload/close probe captured the renderer frame and ownership-session IDs before
+  teardown, canceled both active probe streams from main, rejected stale routing, and exited with no
+  uncaught exception or unhandled rejection.
 - The app does not configure `serviceEndpoint`, call `startWebService`, or make inference HTTP
   requests.
 - `disableNonessentialTelemetry` is enabled.

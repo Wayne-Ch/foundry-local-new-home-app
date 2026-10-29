@@ -19,6 +19,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 npm run start:built
@@ -51,13 +52,13 @@ In the app:
    or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
-Observed integration timings on the validated laptop were 11.167–29.263 seconds per turn, including
-bounded correction attempts. The preflight suite passed 13 test files / 120 tests in Vitest's
-reported 1.10 seconds. Do not start the first inference while still delivering setup remarks.
+Observed integration timings on the validated laptop were 10.579–29.686 seconds per turn, including
+bounded correction attempts. The preflight suite passed 14 test files / 129 tests in Vitest's
+reported 1.08 seconds. Do not start the first inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,284 ms,
-stop-to-final at 115 ms, and 6,037 ms cached preparation. The explicit Whisper fallback prepared in
-5,073 ms and transcribed the same fixture in 239 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,239 ms,
+stop-to-final at 92 ms, and 6,340 ms cached preparation. The explicit Whisper fallback prepared in
+1,499 ms and transcribed the same fixture in 164 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow

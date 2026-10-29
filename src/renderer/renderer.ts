@@ -45,9 +45,11 @@ import { createLayoutPresentation } from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
 import { createPreviewApi } from "./preview-api";
 import {
+  beginAudioModePreparation,
   isAudioPreparationActive,
   resetAfterStartingCleanup,
   SingleFlightOperation,
+  submitTranscriptDraft,
 } from "./renderer-lifecycle";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import "./styles.css";
@@ -69,6 +71,7 @@ let liveTranscriptDraft: LiveTranscriptDraft = {
   text: "",
   isFinal: false,
 };
+let liveTranscriptPhase: "draft" | "submitted" = "draft";
 const operationBarrier = new RendererOperationBarrier();
 const audioPreparation = new SingleFlightOperation();
 let audioOperationId = 0;
@@ -86,6 +89,7 @@ const audioStatus = requiredElement("audioStatus");
 const recordingIndicator = requiredElement("recordingIndicator");
 const recordingTimer = requiredElement("recordingTimer");
 const liveTranscriptPanel = requiredElement("liveTranscriptPanel");
+const liveTranscriptLabel = requiredElement("liveTranscriptLabel");
 const liveTranscriptText = requiredElement("liveTranscriptText");
 const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
@@ -231,13 +235,10 @@ async function runAudioPreparation(api: NonNullable<typeof demoApi>, mode: Audio
   const lifecycleGeneration = operationBarrier.beginOperation();
   const operationId = ++audioOperationId;
   liveTranscriptDraft = emptyLiveTranscriptDraft();
+  liveTranscriptPhase = "draft";
   viewState = {
     ...viewState,
-    audioReadiness: {
-      ...viewState.audioReadiness,
-      status: "checking",
-      detail: "Inspecting the local speech model.",
-    },
+    audioReadiness: beginAudioModePreparation(viewState.audioReadiness, mode),
   };
   audioNotice = "Preparing local speech-to-text.";
   renderAudio();
@@ -329,12 +330,23 @@ nextTurnButton.addEventListener("click", () => {
 
 promptForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (isAudioBusy()) {
+  if (
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    isAudioBusy() ||
+    !viewState.readiness.localInferenceReady
+  ) {
     return;
   }
   const prompt = promptInput.value.trim();
   if (!prompt) {
     return;
+  }
+  const transcriptSubmission = submitTranscriptDraft(liveTranscriptDraft, prompt);
+  liveTranscriptDraft = transcriptSubmission.draft;
+  liveTranscriptPhase = transcriptSubmission.phase;
+  if (transcriptSubmission.notice !== null) {
+    audioNotice = transcriptSubmission.notice;
   }
   promptInput.value = "";
   void runTurn(prompt);
@@ -522,6 +534,12 @@ function renderAudio(): void {
   liveTranscriptPanel.hidden =
     readiness.activeMode !== "nemotron_streaming" ||
     (!liveTranscriptDraft.text && audioRecorderState.status !== "recording");
+  liveTranscriptLabel.textContent =
+    liveTranscriptPhase === "submitted"
+      ? isBusy
+        ? "Submitted prompt — processing"
+        : "Submitted prompt"
+      : "Live draft — not sent";
   liveTranscriptText.textContent = liveTranscriptDraft.text || "Listening…";
 }
 
@@ -789,6 +807,7 @@ function handleAudioPartial(event: AudioPartialTranscriptEvent): void {
     return;
   }
   liveTranscriptDraft = applyPartialTranscriptEvent(liveTranscriptDraft, event);
+  liveTranscriptPhase = "draft";
   audioNotice = `Live Nemotron draft · first partial ${event.firstPartialMs} ms · not sent`;
   renderAudio();
 }
@@ -951,6 +970,7 @@ async function startRecording(): Promise<void> {
       text: "",
       isFinal: false,
     };
+    liveTranscriptPhase = "draft";
     audioNotice =
       mode === "nemotron_streaming"
         ? `Live captions are local and capped at ${AUDIO_MAX_DURATION_MS / 1000} seconds.`
@@ -1054,6 +1074,7 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
       text: response.result.transcript,
       isFinal: true,
     };
+    liveTranscriptPhase = "draft";
     audioNotice = `${
       response.result.mode === "nemotron_streaming" ? "Nemotron final" : "Whisper fallback"
     } transcript added. Review it, then click Send.`;
@@ -1077,6 +1098,7 @@ async function discardRecording(cancelRemote = true): Promise<void> {
   const cleanupPromise = operation === null ? null : cleanupVoiceOperation(operation, cancelRemote);
   audioOperationId += 1;
   liveTranscriptDraft = emptyLiveTranscriptDraft();
+  liveTranscriptPhase = "draft";
   audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "RESET" });
   await cleanupPromise;
 }

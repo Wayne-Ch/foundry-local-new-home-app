@@ -149,6 +149,7 @@ class FakeModel implements IModel {
 class FakeManager {
   readonly catalog;
   disposeCalls = 0;
+  readonly unavailableAudioModelIds = new Set<string>();
 
   constructor(
     readonly chatModel: FakeModel,
@@ -157,12 +158,13 @@ class FakeManager {
     this.catalog = {
       getModelVariant: async (id: string) => {
         const model = [chatModel, ...audioModels].find((candidate) => candidate.id === id);
-        if (model === undefined) {
+        if (model === undefined || this.unavailableAudioModelIds.has(id)) {
           throw new Error(`Unknown model ${id}`);
         }
         return model;
       },
-      getCachedModels: async () => [chatModel, ...audioModels],
+      getCachedModels: async () =>
+        [chatModel, ...audioModels].filter((model) => !this.unavailableAudioModelIds.has(model.id)),
     };
   }
 
@@ -886,6 +888,61 @@ describe("Nemotron streaming audio service", () => {
       model: { id: WHISPER_AUDIO_MODEL_ID },
     });
     expect(fallback.fallbackReason).toContain("Nemotron");
+    await service.shutdown();
+  });
+
+  it("keeps ready Nemotron loaded but reports an unavailable Whisper switch as not ready", async () => {
+    const { service, nemotronModel, audioModel, manager } = await createFixture();
+    await service.prepareAudioOffline("nemotron_streaming");
+    manager.unavailableAudioModelIds.add(WHISPER_AUDIO_MODEL_ID);
+
+    await expect(service.prepareAudioOffline("whisper_file")).rejects.toMatchObject({
+      code: "AUDIO_MODEL_UNAVAILABLE",
+    });
+
+    expect(service.audioReadiness).toMatchObject({
+      activeMode: "whisper_file",
+      localAudioReady: false,
+      model: null,
+      status: "model_unavailable",
+    });
+    expect(nemotronModel.loaded).toBe(true);
+    expect(nemotronModel.unloadCalls).toBe(0);
+    expect(audioModel.loadCalls).toBe(0);
+
+    manager.unavailableAudioModelIds.delete(WHISPER_AUDIO_MODEL_ID);
+    await expect(service.prepareAudioOffline("nemotron_streaming")).resolves.toMatchObject({
+      activeMode: "nemotron_streaming",
+      localAudioReady: true,
+    });
+    await service.shutdown();
+  });
+
+  it("keeps ready Whisper loaded but reports an unavailable Nemotron switch as not ready", async () => {
+    const { service, nemotronModel, audioModel, manager } = await createFixture();
+    await service.prepareAudioOffline("whisper_file");
+    manager.unavailableAudioModelIds.add(NEMOTRON_AUDIO_MODEL_ID);
+
+    await expect(service.prepareAudioOffline("nemotron_streaming")).rejects.toMatchObject({
+      code: "AUDIO_MODEL_UNAVAILABLE",
+    });
+
+    expect(service.audioReadiness).toMatchObject({
+      activeMode: "nemotron_streaming",
+      fallbackAvailable: true,
+      localAudioReady: false,
+      model: null,
+      status: "model_unavailable",
+    });
+    expect(audioModel.loaded).toBe(true);
+    expect(audioModel.unloadCalls).toBe(0);
+    expect(nemotronModel.loadCalls).toBe(0);
+
+    manager.unavailableAudioModelIds.delete(NEMOTRON_AUDIO_MODEL_ID);
+    await expect(service.prepareAudioOffline("whisper_file")).resolves.toMatchObject({
+      activeMode: "whisper_file",
+      localAudioReady: true,
+    });
     await service.shutdown();
   });
 });

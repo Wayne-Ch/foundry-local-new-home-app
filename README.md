@@ -21,12 +21,17 @@ room plan.
   and a typed `ipcRenderer.invoke` pump preserves chunk order with an eight-chunk bound. Main
   validates stream identity, sequence, chunk size, total bytes, and native queue capacity before
   pushing each copied `Item.bytes(...)` frame.
+- **Main-owned stream lifecycle:** main captures the initiating `webContents`, frame, ownership
+  session, and stream ID. Navigation, reload, renderer loss, frame/webContents destruction, or
+  window close revokes that owner and cancels the stream; partials can only return to the captured
+  frame and never a replacement renderer.
 - **Explicit fallback:** exact `openai-whisper-tiny-generic-cpu:4` is available only through the
   visibly labeled **Whisper Tiny fallback (record then transcribe)** action. The stage default
   remains Nemotron; the fallback loads only after that explicit user choice and never activates
   silently.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
-  auto-submitted and never bypasses the existing structured planning/tool pipeline.
+  auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
+  display transitions from `Live draft — not sent` to the exact edited submitted prompt.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output. The application then
   invokes `compare_layout_options` only from a complete response with `finishReason: "stop"` and a
   validated object. Length-truncated or otherwise partial JSON is rejected and never executed.
@@ -43,12 +48,12 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.284 s**, and the final aggregate transcript **115 ms**
-after input ended. Cached model preparation took **6.037 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.239 s**, and the final aggregate transcript **92 ms**
+after input ended. Cached model preparation took **6.340 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **5.073 s** cached preparation,
-and **239 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.499 s** cached preparation,
+and **164 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
 The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
@@ -108,7 +113,8 @@ In the app:
 4. Select **Start recording** and speak for at most 20 seconds. The **Live draft — not sent** panel
    revises while speech is arriving and the timer remains visible.
 5. Select **Stop**. The final aggregate transcript is placed into **Manual prompt**.
-6. Review or edit the transcript, then select **Send**. Stop never submits automatically.
+6. Review or edit the transcript, then select **Send**. Stop never submits automatically; Send
+   changes the draft label to submitted/processing and shows the exact edited prompt.
 7. If Nemotron deterministically fails, the UI exposes
    **Whisper Tiny fallback (record then transcribe)**. Selecting it is an explicit model switch;
    record again, wait for the final Whisper transcript, then review and click **Send**.
@@ -149,6 +155,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 ```
@@ -171,14 +178,17 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The October 28 validation completed **13 test files / 120 tests** in Vitest's reported **1.10 s**,
-with 55 files passing Biome, TypeScript passing, and the production build completing in **4.597 s**.
-The real Qwen turns measured **11.167 s, 19.068 s, 22.554 s, 25.766 s, and 29.263 s**.
+The October 28 validation completed **14 test files / 129 tests** in Vitest's reported **1.08 s**,
+with 58 files passing Biome, TypeScript passing, and the production build passing.
+The real Qwen turns measured **10.579 s, 19.082 s, 22.620 s, 26.246 s, and 29.686 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md).
 
 `smoke:electron` launches the actual Electron app and exits after SDK/catalog initialization.
+`probe:stream-owner` reloads and closes a real Electron renderer while a bounded probe stream is
+owned, requires both cancellations, rejects stale partial routing, and fails on uncaught exceptions
+or unhandled rejections.
 `capture:ui` captures an explicitly labeled browser-only visual preview because Electron
 `webContents.capturePage()` returns `UnknownVizError` in this execution environment.
 

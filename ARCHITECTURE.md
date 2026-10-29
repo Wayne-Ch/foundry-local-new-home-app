@@ -95,7 +95,10 @@ borrows the queue; the app marks it finished, waits for both the async item stre
 chunks, main accepts at most 200 chunks for the 20-second capture, and both layers reject invalid
 stream UUIDs, stale/out-of-order chunks, byte-count mismatches, and a full native queue. Cancellation
 uses the v2.2.1 streaming abort signal plus request cancellation and remains under the existing
-bounded reset/shutdown drain and quarantine rules.
+bounded reset/shutdown drain and quarantine rules. Main also owns a renderer-frame lease containing
+the captured `webContents`, frame identity, ownership-session ID, and stream ID. Main-frame
+navigation/reload, renderer loss, webContents destruction, or window close revokes the lease,
+cancels native streaming, and prevents old partials from being delivered to a replacement renderer.
 
 Pinned v2.2.1 accepts Whisper fallback transcription by URI. A measured inline
 `Item.audioFromData("wav", bytes)` request failed with:
@@ -111,23 +114,27 @@ never receives filesystem or Node access.
 Audio readiness is separate from layout-model readiness. The microphone control becomes stage-ready
 only when both exact default model dependencies are loaded. Speech output is trace evidence, not a
 command: live partials never enter the prompt, and the final transcript never invokes
-`compare_layout_options` until the user reviews and submits the text.
+`compare_layout_options` until the user reviews and submits the text. Mode switching first resolves,
+validates, and loads the requested target before unloading the working model. A failed target
+resolution reports the requested mode as not ready while retaining the prior working model for an
+explicit recovery selection.
 
 ### ASR candidate evidence
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 5.073 s; transcription 239 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 1.499 s; transcription 164 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.284 s; stop-to-final 115 ms; cached prepare 6.037 s; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.239 s; stop-to-final 92 ms; cached prepare 6.340 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 13 test files and 120 passing tests. The suite includes worklet startup
-cleanup, renderer reset concurrency, bounded cancellation/reset recovery, stale chunk/partial
+Current validation covers 14 test files and 129 passing tests. The suite includes worklet startup
+cleanup, renderer reset concurrency, atomic failed-mode switching, renderer-owner reload/close
+cancellation, submitted-transcript state, bounded cancellation/reset recovery, stale chunk/partial
 rejection, and the complete-Qwen-response execution gate.
 
 ## One turn

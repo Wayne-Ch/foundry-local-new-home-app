@@ -1,7 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  type IpcMainInvokeEvent,
+  ipcMain,
+  session,
+  type WebContents,
+  type WebFrameMain,
+} from "electron";
 import type {
   AudioCapturePayload,
   AudioStreamCancelRequest,
@@ -11,6 +19,7 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
+import { type AudioStreamOwnerIdentity, AudioStreamOwnership } from "./audio-stream-owner";
 import { DemoController } from "./demo-controller";
 import {
   isAllowedAppNavigation,
@@ -19,10 +28,24 @@ import {
 } from "./microphone-permission";
 
 let mainWindow: BrowserWindow | null = null;
+let mainWebContents: WebContents | null = null;
 let microphonePermissionGate: MicrophonePermissionGate | null = null;
 let shutdownStarted = false;
 const microphonePermissionProbeEnabled = process.env.DEMO_MIC_PERMISSION_PROBE === "1";
+const streamOwnerProbeEnabled = process.env.DEMO_STREAM_OWNER_PROBE === "1";
+const streamOwnerReloadProbeId = "00000000-0000-4000-8000-000000000001";
+const streamOwnerCloseProbeId = "00000000-0000-4000-8000-000000000002";
+const streamOwnerProbeIds = new Set([streamOwnerReloadProbeId, streamOwnerCloseProbeId]);
+const streamOwnerProbeCancellations = new Set<string>();
+let streamOwnerProbeTerminating = false;
 const controller = new DemoController();
+const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
+  if (streamOwnerProbeEnabled && streamOwnerProbeIds.has(streamId)) {
+    streamOwnerProbeCancellations.add(streamId);
+    return;
+  }
+  await controller.cancelAudioStream({ streamId });
+});
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererFilePath = path.join(currentDirectory, "..", "renderer", "index.html");
 const rendererDocumentUrl = pathToFileURL(rendererFilePath).href;
@@ -51,6 +74,10 @@ if (process.env.DEMO_CAPTURE_PATH?.trim()) {
 if (microphonePermissionProbeEnabled) {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 }
+if (streamOwnerProbeEnabled) {
+  process.on("uncaughtException", (error) => failStreamOwnerProbe("UNCAUGHT_EXCEPTION", error));
+  process.on("unhandledRejection", (error) => failStreamOwnerProbe("UNHANDLED_REJECTION", error));
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -69,62 +96,99 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+  const webContents = window.webContents;
+  const webContentsId = webContents.id;
+  mainWebContents = webContents;
 
   const permissionGate = new MicrophonePermissionGate({
-    expectedWebContents: window.webContents,
+    expectedWebContents: webContents,
     expectedDocumentUrl: rendererDocumentUrl,
     expectedOrigin: rendererPermissionOrigin,
   });
   microphonePermissionGate = permissionGate;
-  window.webContents.setWindowOpenHandler(() => {
+  webContents.setWindowOpenHandler(() => {
     permissionGate.revoke();
     return { action: "deny" };
   });
-  window.webContents.on("will-frame-navigate", (event) => {
+  webContents.on("will-frame-navigate", (event) => {
     permissionGate.revoke();
+    if (event.isMainFrame) {
+      revokeAudioStreamOwner(webContentsId, frameOwnership(event.frame));
+    }
     if (!isAllowedAppNavigation(rendererDocumentUrl, event.url, event.isMainFrame)) {
       event.preventDefault();
     }
   });
-  window.webContents.on("will-redirect", (event) => {
+  webContents.on("will-redirect", (event) => {
     permissionGate.revoke();
+    if (event.isMainFrame) {
+      revokeAudioStreamOwner(webContentsId, frameOwnership(event.frame));
+    }
     if (!isAllowedAppNavigation(rendererDocumentUrl, event.url, event.isMainFrame)) {
       event.preventDefault();
     }
   });
-  window.webContents.on("render-process-gone", () => permissionGate.revoke());
+  webContents.on("did-start-navigation", (event) => {
+    if (event.isMainFrame && !event.isSameDocument) {
+      revokeAudioStreamOwner(webContentsId);
+    }
+  });
+  webContents.on("render-process-gone", () => {
+    permissionGate.revoke();
+    revokeAudioStreamOwner(webContentsId);
+  });
+  webContents.on("destroyed", () => {
+    revokeAudioStreamOwner(webContentsId);
+    if (mainWebContents === webContents) {
+      mainWebContents = null;
+    }
+  });
   window.on("closed", () => {
     permissionGate.revoke();
+    revokeAudioStreamOwner(webContentsId);
     if (mainWindow === window) {
       mainWindow = null;
+      if (mainWebContents === webContents) {
+        mainWebContents = null;
+      }
       microphonePermissionGate = null;
     }
   });
 
-  void window.loadURL(rendererDocumentUrl);
+  void webContents.loadURL(rendererDocumentUrl);
   window.once("ready-to-show", () => {
-    window.show();
+    if (!window.isDestroyed()) {
+      window.show();
+    }
   });
   if (process.env.DEMO_SMOKE_AND_EXIT === "1") {
-    window.webContents.once("did-finish-load", () => {
+    webContents.once("did-finish-load", () => {
       setTimeout(() => app.quit(), 5000);
     });
   }
   if (microphonePermissionProbeEnabled) {
-    window.webContents.once("did-finish-load", () => {
-      void runMicrophonePermissionProbe(window);
+    webContents.once("did-finish-load", () => {
+      void runMicrophonePermissionProbe(webContents);
+    });
+  }
+  if (streamOwnerProbeEnabled) {
+    webContents.once("did-finish-load", () => {
+      void runStreamOwnerProbe(window, webContents, webContentsId);
     });
   }
   if (process.env.DEMO_OPEN_DEVTOOLS === "1") {
-    window.webContents.openDevTools({ mode: "detach" });
+    webContents.openDevTools({ mode: "detach" });
   }
 
   const capturePath = process.env.DEMO_CAPTURE_PATH?.trim();
   if (capturePath) {
-    window.webContents.once("did-finish-load", async () => {
+    webContents.once("did-finish-load", async () => {
       try {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        const image = await window.webContents.capturePage();
+        if (webContents.isDestroyed()) {
+          throw new Error("The renderer was destroyed before the UI capture completed.");
+        }
+        const image = await webContents.capturePage();
         await mkdir(path.dirname(capturePath), { recursive: true });
         await writeFile(capturePath, image.toPNG());
         if (process.env.DEMO_CAPTURE_AND_EXIT === "1") {
@@ -143,45 +207,79 @@ function createWindow(): BrowserWindow {
 function registerIpc(): void {
   ipcMain.handle(ipcChannels.getBootstrap, () => controller.bootstrap());
   ipcMain.handle(ipcChannels.initializeRuntime, () =>
-    microphonePermissionProbeEnabled ? controller.bootstrap().readiness : controller.initializeRuntime(),
+    microphonePermissionProbeEnabled || streamOwnerProbeEnabled
+      ? controller.bootstrap().readiness
+      : controller.initializeRuntime(),
   );
-  ipcMain.handle(ipcChannels.prepareOffline, () =>
-    controller.prepareOffline((event) => {
-      mainWindow?.webContents.send(ipcChannels.progress, event);
-    }),
-  );
-  ipcMain.handle(ipcChannels.prepareAudio, (event, request: PrepareAudioRequest) => {
-    assertTrustedRendererIpc(event);
-    return controller.prepareAudio(request, (progress) => {
-      mainWindow?.webContents.send(ipcChannels.progress, progress);
+  ipcMain.handle(ipcChannels.prepareOffline, (event) => {
+    const renderer = assertTrustedRendererIpc(event);
+    return controller.prepareOffline((progress) => {
+      sendToFrame(renderer.frame, ipcChannels.progress, progress);
     });
   });
-  ipcMain.handle(ipcChannels.startAudioStream, (event, request: AudioStreamStartRequest) => {
-    assertTrustedRendererIpc(event);
-    return controller.startAudioStream(request, (partial) => {
-      mainWindow?.webContents.send(ipcChannels.audioPartial, partial);
+  ipcMain.handle(ipcChannels.prepareAudio, (event, request: PrepareAudioRequest) => {
+    const renderer = assertTrustedRendererIpc(event);
+    return controller.prepareAudio(request, (progress) => {
+      sendToFrame(renderer.frame, ipcChannels.progress, progress);
     });
+  });
+  ipcMain.handle(ipcChannels.startAudioStream, async (event, request: AudioStreamStartRequest) => {
+    const renderer = assertTrustedRendererIpc(event);
+    const lease = audioStreamOwnership.begin(renderer.owner);
+    try {
+      const response = await controller.startAudioStream(request, (partial) => {
+        if (!audioStreamOwnership.canRoute(lease, partial.streamId)) {
+          return;
+        }
+        if (!sendToFrame(renderer.frame, ipcChannels.audioPartial, partial)) {
+          revokeAudioStreamOwner(renderer.owner.webContentsId, renderer.owner);
+        }
+      });
+      if (!(await audioStreamOwnership.activate(lease, response.streamId))) {
+        throw new Error("The renderer frame was replaced before the audio stream became active.");
+      }
+      return response;
+    } catch (error) {
+      audioStreamOwnership.release(lease);
+      throw error;
+    }
   });
   ipcMain.handle(ipcChannels.appendAudioChunk, (event, request: AudioStreamChunkRequest) => {
-    assertTrustedRendererIpc(event);
+    const renderer = assertTrustedRendererIpc(event);
+    audioStreamOwnership.assertOwned(renderer.owner, request.streamId);
     return controller.appendAudioStreamChunk(request);
   });
-  ipcMain.handle(ipcChannels.finishAudioStream, (event, request: AudioStreamFinishRequest) => {
-    assertTrustedRendererIpc(event);
-    return controller.finishAudioStream(request, (progress) => {
-      mainWindow?.webContents.send(ipcChannels.progress, progress);
-    });
+  ipcMain.handle(ipcChannels.finishAudioStream, async (event, request: AudioStreamFinishRequest) => {
+    const renderer = assertTrustedRendererIpc(event);
+    audioStreamOwnership.assertOwned(renderer.owner, request.streamId);
+    try {
+      return await controller.finishAudioStream(request, (progress) => {
+        sendToFrame(renderer.frame, ipcChannels.progress, progress);
+      });
+    } finally {
+      audioStreamOwnership.complete(renderer.owner, request.streamId);
+    }
   });
-  ipcMain.handle(ipcChannels.cancelAudioStream, (event, request: AudioStreamCancelRequest) => {
-    assertTrustedRendererIpc(event);
-    return controller.cancelAudioStream(request);
+  ipcMain.handle(ipcChannels.cancelAudioStream, async (event, request: AudioStreamCancelRequest) => {
+    const renderer = assertTrustedRendererIpc(event);
+    audioStreamOwnership.assertOwned(renderer.owner, request.streamId);
+    try {
+      await controller.cancelAudioStream(request);
+    } finally {
+      audioStreamOwnership.complete(renderer.owner, request.streamId);
+    }
   });
   ipcMain.handle(ipcChannels.authorizeMicrophone, (event, request: MicrophoneAuthorizationRequest) => {
     const window = mainWindow;
+    const webContents = mainWebContents;
     const gate = microphonePermissionGate;
     const frame = event.senderFrame;
     if (
       window === null ||
+      window.isDestroyed() ||
+      webContents === null ||
+      webContents.isDestroyed() ||
+      event.sender !== webContents ||
       gate === null ||
       !gate.authorize({
         webContents: event.sender,
@@ -196,31 +294,94 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle(ipcChannels.transcribeAudio, (event, request: AudioCapturePayload) => {
-    assertTrustedRendererIpc(event);
+    const renderer = assertTrustedRendererIpc(event);
     return controller.transcribeAudio(request, (progress) => {
-      mainWindow?.webContents.send(ipcChannels.progress, progress);
+      sendToFrame(renderer.frame, ipcChannels.progress, progress);
     });
   });
-  ipcMain.handle(ipcChannels.runTurn, (_event, request: RunTurnRequest) =>
-    controller.runTurn(request, (progress) => {
-      mainWindow?.webContents.send(ipcChannels.progress, progress);
-    }),
-  );
+  ipcMain.handle(ipcChannels.runTurn, (event, request: RunTurnRequest) => {
+    const renderer = assertTrustedRendererIpc(event);
+    return controller.runTurn(request, (progress) => {
+      sendToFrame(renderer.frame, ipcChannels.progress, progress);
+    });
+  });
   ipcMain.handle(ipcChannels.resetConversation, () => controller.reset());
 }
 
-function assertTrustedRendererIpc(event: IpcMainInvokeEvent): void {
+function assertTrustedRendererIpc(event: IpcMainInvokeEvent): {
+  readonly webContents: WebContents;
+  readonly frame: WebFrameMain;
+  readonly owner: AudioStreamOwnerIdentity;
+} {
   const window = mainWindow;
+  const webContents = mainWebContents;
   const frame = event.senderFrame;
   if (
     window === null ||
-    event.sender !== window.webContents ||
+    window.isDestroyed() ||
+    webContents === null ||
+    webContents.isDestroyed() ||
+    event.sender.isDestroyed() ||
+    event.sender !== webContents ||
     frame === null ||
     frame !== event.sender.mainFrame ||
     event.sender.getURL() !== rendererDocumentUrl ||
     frame.url !== rendererDocumentUrl
   ) {
     throw new Error("Audio IPC is restricted to the active application main frame.");
+  }
+  return {
+    webContents: event.sender,
+    frame,
+    owner: {
+      webContentsId: event.sender.id,
+      processId: event.processId,
+      frameId: event.frameId,
+      frameTreeNodeId: frame.frameTreeNodeId,
+      frameToken: frame.frameToken,
+    },
+  };
+}
+
+function sendToFrame(frame: WebFrameMain, channel: string, payload: unknown): boolean {
+  try {
+    if (frame.isDestroyed() || frame.detached) {
+      return false;
+    }
+    frame.send(channel, payload);
+    return true;
+  } catch (error) {
+    console.error(`Failed to send ${channel} to the owning renderer frame:`, error);
+    return false;
+  }
+}
+
+function revokeAudioStreamOwner(
+  webContentsId: number,
+  frame?: Pick<AudioStreamOwnerIdentity, "frameTreeNodeId" | "frameToken">,
+): void {
+  void audioStreamOwnership.revokeOwner(webContentsId, frame).catch((error: unknown) => {
+    console.error("Failed to cancel the renderer-owned audio stream:", error);
+  });
+}
+
+function frameOwnership(
+  frame: WebFrameMain | null,
+): Pick<AudioStreamOwnerIdentity, "frameTreeNodeId" | "frameToken"> | undefined {
+  if (frame === null) {
+    return undefined;
+  }
+  try {
+    if (frame.isDestroyed()) {
+      return undefined;
+    }
+    return {
+      frameTreeNodeId: frame.frameTreeNodeId,
+      frameToken: frame.frameToken,
+    };
+  } catch (error) {
+    console.error("Failed to capture renderer frame ownership during navigation:", error);
+    return undefined;
   }
 }
 
@@ -287,9 +448,9 @@ app.whenReady().then(() => {
   });
 });
 
-async function runMicrophonePermissionProbe(window: BrowserWindow): Promise<void> {
+async function runMicrophonePermissionProbe(webContents: WebContents): Promise<void> {
   try {
-    const rendererResult = (await window.webContents.executeJavaScript(
+    const rendererResult = (await webContents.executeJavaScript(
       `(async () => {
           await window.demoApi.authorizeMicrophone();
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -348,7 +509,117 @@ async function runMicrophonePermissionProbe(window: BrowserWindow): Promise<void
   }
 }
 
+async function runStreamOwnerProbe(
+  window: BrowserWindow,
+  webContents: WebContents,
+  webContentsId: number,
+): Promise<void> {
+  try {
+    const frame = webContents.mainFrame;
+    const previousFrameToken = frame.frameToken;
+    const lease = audioStreamOwnership.begin({
+      webContentsId,
+      processId: frame.processId,
+      frameId: frame.routingId,
+      frameTreeNodeId: frame.frameTreeNodeId,
+      frameToken: frame.frameToken,
+    });
+    if (!(await audioStreamOwnership.activate(lease, streamOwnerReloadProbeId))) {
+      throw new Error("The initial renderer frame could not acquire the probe stream.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timed out waiting for the renderer reload.")),
+        10_000,
+      );
+      webContents.once("did-finish-load", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      webContents.reload();
+    });
+
+    if (
+      !streamOwnerProbeCancellations.has(streamOwnerReloadProbeId) ||
+      audioStreamOwnership.canRoute(lease, streamOwnerReloadProbeId)
+    ) {
+      throw new Error("Renderer reload did not cancel and revoke the original audio stream owner.");
+    }
+    const currentFrame = webContents.mainFrame;
+    const currentFrameToken = currentFrame.frameToken;
+    const nextLease = audioStreamOwnership.begin({
+      webContentsId,
+      processId: currentFrame.processId,
+      frameId: currentFrame.routingId,
+      frameTreeNodeId: currentFrame.frameTreeNodeId,
+      frameToken: currentFrame.frameToken,
+    });
+    if (nextLease.sessionId === lease.sessionId) {
+      throw new Error("Renderer reload reused the revoked audio ownership session.");
+    }
+    if (!(await audioStreamOwnership.activate(nextLease, streamOwnerCloseProbeId))) {
+      throw new Error("The reloaded renderer frame could not acquire the close probe stream.");
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timed out waiting for the renderer window to close.")),
+        10_000,
+      );
+      window.once("closed", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      window.close();
+    });
+    await waitForProbeCancellation(streamOwnerCloseProbeId);
+    if (audioStreamOwnership.canRoute(nextLease, streamOwnerCloseProbeId)) {
+      throw new Error("Window close left the renderer audio stream owner routable.");
+    }
+    console.log(
+      `STREAM_OWNER_PROBE_OK ${JSON.stringify({
+        previousFrameToken,
+        currentFrameToken,
+        previousSessionId: lease.sessionId,
+        currentSessionId: nextLease.sessionId,
+        reloadCancelled: true,
+        closeCancelled: true,
+        stalePartialRoutable: false,
+      })}`,
+    );
+  } catch (error) {
+    process.exitCode = 1;
+    console.error("STREAM_OWNER_PROBE_FAILED", error);
+  } finally {
+    streamOwnerProbeTerminating = true;
+    app.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
+  }
+}
+
+async function waitForProbeCancellation(streamId: string): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!streamOwnerProbeCancellations.has(streamId)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for cancellation of probe stream ${streamId}.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function failStreamOwnerProbe(kind: string, error: unknown): void {
+  if (streamOwnerProbeTerminating) {
+    return;
+  }
+  streamOwnerProbeTerminating = true;
+  process.exitCode = 1;
+  console.error(`STREAM_OWNER_PROBE_${kind}`, error);
+  app.exit(1);
+}
+
 app.on("window-all-closed", () => {
+  if (streamOwnerProbeEnabled) {
+    return;
+  }
   if (process.platform !== "darwin") {
     app.quit();
   }

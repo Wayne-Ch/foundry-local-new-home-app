@@ -1,4 +1,4 @@
-import type { AudioReadiness } from "../audio/audio-types";
+import type { AudioMode, AudioReadiness, LiveTranscriptDraft } from "../audio/audio-types";
 
 export class SingleFlightOperation {
   #operation: Promise<void> | null = null;
@@ -30,6 +30,40 @@ export function isAudioPreparationActive(
   readinessStatus: AudioReadiness["status"],
 ): boolean {
   return singleFlightActive || readinessStatus === "checking" || readinessStatus === "loading";
+}
+
+export function beginAudioModePreparation(readiness: AudioReadiness, mode: AudioMode): AudioReadiness {
+  return {
+    ...readiness,
+    model: null,
+    activeMode: mode,
+    modelCached: false,
+    localAudioReady: false,
+    status: "checking",
+    detail: "Inspecting the local speech model.",
+  };
+}
+
+export function submitTranscriptDraft(
+  draft: LiveTranscriptDraft,
+  submittedPrompt: string,
+): {
+  readonly draft: LiveTranscriptDraft;
+  readonly phase: "draft" | "submitted";
+  readonly notice: string | null;
+} {
+  if (!draft.text.trim()) {
+    return { draft, phase: "draft", notice: null };
+  }
+  return {
+    draft: {
+      ...draft,
+      text: submittedPrompt.trim(),
+      isFinal: true,
+    },
+    phase: "submitted",
+    notice: "Editable prompt submitted for local processing.",
+  };
 }
 
 export async function resetAfterStartingCleanup<T>(

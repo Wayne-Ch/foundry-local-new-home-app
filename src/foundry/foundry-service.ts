@@ -961,10 +961,17 @@ export class FoundryLayoutService {
     return trackedPromise;
   }
 
-  async #initializeAudio(generation: number, mode: AudioMode): Promise<AudioReadiness> {
+  async #initializeAudio(generation: number, mode: AudioMode): Promise<IModel> {
     this.#assertAudioOperationCurrent(generation);
+    const previousFallbackReason = this.#audioReadiness.fallbackReason;
     this.#audioReadiness = {
       ...this.#audioReadiness,
+      model: null,
+      activeMode: mode,
+      fallbackAvailable: true,
+      fallbackReason: mode === "whisper_file" ? previousFallbackReason : null,
+      modelCached: false,
+      localAudioReady: false,
       status: "checking",
       detail: "Inspecting the exact local speech model.",
     };
@@ -974,140 +981,216 @@ export class FoundryLayoutService {
       this.#assertAudioOperationCurrent(generation);
       const manager = this.#requireManager();
       const target = audioTarget(mode);
-      if (this.#audioModel !== null && this.#audioModel.id !== target.id) {
-        if (await this.#audioModel.isLoaded()) {
-          await this.#audioModel.unload();
-        }
-        this.#audioModel = null;
+      let candidate: IModel | null = null;
+      let publicCatalogError = "";
+      try {
+        candidate = await manager.catalog.getModelVariant(target.id);
+      } catch (error) {
+        publicCatalogError = error instanceof Error ? error.message : String(error);
+        candidate = (await manager.catalog.getCachedModels()).find((model) => model.id === target.id) ?? null;
       }
-      if (this.#audioModel === null) {
-        let publicCatalogError = "";
-        try {
-          this.#audioModel = await manager.catalog.getModelVariant(target.id);
-        } catch (error) {
-          publicCatalogError = error instanceof Error ? error.message : String(error);
-          this.#audioModel =
-            (await manager.catalog.getCachedModels()).find((model) => model.id === target.id) ?? null;
-        }
-        this.#assertAudioOperationCurrent(generation);
-        if (this.#audioModel === null) {
-          this.#audioReadiness = {
-            ...this.#audioReadiness,
-            status: "model_unavailable",
-            fallbackAvailable: mode === "nemotron_streaming",
-            fallbackReason:
-              mode === "nemotron_streaming"
-                ? `Nemotron is unavailable: ${publicCatalogError}`
-                : this.#audioReadiness.fallbackReason,
-            detail: `Exact audio model ${target.id} is unavailable. ${publicCatalogError}`,
-          };
-          return this.#audioReadiness;
-        }
+      this.#assertAudioOperationCurrent(generation);
+      if (candidate === null) {
+        const detail = `Exact audio model ${target.id} is unavailable. ${
+          publicCatalogError || "It was not returned by the public or cached catalog."
+        }`;
+        this.#audioReadiness = {
+          ...this.#audioReadiness,
+          model: null,
+          activeMode: mode,
+          modelCached: false,
+          localAudioReady: false,
+          status: "model_unavailable",
+          fallbackReason:
+            mode === "nemotron_streaming"
+              ? `Nemotron is unavailable: ${publicCatalogError || "model not found"}`
+              : previousFallbackReason,
+          detail,
+        };
+        throw new FoundryAudioError(detail, "AUDIO_MODEL_UNAVAILABLE");
       }
-      this.#assertAudioModel(this.#audioModel, mode);
-      this.#audioMode = mode;
-      this.#assertAudioOperationCurrent(generation);
-      const readiness = await this.#refreshAudioReadiness();
-      this.#assertAudioOperationCurrent(generation);
-      return readiness;
+
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        model: audioModelIdentity(candidate),
+        activeMode: mode,
+        modelCached: candidate.isCached,
+        localAudioReady: false,
+        status: candidate.isCached ? "loading" : "preparation_required",
+        detail: candidate.isCached
+          ? `${candidate.id} is cached and ready to load.`
+          : `${candidate.id} is available but must be downloaded before offline speech input.`,
+      };
+      this.#assertAudioModel(candidate, mode);
+      return candidate;
     } catch (error) {
       if (error instanceof FoundryAudioError && error.code === "AUDIO_NOT_READY") {
         throw error;
       }
+      if (error instanceof FoundryAudioError && this.#audioReadiness.status === "model_unavailable") {
+        throw error;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
       this.#audioReadiness = {
         ...this.#audioReadiness,
+        activeMode: mode,
+        localAudioReady: false,
         status: "error",
-        fallbackAvailable: mode === "nemotron_streaming",
+        fallbackAvailable: true,
         fallbackReason:
-          mode === "nemotron_streaming"
-            ? `Nemotron preparation failed: ${error instanceof Error ? error.message : String(error)}`
-            : this.#audioReadiness.fallbackReason,
-        detail: error instanceof Error ? error.message : String(error),
+          mode === "nemotron_streaming" ? `Nemotron preparation failed: ${detail}` : previousFallbackReason,
+        detail,
       };
-      return this.#audioReadiness;
+      if (error instanceof FoundryAudioError) {
+        throw error;
+      }
+      throw new FoundryAudioError(detail, "AUDIO_MODEL_UNAVAILABLE", { cause: error });
     }
   }
 
   async #prepareAudioOffline(generation: number, mode: AudioMode): Promise<AudioReadiness> {
-    await this.#initializeAudio(generation, mode);
-    this.#assertAudioOperationCurrent(generation);
-    const model = this.#requireAudioModel();
-    this.#assertAudioModel(model, mode);
-
-    if (!model.isCached) {
-      const sizeMb = model.info.fileSizeMb ?? Number.POSITIVE_INFINITY;
-      const autoDownloadLimitMb = mode === "nemotron_streaming" ? 800 : 256;
-      if (sizeMb > autoDownloadLimitMb) {
-        this.#audioReadiness = {
-          ...this.#audioReadiness,
-          status: "error",
-          fallbackAvailable: mode === "nemotron_streaming",
-          fallbackReason:
-            mode === "nemotron_streaming"
-              ? `Nemotron download was refused because ${sizeMb} MB exceeds the bounded policy.`
-              : this.#audioReadiness.fallbackReason,
-          detail: `Refusing to automatically download ${model.id} (${sizeMb} MB).`,
-        };
-        throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED");
-      }
-      this.#reportAudioPrepareProgress(
-        `Downloading ${audioTarget(mode).alias} (${sizeMb} MB) for offline speech input.`,
-      );
-      try {
-        await model.download((percent) =>
-          this.#reportAudioPrepareProgress(`Audio model download ${percent.toFixed(1)}%`),
+    const model = await this.#initializeAudio(generation, mode);
+    const alreadyActive = this.#audioModel === model && this.#audioMode === mode;
+    try {
+      this.#assertAudioOperationCurrent(generation);
+      if (!model.isCached) {
+        const sizeMb = model.info.fileSizeMb ?? Number.POSITIVE_INFINITY;
+        const autoDownloadLimitMb = mode === "nemotron_streaming" ? 800 : 256;
+        if (sizeMb > autoDownloadLimitMb) {
+          this.#audioReadiness = {
+            ...this.#audioReadiness,
+            activeMode: mode,
+            localAudioReady: false,
+            status: "error",
+            fallbackAvailable: true,
+            fallbackReason:
+              mode === "nemotron_streaming"
+                ? `Nemotron download was refused because ${sizeMb} MB exceeds the bounded policy.`
+                : this.#audioReadiness.fallbackReason,
+            detail: `Refusing to automatically download ${model.id} (${sizeMb} MB).`,
+          };
+          throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED");
+        }
+        this.#reportAudioPrepareProgress(
+          `Downloading ${audioTarget(mode).alias} (${sizeMb} MB) for offline speech input.`,
         );
+        try {
+          await model.download((percent) =>
+            this.#reportAudioPrepareProgress(`Audio model download ${percent.toFixed(1)}%`),
+          );
+        } catch (error) {
+          this.#audioReadiness = {
+            ...this.#audioReadiness,
+            activeMode: mode,
+            localAudioReady: false,
+            status: "error",
+            fallbackAvailable: true,
+            fallbackReason:
+              mode === "nemotron_streaming"
+                ? `Nemotron download failed: ${error instanceof Error ? error.message : String(error)}`
+                : this.#audioReadiness.fallbackReason,
+            detail: `Failed to download ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
+          };
+          throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED", {
+            cause: error,
+          });
+        }
+        this.#assertAudioOperationCurrent(generation);
+      }
+
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        activeMode: mode,
+        modelCached: model.isCached,
+        localAudioReady: false,
+        status: "loading",
+        detail: `Loading ${model.id} in-process.`,
+      };
+      try {
+        if (!(await model.isLoaded())) {
+          await model.load();
+        }
+        this.#assertAudioOperationCurrent(generation);
       } catch (error) {
+        if (error instanceof FoundryAudioError && error.code === "AUDIO_NOT_READY") {
+          throw error;
+        }
         this.#audioReadiness = {
           ...this.#audioReadiness,
+          activeMode: mode,
+          localAudioReady: false,
           status: "error",
-          fallbackAvailable: mode === "nemotron_streaming",
+          fallbackAvailable: true,
           fallbackReason:
             mode === "nemotron_streaming"
-              ? `Nemotron download failed: ${error instanceof Error ? error.message : String(error)}`
+              ? `Nemotron load failed: ${error instanceof Error ? error.message : String(error)}`
               : this.#audioReadiness.fallbackReason,
-          detail: `Failed to download ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
+          detail: `Failed to load ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
         };
-        throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED", {
+        throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_LOAD_FAILED", {
           cause: error,
         });
       }
-      this.#assertAudioOperationCurrent(generation);
-    }
 
-    this.#audioReadiness = {
-      ...this.#audioReadiness,
-      status: "loading",
-      detail: `Loading ${model.id} in-process.`,
-    };
-    try {
-      if (!(await model.isLoaded())) {
-        await model.load();
-      }
+      await this.#activateAudioModel(generation, mode, model);
+      const readiness = await this.#refreshAudioReadiness();
       this.#assertAudioOperationCurrent(generation);
+      return readiness;
     } catch (error) {
-      if (error instanceof FoundryAudioError && error.code === "AUDIO_NOT_READY") {
-        throw error;
+      if (!alreadyActive && this.#audioModel !== model) {
+        try {
+          await this.#discardAudioCandidate(model);
+        } catch (cleanupError) {
+          const detail = `Audio preparation failed and ${model.id} could not be unloaded: ${
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          }`;
+          this.#audioReadiness = {
+            ...this.#audioReadiness,
+            activeMode: mode,
+            localAudioReady: false,
+            status: "error",
+            detail,
+          };
+          throw new FoundryAudioError(detail, "AUDIO_MODEL_LOAD_FAILED", {
+            cause: new AggregateError([error, cleanupError]),
+          });
+        }
       }
-      this.#audioReadiness = {
-        ...this.#audioReadiness,
-        status: "error",
-        fallbackAvailable: mode === "nemotron_streaming",
-        fallbackReason:
-          mode === "nemotron_streaming"
-            ? `Nemotron load failed: ${error instanceof Error ? error.message : String(error)}`
-            : this.#audioReadiness.fallbackReason,
-        detail: `Failed to load ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
-      };
-      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_LOAD_FAILED", {
-        cause: error,
-      });
+      throw error;
     }
+  }
 
+  async #activateAudioModel(generation: number, mode: AudioMode, model: IModel): Promise<void> {
     this.#assertAudioOperationCurrent(generation);
-    const readiness = await this.#refreshAudioReadiness();
+    const previous = this.#audioModel;
+    if (previous !== null && previous !== model) {
+      try {
+        if (await previous.isLoaded()) {
+          await previous.unload();
+        }
+      } catch (error) {
+        const detail = `Failed to switch to ${model.id} because ${previous.id} could not be unloaded: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        this.#audioReadiness = {
+          ...this.#audioReadiness,
+          activeMode: mode,
+          localAudioReady: false,
+          status: "error",
+          detail,
+        };
+        throw new FoundryAudioError(detail, "AUDIO_MODEL_LOAD_FAILED", { cause: error });
+      }
+    }
     this.#assertAudioOperationCurrent(generation);
-    return readiness;
+    this.#audioModel = model;
+    this.#audioMode = mode;
+  }
+
+  async #discardAudioCandidate(model: IModel): Promise<void> {
+    if (model !== this.#audioModel && (await model.isLoaded())) {
+      await model.unload();
+    }
   }
 
   async #transcribeAudio(
