@@ -57,14 +57,14 @@ In the app:
    or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
-Observed corrected selected-default integration timings on the validated laptop were 5.574–11.313
+Observed corrected selected-default integration timings on the validated laptop were 4.630–11.163
 seconds per turn, including bounded application-validation correction when needed. The unrestricted
-semantic benchmark measured 6.068 seconds median and 9.777 seconds maximum. Do not start the first
+semantic benchmark measured 6.022 seconds median and 9.944 seconds maximum. Do not start the first
 inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,258 ms,
-stop-to-final at 117 ms, and 2,824 ms cached preparation. The explicit Whisper fallback prepared in
-1,867 ms and transcribed the same fixture in 229 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,303 ms,
+stop-to-final at 100 ms, and 3,100 ms cached preparation. The explicit Whisper fallback prepared in
+1,807 ms and transcribed the same fixture in 211 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow

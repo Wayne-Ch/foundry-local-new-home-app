@@ -105,8 +105,9 @@ Put on screen:
 - application-derived fixed room/rule/state-set versions;
 - application-derived catalog slots, retained furniture, locked constraints, and millimetres;
 - stale-state rejection;
-- explicit King/Queen/crib correction guard;
-- missing verified dimension handling.
+- explicit King/Queen/desk/crib correction and negated-transition guards;
+- action-object furniture extraction, unsupported-variant masking, and missing verified dimension
+  handling without treating ordinary clearance prose as furniture.
 
 Message:
 
@@ -168,17 +169,17 @@ Show only:
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
 - corrected isolated benchmark with unrestricted intent enums, independently authored expectations,
-  A/B/C/failure/correction, two clarification cases, stale/invented guards, and six paraphrases;
+  A/B/C/failure/correction, four clarification cases, stale/invented guards, and seven paraphrases;
 - exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
   recall;
 - explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 15 test files / 147 tests pass in Vitest's reported 1.31 seconds. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,258 ms, stop-to-final 117 ms, 2,824 ms cached
-prepare) and the explicit Whisper fallback prepared in 1,867 ms and transcribed in 229 ms.
+Current checkpoint: 15 test files / 168 tests pass. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,303 ms, stop-to-final 100 ms, 3,100 ms cached
+prepare) and the explicit Whisper fallback prepared in 1,807 ms and transcribed in 211 ms.
 
 Then return to the app for the single fresh offline controlled-failure input. The corrected selected
-default measured 5.574–11.313 seconds in the eight-turn real integration and 6.068 seconds median /
-9.777 seconds max in the unrestricted semantic benchmark.
+default measured 4.630–11.163 seconds in the eleven-turn real integration and 6.022 seconds median /
+9.944 seconds max in the unrestricted semantic benchmark.

@@ -201,6 +201,40 @@ try {
     assert.equal(transition.evidence.selectedOptionId, "queen-crib-compact-v1");
   }
 
+  const semanticGuardState: DemoState = {
+    ...state,
+    stateRef: "layout-state-v60",
+    version: 60,
+  };
+  await service.resetConversation();
+  const negatedTransitions = await runAndCommit(
+    service,
+    semanticGuardState,
+    "Negated transitions",
+    "Do not replace the Queen with a King; do not replace the compact desk with a standard desk.",
+    ["bed-queen", "desk-compact"],
+    "feasible",
+  );
+  turns.push(negatedTransitions.evidence);
+  assert.equal(negatedTransitions.evidence.selectedOptionId, "queen-compact-desk-v1");
+
+  for (const [label, prompt] of [
+    ["Unsupported California King", "Use a California King instead."],
+    ["Unsupported twin and moon pod", "Use a twin bed with a moon pod beside it."],
+  ] as const) {
+    await service.resetConversation();
+    const unsupported = await runAndCommit(
+      service,
+      semanticGuardState,
+      label,
+      prompt,
+      ["bed-queen", "desk-compact"],
+      "clarification_required",
+    );
+    turns.push(unsupported.evidence);
+    assert.equal(unsupported.evidence.selectedOptionId, null);
+  }
+
   const report = {
     generatedAt: new Date().toISOString(),
     provider: readiness.provider,

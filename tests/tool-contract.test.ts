@@ -371,6 +371,149 @@ describe("compact intent-delta contract", () => {
     });
   });
 
+  it.each([
+    ["Do not replace the Queen with a King.", stateWithQueenDesk(), "bed", "king"],
+    ["Do not move from King to Queen!", stateWithKingCompactCrib(), "bed", "queen"],
+    ["Do not replace the standard desk with a compact desk.", stateWithQueenDesk(), "desk", "compact"],
+    ["Do not move from compact desk to standard desk.", stateWithKingCompactCrib(), "desk", "standard"],
+  ] as const)(
+    "keeps the accepted item for a clearly negated transition: %s",
+    (prompt, state, field, prohibitedTarget) => {
+      const analysis = analyzeLayoutPrompt(state, prompt);
+      expect(analysis).toMatchObject({
+        clarification: "none",
+        preferred: {
+          [field]: "keep",
+        },
+        allowed: {
+          [field]: ["keep"],
+        },
+      });
+
+      const accepted = {
+        bed: "keep" as const,
+        desk: "keep" as const,
+        crib: "keep" as const,
+        changedPreference: prompt,
+        clarification: "none" as const,
+      };
+      expect(parseAndValidateIntentDelta(JSON.stringify(accepted), state, prompt)).toMatchObject({
+        ok: true,
+        value: {
+          intentDelta: accepted,
+        },
+      });
+      expect(
+        parseAndValidateIntentDelta(
+          JSON.stringify({ ...accepted, [field]: prohibitedTarget }),
+          state,
+          prompt,
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          code: "DROPPED_CONSTRAINT",
+        },
+      });
+    },
+  );
+
+  it("scopes negated transitions across punctuation and fails closed on ambiguous conjunctions", () => {
+    const state = stateWithQueenDesk();
+    const punctuated = "Do not replace the Queen with a King; replace the standard desk with a compact desk.";
+    expect(analyzeLayoutPrompt(state, punctuated)).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "keep",
+        desk: "compact",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["compact"],
+      },
+    });
+
+    const repeatedNegation =
+      "Do not replace the Queen with a King, and do not replace the standard desk with a compact desk.";
+    expect(analyzeLayoutPrompt(state, repeatedNegation)).toMatchObject({
+      clarification: "none",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+      },
+    });
+
+    const ambiguous =
+      "Do not replace the Queen with a King and replace the standard desk with a compact desk.";
+    const analysis = analyzeLayoutPrompt(state, ambiguous);
+    expect(analysis).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+      },
+    });
+    expect(
+      parseAndValidateIntentDelta(
+        JSON.stringify({
+          bed: "keep",
+          desk: "compact",
+          crib: "keep",
+          changedPreference: ambiguous,
+          clarification: "required",
+        }),
+        state,
+        ambiguous,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
+      },
+    });
+
+    const ambiguousCrib = "Do not replace the Queen with a King and add a crib.";
+    expect(analyzeLayoutPrompt(state, ambiguousCrib)).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+        desk: "keep",
+        crib: "keep",
+      },
+      allowed: {
+        bed: ["keep"],
+        desk: ["keep"],
+        crib: ["keep"],
+      },
+    });
+  });
+
+  it.each([
+    [
+      "Replace the standard desk with a compact desk.",
+      stateWithQueenDesk(),
+      { bed: "keep", desk: "compact", crib: "keep" },
+    ],
+    [
+      "Move from compact desk to standard desk.",
+      stateWithKingCompactCrib(),
+      { bed: "keep", desk: "standard", crib: "keep" },
+    ],
+  ] as const)("keeps affirmative desk transition %s", (prompt, state, expected) => {
+    expect(preferredLayoutIntentDelta(state, prompt)).toMatchObject({
+      ...expected,
+      clarification: "none",
+    });
+  });
+
   it("requires clarification for conflicting or transition-inconsistent wording", () => {
     const state = stateWithKingCompactCrib();
     for (const prompt of [
@@ -456,6 +599,55 @@ describe("missing verified dimensions", () => {
     });
   });
 
+  it.each([
+    ["Use a California King.", "california king"],
+    ["Put a California King bed against the wall.", "california king"],
+    ["Add a twin.", "twin bed"],
+    ["Could a twin bed fit?", "twin bed"],
+    ["Use a moon pod beside the desk.", "moon pod"],
+    ["Add a bean bag.", "bean bag"],
+    ["Use an easel.", "easel"],
+    ["Replace the Queen with a platform bed.", "platform bed"],
+    ["Could we fit a rocker?", "rocker"],
+    ["Put a lamp beside the desk.", "lamp"],
+  ] as const)("extracts unsupported action object from %s", (prompt, term) => {
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain(term);
+  });
+
+  it.each([
+    "Use a California King.",
+    "Put a California King bed against the wall.",
+    "Add a twin.",
+    "Could a twin bed fit?",
+  ])("does not map unsupported bed variant to a supported bed: %s", (prompt) => {
+    const state = stateWithQueenDesk();
+    expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+      clarification: "required",
+      preferred: {
+        bed: "keep",
+      },
+    });
+    const preferred = preferredLayoutIntentDelta(state, prompt);
+    expect(preferred).toMatchObject({
+      bed: "keep",
+      clarification: "required",
+    });
+    expect(buildCompareLayoutOptionsInput(preferred, state)).toMatchObject({
+      candidateFurnitureIds: {
+        bed: "bed-queen",
+      },
+      clarificationNeeded: true,
+    });
+    expect(
+      parseAndValidateIntentDelta(JSON.stringify({ ...preferred, bed: "king" }), state, prompt),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "DROPPED_CONSTRAINT",
+      },
+    });
+  });
+
   it("does not mistake supported-only requests or ordinary prose for furniture", () => {
     expect(
       detectUnsupportedCatalogTerms(
@@ -467,5 +659,15 @@ describe("missing verified dimensions", () => {
         "Keep the layout flexible, explain the result clearly, and do not block the door or closet.",
       ),
     ).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("Keep the layout clear beside the Queen bed.")).toEqual([]);
+    expect(
+      detectUnsupportedCatalogTerms(
+        "Use the layout result, add warmth, and put the clearance note beside the plan.",
+      ),
+    ).toEqual([]);
+    expect(detectUnsupportedCatalogTerms("Use a Queen bed and do not add an armchair beside it.")).toEqual(
+      [],
+    );
+    expect(detectUnsupportedCatalogTerms("Use a Queen bed without an armchair.")).toEqual([]);
   });
 });

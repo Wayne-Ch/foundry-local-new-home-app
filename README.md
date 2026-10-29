@@ -36,10 +36,13 @@ room plan.
   semantic intent delta (`bed`, `desk`, `crib`, `changedPreference`, and clarification). Every
   supported compact intent value remains available in the runtime schema; application code validates
   the model choice against explicit wording and accepted state, including directional replacements,
-  scoped negation, ambiguity, and fail-closed unsupported furniture. It then derives exact catalog
-  IDs, retained state, versions, units, locked constraints, and clarification evidence before
-  invoking `compare_layout_options`. Length-truncated or otherwise partial JSON is rejected and
-  never executed.
+  scoped negation, ambiguity, and fail-closed unsupported furniture. Clearly negated replacements
+  preserve the accepted item; ambiguous multi-action negation requires clarification and preserves
+  every slot. Action-object extraction distinguishes unsupported variants such as California King
+  and twin beds from the supported regular King, without treating clearance prose as furniture. The
+  app then derives exact catalog IDs, retained state, versions, units, locked constraints, and
+  clarification evidence before invoking `compare_layout_options`. Length-truncated or otherwise
+  partial JSON is rejected and never executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
@@ -58,21 +61,21 @@ five-turn baseline took 23.955–38.893 seconds and four turns needed a correcti
 The corrected compact contract keeps all semantic enums available and emits accepted JSON of roughly
 143–205 bytes while application code derives the unchanged full tool input and enforces stale state,
 retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
-invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 13 fixed-gate scenarios, loaded
-in 3.518 seconds, and measured 6.068 seconds warm median / 9.777 seconds warm maximum. The previous
-Qwen2.5 1.5B baseline was retained as rejected evidence because it missed both unsupported-furniture
-clarification scenarios.
+invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 16 fixed-gate scenarios,
+including negated bed/desk transitions and unsupported California King, twin-bed, and moon-pod
+requests. It loaded in 3.608 seconds and measured 6.022 seconds warm median / 9.944 seconds warm
+maximum. Other candidates were not rerun for this final semantic gate.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.258 s**, and the final aggregate transcript **117 ms**
-after input ended. Cached model preparation took **2.824 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.303 s**, and the final aggregate transcript **100 ms**
+after input ended. Cached model preparation took **3.100 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.867 s** cached preparation,
-and **229 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.807 s** cached preparation,
+and **211 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
 The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
@@ -199,10 +202,11 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The corrected October 29 selected-default integration completed eight real Qwen turns—including
-replace/from-to and scoped-negation cases—in **5.574–11.313 s**. The unrestricted-schema benchmark
-measured **6.068 s median / 9.777 s max** for exact `qwen3-0.6b-generic-gpu:2`; every one of its 13
-semantic scenarios passed. The legacy full-input Qwen2.5 path measured **23.955–38.893 s**.
+The corrected October 29 selected-default integration completed eleven real Qwen turns—including
+affirmative and negated transitions plus unsupported variants—in **4.630–11.163 s**. The
+unrestricted-schema benchmark measured **6.022 s median / 9.944 s max** for exact
+`qwen3-0.6b-generic-gpu:2`; every one of its 16 semantic scenarios passed. The legacy full-input
+Qwen2.5 path measured **23.955–38.893 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md).
