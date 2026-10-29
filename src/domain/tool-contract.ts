@@ -406,10 +406,10 @@ const pluralFurnitureHeads = new Map<string, string>([
 ]);
 
 const presentationTableSources = [
-  "\\btable\\s+of\\s+(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?)\\b",
+  "\\btables?\\s+of\\s+(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?)\\b",
   "\\b(?:summary|results?|comparison|output|data|markdown|presentation|formatted|report|findings)\\s+tables?\\b",
   "\\btables?\\s+(?:output|format|summary|results?|view|report)\\b",
-  "\\b(?:in|as|into)\\s+(?:a\\s+)?tables?\\b",
+  `\\b(?:in|as|into)\\s+(?:${furnitureQualifierSource}\\s+)?tables?\\b`,
 ] as const;
 
 function normalizePromptText(value: string): string {
@@ -455,41 +455,80 @@ type ActionNegationScope = "none" | "clear" | "ambiguous";
 
 const semanticActionSource =
   "(?:replace|swap(?:\\s+out)?|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|bring\\s+in|place|put|fit|remove|take\\s+out|drop|get\\s+rid\\s+of)";
-const interveningActionModifierSource = "(?:(?:[a-z]+ly|also|even|ever|just|please|still|then)\\s+)*";
-const optionalIntentWrapperSource = "(?:(?:try|want|need|plan|intend|prefer)\\s+to\\s+)?";
 const coordinatedActionWrapperSource =
   "(?:(?:do|did|would|could|should)\\s+(?:i|we|you|they|he|she|it)\\s+)?";
+const actionModifierPhraseSource =
+  "(?:[a-z]+ly|also|at\\s+all|even|ever|in\\s+any\\s+case|just|now|please|still|then|under\\s+any\\s+circumstances)";
+const actionModifierSequencePattern = new RegExp(`^(?:(?:${actionModifierPhraseSource})(?:\\s+|$))*$`);
+
+function hasOnlyActionModifiers(value: string): boolean {
+  const segments = value
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.every((segment) => actionModifierSequencePattern.test(segment));
+}
+
+function hasOnlyNegationLead(value: string): boolean {
+  const withoutIntentWrapper = value.replace(/\b(?:try|want|need|plan|intend|prefer)\s+to\s*$/, "");
+  return hasOnlyActionModifiers(withoutIntentWrapper);
+}
 
 function hasDirectActionNegation(prefix: string): boolean {
-  return (
-    new RegExp(
-      `\\b(?:do\\s+not|don't|never)\\s+${interveningActionModifierSource}${optionalIntentWrapperSource}$`,
-    ).test(prefix) ||
-    new RegExp(`\\bno\\s+longer\\s+${interveningActionModifierSource}$`).test(prefix) ||
-    /\bnot\s+(?:to\s+)?$/.test(prefix) ||
-    new RegExp(`\\bneither\\s+${interveningActionModifierSource}$`).test(prefix)
+  const marker = [...prefix.matchAll(/\b(?:do\s+not|don't|never|no\s+longer|neither|not(?:\s+to)?)\b/g)].at(
+    -1,
   );
+  return marker !== undefined && hasOnlyNegationLead(prefix.slice(marker.index + marker[0].length));
 }
 
 function hasLeadingUnpairedNor(prefix: string): boolean {
-  return new RegExp(`^\\s*,?\\s*nor\\s+${interveningActionModifierSource}$`).test(prefix);
+  const marker = /^\s*,?\s*nor\b/.exec(prefix);
+  return marker !== null && hasOnlyActionModifiers(prefix.slice(marker[0].length));
 }
 
 function hasPotentialActionNegation(prefix: string): boolean {
   return (
-    /\b(?:do\s+not|don't|never|no\s+longer|neither)\b[^.!?;]{0,240}$/.test(prefix) ||
-    /\bnot(?:\s+to)?\b[^.!?;]{0,240}$/.test(prefix) ||
-    /\bnor\b[^.!?;]{0,240}$/.test(prefix)
+    /\b(?:do\s+not|don't|never|no\s+longer|neither)\b[^.!?;]*$/.test(prefix) ||
+    /\bnot(?:\s+to)?\b[^.!?;]*$/.test(prefix) ||
+    /\bnor\b[^.!?;]*$/.test(prefix)
   );
 }
 
 function hasOnlyKnownActionLead(value: string): boolean {
-  return new RegExp(`^${coordinatedActionWrapperSource}${interveningActionModifierSource}$`).test(value);
+  const wrapper = new RegExp(`^${coordinatedActionWrapperSource}`).exec(value);
+  return wrapper !== null && hasOnlyActionModifiers(value.slice(wrapper[0].length));
+}
+
+function hasClearNeitherListScope(clause: string, actionStart: number): boolean {
+  const prefix = clause.slice(0, actionStart);
+  const lastComma = prefix.lastIndexOf(",");
+  if (lastComma < 0 || !hasOnlyKnownActionLead(prefix.slice(lastComma + 1))) {
+    return false;
+  }
+  const beforeComma = prefix.slice(0, lastComma);
+  const neither = [...beforeComma.matchAll(/\bneither\b/g)].at(-1);
+  if (neither === undefined) {
+    return false;
+  }
+  const firstAction = new RegExp(`\\b${semanticActionSource}\\b`).exec(beforeComma.slice(neither.index));
+  if (firstAction === null) {
+    return false;
+  }
+  const firstActionStart = neither.index + firstAction.index;
+  if (!hasDirectActionNegation(beforeComma.slice(0, firstActionStart))) {
+    return false;
+  }
+  return new RegExp(`(?:,\\s*|\\s+)nor\\b[^.!?;]*\\b${semanticActionSource}\\b`).test(
+    clause.slice(actionStart),
+  );
 }
 
 function actionNegationScope(clause: string, actionStart: number): ActionNegationScope {
   const prefix = clause.slice(0, actionStart);
   if (hasDirectActionNegation(prefix)) {
+    return "clear";
+  }
+  if (hasClearNeitherListScope(clause, actionStart)) {
     return "clear";
   }
 
@@ -504,7 +543,7 @@ function actionNegationScope(clause: string, actionStart: number): ActionNegatio
   const beforeConjunction = prefix.slice(0, conjunction.index);
   const afterConjunction = prefix.slice(conjunction.index + conjunction[0].length);
   const precedingNegatedAction = new RegExp(
-    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,240}\\b${semanticActionSource}\\b`,
+    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]*\\b${semanticActionSource}\\b`,
   ).test(beforeConjunction);
   if (word === "nor") {
     return precedingNegatedAction && hasOnlyKnownActionLead(afterConjunction) ? "clear" : "ambiguous";
@@ -513,7 +552,7 @@ function actionNegationScope(clause: string, actionStart: number): ActionNegatio
     return hasPotentialActionNegation(prefix) ? "ambiguous" : "none";
   }
   const coordinatedVerbChain = new RegExp(
-    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]{0,80}\\b${semanticActionSource}\\s*$`,
+    `\\b(?:do\\s+not|don't|never|no\\s+longer|not\\s+to|neither)\\b[^.!?;]*\\b${semanticActionSource}\\s*$`,
   ).test(beforeConjunction);
   return coordinatedVerbChain && hasOnlyKnownActionLead(afterConjunction) ? "clear" : "ambiguous";
 }
@@ -578,6 +617,22 @@ function canonicalUnsupportedFurniturePhrase(phrase: string): string | null {
     return null;
   }
   return normalized;
+}
+
+function pluralFurnitureMatches(value: string): readonly { readonly term: string; readonly start: number }[] {
+  const matches: { readonly term: string; readonly start: number }[] = [];
+  for (const [plural, singular] of pluralFurnitureHeads) {
+    if (singular === "bed" || singular === "desk" || singular === "workstation") {
+      continue;
+    }
+    for (const match of value.matchAll(new RegExp(`\\b${escapeRegex(plural)}\\b`, "g"))) {
+      matches.push({
+        term: canonicalUnsupportedFurniturePhrase(`two ${plural}`) ?? singular,
+        start: match.index,
+      });
+    }
+  }
+  return matches;
 }
 
 interface PromptRange {
@@ -729,7 +784,7 @@ function actionObjectCandidates(
 
 function findUnsupportedCatalogTerms(normalized: string): string[] {
   const matches: { readonly term: string; readonly start: number }[] = [];
-  for (const match of lexiconMatches(normalized)) {
+  for (const match of [...lexiconMatches(normalized), ...pluralFurnitureMatches(normalized)]) {
     if (
       !(match.term === "table" && isPresentationTableReference(normalized, match.start)) &&
       lexiconMatchIsRequested(normalized, match.start)
@@ -761,11 +816,14 @@ function maskUnsupportedCatalogTerms(normalized: string, terms: readonly string[
     const lexiconSources = unsupportedFurnitureLexicon
       .filter((entry) => entry.canonical === term)
       .map((entry) => entry.source);
+    const pluralSources = [...pluralFurnitureHeads]
+      .filter(([, singular]) => singular === term)
+      .map(([plural]) => `\\b${escapeRegex(plural)}\\b`);
     const sources =
       term === "twin bed"
         ? ["\\btwin(?:\\s+bed)?\\b"]
-        : lexiconSources.length > 0
-          ? lexiconSources
+        : lexiconSources.length + pluralSources.length > 0
+          ? [...lexiconSources, ...pluralSources]
           : [`\\b${term.split(" ").map(escapeRegex).join("\\s+")}\\b`];
     for (const source of sources) {
       masked = masked.replace(new RegExp(source, "g"), (match) => " ".repeat(match.length));
@@ -801,12 +859,27 @@ function boundedUnknown(value: string): string {
 }
 
 function boundedUnknowns(values: readonly string[]): string[] {
-  const distinct = unique(values.map(boundedUnknown).filter(Boolean));
-  if (distinct.length <= maxUnknownCount) {
-    return distinct;
+  const distinct = unique(values.map((value) => value.replaceAll(/\s+/g, " ").trim()).filter(Boolean));
+  const initiallyBounded = distinct.map(boundedUnknown);
+  const boundedCounts = new Map<string, number>();
+  for (const value of initiallyBounded) {
+    boundedCounts.set(value, (boundedCounts.get(value) ?? 0) + 1);
   }
-  const retained = distinct.slice(0, maxUnknownCount - 1);
-  const omittedCount = distinct.length - retained.length;
+  const bounded = distinct.map((value, index) => {
+    const initial = initiallyBounded[index];
+    if (initial === undefined || boundedCounts.get(initial) === 1) {
+      return initial ?? "";
+    }
+    const suffix = ` [source ${index + 1}]`;
+    const availablePrefixLength = maxUnknownLength - suffix.length - 3;
+    return `${value.slice(0, availablePrefixLength).trimEnd()}...${suffix}`;
+  });
+  const informative = bounded.filter(Boolean);
+  if (informative.length <= maxUnknownCount) {
+    return informative;
+  }
+  const retained = informative.slice(0, maxUnknownCount - 1);
+  const omittedCount = informative.length - retained.length;
   return [
     ...retained,
     `Additional clarification evidence omitted: ${omittedCount} more item${omittedCount === 1 ? "" : "s"}.`,
@@ -815,12 +888,7 @@ function boundedUnknowns(values: readonly string[]): string[] {
 
 function unsupportedFurnitureUnknown(term: string): string {
   const normalized = term.replaceAll(/\s+/g, " ").trim() || "requested item";
-  const maxTermLength = maxUnknownLength - unsupportedUnknownPrefix.length - unsupportedUnknownSuffix.length;
-  const bounded =
-    normalized.length <= maxTermLength
-      ? normalized
-      : `${normalized.slice(0, maxTermLength - 3).trimEnd()}...`;
-  return `${unsupportedUnknownPrefix}${bounded}${unsupportedUnknownSuffix}`;
+  return `${unsupportedUnknownPrefix}${normalized}${unsupportedUnknownSuffix}`;
 }
 
 export interface ToolValidationError {
@@ -906,7 +974,7 @@ function unique<T>(values: readonly T[]): T[] {
 
 function intentClauses(normalized: string): string[] {
   return normalized
-    .split(/\s*(?:[.!?;]+|,(?!\s*(?:and|or|nor)\b)|\bbut\b)\s*/)
+    .split(/\s*(?:[.!?;]+|\bbut\b)\s*/)
     .map((clause) => clause.trim())
     .filter(Boolean);
 }
@@ -950,16 +1018,20 @@ function transitionNegationScope(
   if (prefixScope === "ambiguous") {
     return "ambiguous";
   }
-  const explicitTransitionNegation = `(?:(?:do\\s+not|don't|never)\\s+${interveningActionModifierSource}|not(?:\\s+to)?\\s+)`;
-  const unscopedActionAfter = new RegExp(
-    `^\\s*,?\\s*(?:and|or)\\s+(?!${explicitTransitionNegation})(?:then\\s+)?${semanticActionSource}\\b`,
-  ).test(suffix);
+  const conjunction = /^\s*,?\s*(and|or|nor)\b/.exec(suffix);
+  const coordinatedAction =
+    conjunction === null
+      ? null
+      : new RegExp(`\\b${semanticActionSource}\\b`).exec(suffix.slice(conjunction[0].length));
   if (prefixScope === "clear") {
-    return unscopedActionAfter ? "ambiguous" : "clear";
+    if (conjunction === null || coordinatedAction === null || conjunction[1] === "nor") {
+      return "clear";
+    }
+    const coordinatedText = suffix.slice(conjunction[0].length);
+    return actionNegationScope(coordinatedText, coordinatedAction.index) === "clear" ? "clear" : "ambiguous";
   }
 
-  const norActionAfter = new RegExp(`^\\s*,?\\s*nor\\s+(?:then\\s+)?${semanticActionSource}\\b`).test(suffix);
-  if (norActionAfter) {
+  if (conjunction?.[1] === "nor" && coordinatedAction !== null) {
     return "ambiguous";
   }
   return "none";

@@ -174,6 +174,199 @@ describe("adversarial semantic guards", () => {
   });
 });
 
+describe("final review exact-source adversarial matrix", () => {
+  const activeCribState = () => ({
+    ...stateWithQueenDesk(),
+    activeFurnitureIds: ["bed-queen", "desk-standard", "crib-standard"] as const,
+  });
+
+  it.each([
+    {
+      name: "neither list across bare comma actions",
+      prompt: "Neither replace the Queen with a King, take the crib out, nor change anything else.",
+      state: activeCribState,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "polite insertion before a bed action",
+      prompt: "Do not, please, choose a King bed.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "adverbial phrase before a crib action",
+      prompt: "Do not, under any circumstances, add a crib.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "polite insertion before a desk action",
+      prompt: "Do not, please, choose a compact desk.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "adverbial phrase before crib removal",
+      prompt: "Do not, under any circumstances, take the crib out.",
+      state: activeCribState,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "affirmative comma-separated controls",
+      prompt: "Replace the Queen with a King, take the crib out, and change anything else.",
+      state: activeCribState,
+      clarification: "none",
+      preferred: { bed: "king", desk: "keep", crib: "remove" },
+    },
+    {
+      name: "affirmative polite bed control",
+      prompt: "Please choose a King bed.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "king", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "affirmative adverbial crib control",
+      prompt: "Under any circumstances, add a crib.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "keep", crib: "add" },
+    },
+    {
+      name: "unknown comma scope fails closed",
+      prompt: "Do not replace the Queen with a King, choose a compact desk.",
+      state: stateWithQueenDesk,
+      clarification: "required",
+      preferred: { bed: "keep", desk: "keep", crib: "keep" },
+    },
+    {
+      name: "strong punctuation ends negation scope",
+      prompt: "Do not replace the Queen with a King; choose a compact desk.",
+      state: stateWithQueenDesk,
+      clarification: "none",
+      preferred: { bed: "keep", desk: "compact", crib: "keep" },
+    },
+  ])("$name", ({ prompt, state, clarification, preferred }) => {
+    expect(analyzeLayoutPrompt(state(), prompt)).toMatchObject({
+      clarification,
+      preferred,
+    });
+  });
+
+  it.each([
+    {
+      name: "coordinated plural chair",
+      prompt: "Use a Queen bed with two chairs.",
+      unsupported: ["chair"],
+      clarification: "required",
+      preferred: { bed: "queen" },
+    },
+    {
+      name: "coordinated plural table",
+      prompt: "Use a Queen bed and two tables.",
+      unsupported: ["table"],
+      clarification: "required",
+      preferred: { bed: "queen" },
+    },
+    {
+      name: "multiple coordinated plural furniture",
+      prompt: "I want a Queen bed, a standard desk, multiple lamps, and two tables.",
+      unsupported: ["lamp", "table"],
+      clarification: "required",
+      preferred: { bed: "queen", desk: "standard" },
+    },
+    {
+      name: "negated plural furniture control",
+      prompt: "Use a Queen bed without any chairs.",
+      unsupported: [],
+      clarification: "none",
+      preferred: { bed: "queen" },
+    },
+    {
+      name: "negated action with plural furniture control",
+      prompt: "Do not add two chairs.",
+      unsupported: [],
+      clarification: "none",
+      preferred: { bed: "keep" },
+    },
+    {
+      name: "presentation-format plural table control",
+      prompt: "Use a Queen bed and return the comparison in two tables.",
+      unsupported: [],
+      clarification: "none",
+      preferred: { bed: "queen" },
+    },
+    {
+      name: "known furniture control",
+      prompt: "Use a Queen bed and a standard desk.",
+      unsupported: [],
+      clarification: "none",
+      preferred: { bed: "queen", desk: "standard" },
+    },
+  ])("$name", ({ prompt, unsupported, clarification, preferred }) => {
+    const state = stateWithQueenDesk();
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual(unsupported);
+    expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+      clarification,
+      preferred,
+    });
+  });
+
+  const sharedRackPrefix = "ornate modular powder-coated adjustable narrow bedroom ".repeat(4);
+  const longRackDescription = (index: number) => `${sharedRackPrefix}series ${index} rack`;
+  const rackPrompt = (indices: readonly number[]) =>
+    indices.map((index) => `Add a ${longRackDescription(index)}.`).join(" ");
+
+  it.each([
+    {
+      name: "nine distinct long rack descriptions",
+      prompt: rackPrompt([1, 2, 3, 4, 5, 6, 7, 8, 9]),
+      expectedCount: 8,
+      omittedCount: 2,
+    },
+    {
+      name: "duplicate long rack descriptions",
+      prompt: rackPrompt([1, 1, 1]),
+      expectedCount: 1,
+      omittedCount: 0,
+    },
+    {
+      name: "eight distinct long rack descriptions",
+      prompt: rackPrompt([1, 2, 3, 4, 5, 6, 7, 8]),
+      expectedCount: 8,
+      omittedCount: 0,
+    },
+  ])("$name", ({ prompt, expectedCount, omittedCount }) => {
+    const state = stateWithQueenDesk();
+    const analysis = analyzeLayoutPrompt(state, prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(analysis.unknowns).toHaveLength(expectedCount);
+    expect(new Set(analysis.unknowns).size).toBe(expectedCount);
+    expect(analysis.unknowns.every((unknown) => unknown.length <= 160)).toBe(true);
+    if (omittedCount > 0) {
+      expect(analysis.unknowns.at(-1)).toBe(
+        `Additional clarification evidence omitted: ${omittedCount} more items.`,
+      );
+    } else {
+      expect(analysis.unknowns).not.toContainEqual(
+        expect.stringContaining("Additional clarification evidence omitted:"),
+      );
+    }
+    expect(buildCompareLayoutOptionsInput(preferredLayoutIntentDelta(state, prompt), state)).toMatchObject({
+      ok: true,
+      value: {
+        unknowns: analysis.unknowns,
+        clarificationNeeded: true,
+      },
+    });
+  });
+});
+
 describe("compact intent-delta contract", () => {
   it("derives every fixed tool field and retained ID in application code", () => {
     const state = stateWithQueenDesk();
@@ -794,12 +987,7 @@ describe("compact intent-delta contract", () => {
       },
     });
 
-    for (const prompt of [
-      "Nor choose a King bed.",
-      "Nor choose a compact desk.",
-      "Do not now choose a King bed.",
-      "Do not now choose a compact desk.",
-    ]) {
+    for (const prompt of ["Nor choose a King bed.", "Nor choose a compact desk."]) {
       expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
         clarification: "required",
         preferred: {
@@ -815,18 +1003,24 @@ describe("compact intent-delta contract", () => {
       });
     }
 
+    for (const prompt of ["Do not now choose a King bed.", "Do not now choose a compact desk."]) {
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "none",
+        preferred: {
+          bed: "keep",
+          desk: "keep",
+          crib: "keep",
+        },
+      });
+    }
+
     const cribState = stateWithKingCompactCrib();
     expect(analyzeLayoutPrompt(cribState, "Do not now take the crib out.")).toMatchObject({
-      clarification: "required",
+      clarification: "none",
       preferred: {
         bed: "keep",
         desk: "keep",
         crib: "keep",
-      },
-      allowed: {
-        bed: ["keep"],
-        desk: ["keep"],
-        crib: ["keep"],
       },
     });
     expect(preferredCandidateFurnitureIds(cribState, "Do not now take the crib out.").crib).toBe(
