@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "test:integration": "tsx scripts/run-foundry-integration.ts",
     "test:audio-integration": "tsx scripts/run-audio-integration.ts",
+    "test:nemotron-integration": "tsx scripts/run-nemotron-integration.ts",
     "probe:foundry": "tsx scripts/probe-foundry.ts",
     "probe:microphone-permission": "npm run build && node scripts/probe-electron-microphone.mjs",
     "smoke:electron": "npm run build && node scripts/smoke-electron.mjs",

@@ -23,13 +23,14 @@
 | Inference endpoint | none |
 | Planning mode | runtime JSON Schema -> app tool invocation |
 | Visible response | application-rendered typed evidence |
-| Audio model alias | `whisper-tiny` |
-| Exact audio model ID | `openai-whisper-tiny-generic-cpu:4` |
-| Audio model size | 131 MB |
+| Default audio model alias | `nemotron-speech-streaming-en-0.6b` |
+| Exact default audio model ID | `nemotron-speech-streaming-en-0.6b-generic-cpu:3` |
+| Default audio model size | 696 MB |
 | Audio device / EP | CPU / `CPUExecutionProvider` |
 | Audio language | English |
-| Audio path | record -> PCM16LE 16 kHz mono -> temp WAV URI -> native `AudioSession` |
-| Audio submission policy | editable draft; never auto-submit |
+| Default audio path | AudioWorklet -> PCM16LE 16 kHz mono -> typed bounded chunks -> native `AudioSession` PCM `ItemQueue` |
+| Explicit fallback | `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
+| Audio submission policy | live partials are display-only; final transcript is editable; never auto-submit |
 
 Qwen2.5 1.5B was the smallest cached model that passed the entire staged and adversarial acceptance.
 Qwen3 1.7B is smaller (1,421 MB) but failed the crib correction after three bounded attempts.
@@ -48,6 +49,7 @@ Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
+npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
@@ -61,7 +63,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 80/80 pass |
+| Unit tests | 13 files / 120 tests pass; Vitest reported 1.10 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron microphone permission probe | Pass |
@@ -76,23 +78,41 @@ npm run capture:ui
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
-| Real audio integration | Exact English transcript; 100% key-word recall |
-| Audio model/EP | Exact Whisper Tiny ID on CPU EP |
-| Audio transcription | 233 ms for 5.53-second deterministic WAV |
+| Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
+| Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
+| Nemotron timing | Cached prepare 6,037 ms; first partial 1,284 ms; stop-to-final 115 ms |
+| Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
+| Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
+| Whisper fallback timing | Cached prepare 5,073 ms; final transcription 239 ms |
+| Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
 | Reset timeout quarantine | Pass; late native turn is rolled back, controls remain blocked, and the session is replaced before readiness returns |
 | Audio temp cleanup | Pass; real integration capture files before/after both empty |
 | Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
 
+Final command wall-clock timings from the October 28 run:
+
+| Command | Result | Wall clock |
+|---|---|---:|
+| `npm run lint` | 55 files checked | 1,130 ms |
+| `npm run typecheck` | Pass | 3,457 ms |
+| `npm test` | 13 files / 120 tests; Vitest reported 1.10 s | 2,503 ms |
+| `npm run build` | Pass; 115 renderer modules | 4,597 ms |
+| `npm run smoke:electron` | Pass, including its required rebuild | 10,008 ms |
+| `npm run probe:microphone-permission` | Pass, including its required rebuild | 5,779 ms |
+| `npm run capture:ui` | Pass; 388,515-byte labeled screenshot, including rebuild | 10,420 ms |
+| `npm run test:audio-integration` | Pass | 6,701 ms |
+| `npm run test:nemotron-integration` | Pass | 13,492 ms |
+
 Observed turn durations on this machine:
 
 | Turn | Duration |
 |---|---:|
-| Queen + desk | 12.1 s |
-| King replacement | 22.0 s |
-| Add crib | 25.0 s |
-| Controlled failure | 30.2 s |
-| Adversarial correction | 33.9 s |
+| Queen + desk | 11.167 s |
+| King replacement | 19.068 s |
+| Add crib | 22.554 s |
+| Controlled failure | 25.766 s |
+| Adversarial correction | 29.263 s |
 
 The longer turns include one bounded correction request.
 
@@ -110,8 +130,11 @@ The longer turns include one bounded correction request.
 
 Pinned v2.2.1 API evidence:
 
+- Nemotron live input is implemented directly with the JS v2.2.1 `AudioSession`,
+  `Item.audioDescriptor("pcm", 16000, 1)`, borrowed `ItemQueue`, copied `Item.bytes(...)` frames,
+  `markFinished()`, streamed `SpeechSegment` items, and the terminal aggregate `SpeechResult`.
 - Whisper file transcription is covered by the JS `AudioSession` tests with
-  `Item.audioFromUri(...)` and `language: "en"`.
+  `Item.audioFromUri(...)` and `language: "en"` as an explicit fallback only.
 - Typed inline `Item.audioFromData("wav", bytes)` was measured and rejected by the v2.2.1 native
   runtime: inline audio without `ItemQueue` is not yet supported.
 - Nemotron streaming is covered by the pinned JS `AudioSession` PCM `ItemQueue` tests and live audio
@@ -121,38 +144,55 @@ Catalog and measured comparison:
 
 | Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
 |---|---|---|---:|---:|
-| `openai-whisper-tiny-generic-cpu:4` | Cached | 131 MB / CPU / CPU EP | 1,142 ms | 169–279 ms, exact |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 5,073 ms current cached prepare | 239 ms, exact |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Uncached | 696 MB / CPU / CPU EP | 2,699 ms | 932–971 ms buffered, exact except terminal punctuation |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 6,037 ms current cached prepare | 31 live revisions; first 1,284 ms; final 115 ms after stop; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
 
-Nemotron English was downloaded once under the authorized under-1-GB evaluation. A real-time PCM
-probe produced first text at 1,291 ms and final output 189 ms after the 5.53-second input ended. The
-app's UX is record-then-transcribe and does not display partial captions, so that streaming advantage
-did not materially improve the stage interaction. Whisper Tiny and Nemotron had comparable
-stop-to-final latency in the measured paths. Whisper Tiny was selected for its smaller footprint,
-cached availability, faster 169–279 ms buffered record-then-transcribe benchmark, and the absence of
-partial streaming in the UI. The rejected Nemotron benchmark model was removed from cache after
-measurement.
+Nemotron English was downloaded once under the authorized under-1-GB policy and remains in the
+shared cache as the stage default. The current real-time run produced 31 subtitle revisions, first
+text at 1,284 ms, and final output 115 ms after the 5.53-second input ended. The UI displays those
+partials only in **Live draft — not sent**. On Stop, it inserts only the terminal aggregate
+`SpeechResult` into Manual prompt. The user must click Send.
 
-Final real app-service audio integration:
+Whisper Tiny remains cached as the explicit smaller fallback. It records first and then returns one
+final transcript; it is never selected silently. The similarly named Nemotron 3.5 multilingual
+variant was not downloaded, and no Chinese/multilingual capability is claimed.
+
+Final real app-service Nemotron integration:
 
 | Item | Result |
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 2,013 ms |
+| Prepare manager/catalog/model | 6,037 ms, cached |
+| Partial revisions | 31 |
+| First partial | “Can” at 1,284 ms |
+| Final transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door” |
+| Key-word recall | 7/7 (100%) |
+| Stop-to-final | 115 ms |
+| Total paced stream | 6,058 ms |
+| Endpoint | in-process SDK only |
+
+Final real app-service Whisper fallback integration:
+
+| Item | Result |
+|---|---|
+| Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
+| Duration | 5,530 ms |
+| Prepare manager/catalog/model | 5,073 ms, cached |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 233 ms |
+| Transcription | 239 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 
 ## Offline and telemetry status
 
 - The selected model is in the shared local cache.
-- Whisper Tiny is in the shared cache and must also be loaded before the UI claims voice input is
-  offline-ready.
+- Nemotron English is in the shared cache and must be loaded before the UI claims default live voice
+  input is offline-ready.
+- Whisper Tiny is also cached but is loaded only after explicit fallback selection.
 - The required WebGPU EP bundle is installed and registered in the app data directory.
 - The default target is resolved by exact model ID from the full public catalog; cache-only alias
   fallback is not used.
@@ -162,8 +202,10 @@ Final real app-service audio integration:
   `FOUNDRY_EXECUTION_PROVIDER`; readiness marks them as environment overrides and does not imply
   stage validation.
 - A fresh process loaded the model and completed five turns.
-- A fresh process loaded Whisper Tiny and completed deterministic local ASR with no residual audio
-  file.
+- A fresh process loaded Nemotron and completed deterministic live PCM streaming with multiple
+  partials and a final transcript.
+- A separate fresh process explicitly loaded Whisper Tiny and completed deterministic fallback ASR
+  with no residual audio file.
 - The app does not configure `serviceEndpoint`, call `startWebService`, or make inference HTTP
   requests.
 - `disableNonessentialTelemetry` is enabled.
@@ -180,7 +222,7 @@ Final real app-service audio integration:
   performance are not validated.
 - A physical network-disconnect rehearsal still requires Wayne's manual adapter action.
 - Real microphone permission and human-spoken acceptance still require one Wayne interaction:
-  **Prepare microphone -> Start recording -> speak the Queen + desk request -> Stop & transcribe ->
-  verify/edit -> Send**.
+  **Prepare Nemotron live -> Start recording -> speak the Queen + desk request while confirming
+  partial revisions -> Stop -> verify/edit final transcript -> Send**.
 - The local CLI is `0.11.0` while current public CLI is `0.12.1 Preview`; the app does not depend on
   the CLI.

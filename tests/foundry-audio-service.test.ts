@@ -10,9 +10,18 @@ import {
   type Request,
   type RequestPreflightResult,
   type Response,
+  type StreamingResponse,
 } from "foundry-local-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AUDIO_MODEL_ALIAS, AUDIO_MODEL_ID, type ValidatedAudioCapture } from "../src/audio/audio-types";
+import {
+  AUDIO_STREAM_CHUNK_BYTES,
+  AUDIO_STREAM_MAX_QUEUED_CHUNKS,
+  NEMOTRON_AUDIO_MODEL_ALIAS,
+  NEMOTRON_AUDIO_MODEL_ID,
+  type ValidatedAudioCapture,
+  WHISPER_AUDIO_MODEL_ALIAS,
+  WHISPER_AUDIO_MODEL_ID,
+} from "../src/audio/audio-types";
 import { TempAudioStore } from "../src/audio/temp-audio-store";
 import { FoundryLayoutService } from "../src/foundry/foundry-service";
 import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry/runtime-config";
@@ -24,6 +33,7 @@ class FakeModel implements IModel {
   loadCalls = 0;
   unloadCalls = 0;
   loadGate: Promise<void> | null = null;
+  loadError: Error | null = null;
 
   constructor(
     readonly id: string,
@@ -106,6 +116,9 @@ class FakeModel implements IModel {
   async load(): Promise<void> {
     this.loadCalls += 1;
     await this.loadGate;
+    if (this.loadError !== null) {
+      throw this.loadError;
+    }
     this.loaded = true;
   }
 
@@ -139,17 +152,17 @@ class FakeManager {
 
   constructor(
     readonly chatModel: FakeModel,
-    readonly audioModel: FakeModel,
+    readonly audioModels: readonly FakeModel[],
   ) {
     this.catalog = {
       getModelVariant: async (id: string) => {
-        const model = [chatModel, audioModel].find((candidate) => candidate.id === id);
+        const model = [chatModel, ...audioModels].find((candidate) => candidate.id === id);
         if (model === undefined) {
           throw new Error(`Unknown model ${id}`);
         }
         return model;
       },
-      getCachedModels: async () => [chatModel, audioModel],
+      getCachedModels: async () => [chatModel, ...audioModels],
     };
   }
 
@@ -183,6 +196,20 @@ class FakeChatSession {
   dispose(): void {}
 }
 
+function speechResponse(): Response {
+  return {
+    finishReason: "stop",
+    usage: { promptTokens: 0, completionTokens: 1, totalTokens: 1 },
+    output: [
+      {
+        type: "speechResult",
+        text: "Can a queen size bed and a desk fit here?",
+        segments: [],
+      },
+    ],
+  };
+}
+
 class FakeAudioSession {
   disposed = false;
   disposeCalls = 0;
@@ -199,22 +226,57 @@ class FakeAudioSession {
     if (this.error !== null) {
       throw this.error;
     }
+
+    return speechResponse();
+  }
+
+  processStreamingRequest(): StreamingResponse {
+    const response = Promise.resolve(speechResponse());
     return {
-      finishReason: "stop",
-      usage: { promptTokens: 0, completionTokens: 1, totalTokens: 1 },
-      output: [
-        {
-          type: "speechResult",
-          text: "Can a queen size bed and a desk fit here?",
-          segments: [],
-        },
-      ],
+      response,
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: "speechSegment",
+          kind: "partial",
+          text: "Can a queen",
+          utteranceStart: true,
+          words: [],
+        } as const;
+        yield {
+          type: "speechSegment",
+          kind: "partial",
+          text: "Can a queen size bed",
+          utteranceStart: false,
+          words: [],
+        } as const;
+      },
     };
   }
 
   dispose(): void {
     this.disposeCalls += 1;
     this.disposed = true;
+  }
+}
+
+class GatedStreamingAudioSession extends FakeAudioSession {
+  constructor(
+    readonly streamGate: Promise<void>,
+    readonly streamStarted: (() => void) | null = null,
+  ) {
+    super(null);
+  }
+
+  override processStreamingRequest(): StreamingResponse {
+    this.streamStarted?.();
+    const gate = this.streamGate;
+    return {
+      response: gate.then(() => speechResponse()),
+      async *[Symbol.asyncIterator]() {
+        await gate;
+        yield { type: "text", text: "" } as const;
+      },
+    };
   }
 }
 
@@ -246,14 +308,22 @@ async function createFixture(options: FixtureOptions = {}) {
     1546,
   );
   const audioModel = new FakeModel(
-    AUDIO_MODEL_ID,
-    AUDIO_MODEL_ALIAS,
+    WHISPER_AUDIO_MODEL_ID,
+    WHISPER_AUDIO_MODEL_ALIAS,
     "automatic-speech-recognition",
     "CPUExecutionProvider",
     false,
     131,
   );
-  const manager = new FakeManager(chatModel, audioModel);
+  const nemotronModel = new FakeModel(
+    NEMOTRON_AUDIO_MODEL_ID,
+    NEMOTRON_AUDIO_MODEL_ALIAS,
+    "automatic-speech-recognition",
+    "CPUExecutionProvider",
+    false,
+    696,
+  );
+  const manager = new FakeManager(chatModel, [audioModel, nemotronModel]);
   const audioSession = options.audioSession ?? new FakeAudioSession(options.audioError ?? null);
   const service = new FoundryLayoutService({
     resolvePaths: async () => {
@@ -276,7 +346,7 @@ async function createFixture(options: FixtureOptions = {}) {
       ? {}
       : { operationDrainTimeoutMs: options.operationDrainTimeoutMs }),
   });
-  return { service, store, audioModel, audioSession, manager, root };
+  return { service, store, audioModel, nemotronModel, audioSession, manager, root };
 }
 
 const capture: ValidatedAudioCapture = {
@@ -322,11 +392,11 @@ describe("Foundry audio service cleanup", () => {
 
   it("transcribes with the exact audio model and deletes the temporary WAV", async () => {
     const { service, store } = await createFixture();
-    const readiness = await service.prepareAudioOffline();
+    const readiness = await service.prepareAudioOffline("whisper_file");
     expect(readiness).toMatchObject({
       localAudioReady: true,
       model: {
-        id: AUDIO_MODEL_ID,
+        id: WHISPER_AUDIO_MODEL_ID,
         executionProvider: "CPUExecutionProvider",
       },
     });
@@ -342,7 +412,7 @@ describe("Foundry audio service cleanup", () => {
     const { service, store } = await createFixture({
       audioError: new Error("native ASR failure"),
     });
-    await service.prepareAudioOffline();
+    await service.prepareAudioOffline("whisper_file");
     await expect(service.transcribeAudio(capture)).rejects.toThrow("native ASR failure");
     expect(store.activeCount).toBe(0);
     await service.shutdown();
@@ -350,7 +420,7 @@ describe("Foundry audio service cleanup", () => {
 
   it("unloads the audio model and removes tracked captures on reset", async () => {
     const { service, store, audioModel } = await createFixture();
-    await service.prepareAudioOffline();
+    await service.prepareAudioOffline("whisper_file");
     await store.createWav(new Uint8Array([0, 0]));
     expect(audioModel.loaded).toBe(true);
     expect(store.activeCount).toBe(1);
@@ -368,8 +438,8 @@ describe("Foundry audio service cleanup", () => {
     const loadGate = deferred();
     audioModel.loadGate = loadGate.promise;
 
-    const firstPreparation = service.prepareAudioOffline();
-    const secondPreparation = service.prepareAudioOffline();
+    const firstPreparation = service.prepareAudioOffline("whisper_file");
+    const secondPreparation = service.prepareAudioOffline("whisper_file");
     expect(secondPreparation).toBe(firstPreparation);
     const preparationOutcomes = Promise.allSettled([firstPreparation, secondPreparation]);
 
@@ -393,7 +463,7 @@ describe("Foundry audio service cleanup", () => {
     const loadGate = deferred();
     audioModel.loadGate = loadGate.promise;
 
-    const preparation = service.prepareAudioOffline();
+    const preparation = service.prepareAudioOffline("whisper_file");
     const preparationOutcome = Promise.allSettled([preparation]);
     await vi.waitFor(() => expect(audioModel.loadCalls).toBe(1));
 
@@ -418,7 +488,7 @@ describe("Foundry audio service cleanup", () => {
     });
 
     const startup = service.initialize();
-    const audioPreparation = service.prepareAudioOffline();
+    const audioPreparation = service.prepareAudioOffline("whisper_file");
     pathsGate.resolve();
 
     await Promise.all([startup, audioPreparation]);
@@ -435,7 +505,7 @@ describe("Foundry audio service cleanup", () => {
       audioSession,
       operationDrainTimeoutMs: 1_000,
     });
-    await service.prepareAudioOffline();
+    await service.prepareAudioOffline("whisper_file");
 
     const transcriptionOutcome = Promise.allSettled([service.transcribeAudio(capture)]);
     await processStarted.promise;
@@ -467,7 +537,7 @@ describe("Foundry audio service cleanup", () => {
           },
         }),
     });
-    await service.prepareAudioOffline();
+    await service.prepareAudioOffline("whisper_file");
     await store.createWav(new Uint8Array([0, 0]));
 
     await expect(service.reset()).rejects.toMatchObject({ code: "EPERM" });
@@ -499,7 +569,7 @@ describe("Foundry audio service cleanup", () => {
           },
         }),
     });
-    await service.prepareAudioOffline();
+    await service.prepareAudioOffline("whisper_file");
 
     const transcriptionOutcome = Promise.allSettled([service.transcribeAudio(capture)]);
     await processStarted.promise;
@@ -520,6 +590,302 @@ describe("Foundry audio service cleanup", () => {
     processGate.resolve();
     expect((await transcriptionOutcome)[0]?.status).toBe("rejected");
     await vi.waitFor(() => expect(store.activeCount).toBe(0));
+    await service.shutdown();
+  });
+});
+
+describe("Nemotron streaming audio service", () => {
+  it("requires explicit Nemotron preparation before a live microphone stream", async () => {
+    const { service, nemotronModel } = await createFixture();
+
+    await expect(service.startAudioStream(() => {})).rejects.toMatchObject({
+      code: "AUDIO_NOT_READY",
+    });
+    expect(nemotronModel.loadCalls).toBe(0);
+    await service.shutdown();
+  });
+
+  it("uses the exact English Nemotron CPU model as the default audio mode", async () => {
+    const { service, nemotronModel, audioModel } = await createFixture();
+
+    const readiness = await service.prepareAudioOffline();
+
+    expect(readiness).toMatchObject({
+      activeMode: "nemotron_streaming",
+      localAudioReady: true,
+      model: {
+        id: NEMOTRON_AUDIO_MODEL_ID,
+        executionProvider: "CPUExecutionProvider",
+        language: "en",
+      },
+    });
+    expect(nemotronModel.loadCalls).toBe(1);
+    expect(audioModel.loadCalls).toBe(0);
+    await service.shutdown();
+  });
+
+  it("emits replaced partials and a final reviewed transcript", async () => {
+    const { service } = await createFixture();
+    const readiness = await service.prepareAudioOffline("nemotron_streaming");
+    expect(readiness).toMatchObject({
+      activeMode: "nemotron_streaming",
+      localAudioReady: true,
+      model: { id: NEMOTRON_AUDIO_MODEL_ID },
+    });
+
+    const partials: string[] = [];
+    const stream = await service.startAudioStream((event) => partials.push(event.text));
+    for (let sequence = 0; sequence < 3; sequence += 1) {
+      expect(service.appendAudioStreamChunk(stream.streamId, sequence, new Uint8Array(3200))).toMatchObject({
+        acceptedSequence: sequence,
+      });
+    }
+    const result = await service.finishAudioStream({
+      streamId: stream.streamId,
+      lastSequence: 2,
+      audioDurationMs: 300,
+    });
+
+    expect(partials).toEqual(["Can a queen", "Can a queen size bed"]);
+    expect(result).toMatchObject({
+      transcript: "Can a queen size bed and a desk fit here?",
+      mode: "nemotron_streaming",
+      transcriptSource: "live_stream_final",
+      model: { id: NEMOTRON_AUDIO_MODEL_ID },
+      externalEndpointUsed: false,
+    });
+    expect(result.firstPartialMs).not.toBeNull();
+    await service.shutdown();
+  });
+
+  it("enforces chunk shape and a bounded native input queue", async () => {
+    const { service } = await createFixture();
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+
+    expect(() =>
+      service.appendAudioStreamChunk(stream.streamId, 0, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES + 2)),
+    ).toThrow("complete PCM bytes");
+
+    for (let sequence = 0; sequence < AUDIO_STREAM_MAX_QUEUED_CHUNKS; sequence += 1) {
+      expect(
+        service.appendAudioStreamChunk(stream.streamId, sequence, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES)),
+      ).toMatchObject({ acceptedSequence: sequence });
+    }
+    expect(() =>
+      service.appendAudioStreamChunk(
+        stream.streamId,
+        AUDIO_STREAM_MAX_QUEUED_CHUNKS,
+        new Uint8Array(AUDIO_STREAM_CHUNK_BYTES),
+      ),
+    ).toThrow("backpressure capacity");
+
+    await service.cancelAudioStream(stream.streamId);
+    await service.shutdown();
+  });
+
+  it("cancels and disposes a stream when finalization input is invalid", async () => {
+    const { service, audioSession } = await createFixture();
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+    for (let sequence = 0; sequence < 3; sequence += 1) {
+      service.appendAudioStreamChunk(stream.streamId, sequence, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES));
+    }
+
+    await expect(
+      service.finishAudioStream({
+        streamId: stream.streamId,
+        lastSequence: 1,
+        audioDurationMs: 300,
+      }),
+    ).rejects.toThrow("Expected final audio sequence 2");
+
+    expect(audioSession.disposed).toBe(true);
+    expect(() =>
+      service.appendAudioStreamChunk(stream.streamId, 3, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES)),
+    ).toThrow("not active");
+    await service.shutdown();
+  });
+
+  it("derives stream duration from accepted PCM bytes instead of trusting the renderer", async () => {
+    const { service } = await createFixture();
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+    for (let sequence = 0; sequence < 3; sequence += 1) {
+      service.appendAudioStreamChunk(stream.streamId, sequence, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES));
+    }
+
+    await expect(
+      service.finishAudioStream({
+        streamId: stream.streamId,
+        lastSequence: 2,
+        audioDurationMs: 301,
+      }),
+    ).rejects.toThrow("does not match");
+    await service.shutdown();
+  });
+
+  it("rejects stale chunks as soon as finalization starts", async () => {
+    const streamGate = deferred();
+    const audioSession = new GatedStreamingAudioSession(streamGate.promise);
+    const { service } = await createFixture({ audioSession });
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+    for (let sequence = 0; sequence < 3; sequence += 1) {
+      service.appendAudioStreamChunk(stream.streamId, sequence, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES));
+    }
+
+    const finalization = service.finishAudioStream({
+      streamId: stream.streamId,
+      lastSequence: 2,
+      audioDurationMs: 300,
+    });
+    expect(() =>
+      service.appendAudioStreamChunk(stream.streamId, 3, new Uint8Array(AUDIO_STREAM_CHUNK_BYTES)),
+    ).toThrow("no longer accepts chunks");
+
+    streamGate.resolve();
+    await expect(finalization).resolves.toMatchObject({
+      transcriptSource: "live_stream_final",
+    });
+    await service.shutdown();
+  });
+
+  it("waits for native stream settlement before explicit cancellation cleanup", async () => {
+    const streamGate = deferred();
+    const audioSession = new GatedStreamingAudioSession(streamGate.promise);
+    const { service } = await createFixture({
+      audioSession,
+      operationDrainTimeoutMs: 1_000,
+    });
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+
+    const cancellation = service.cancelAudioStream(stream.streamId);
+    await Promise.resolve();
+    expect(audioSession.disposed).toBe(false);
+
+    streamGate.resolve();
+    await cancellation;
+    expect(audioSession.disposed).toBe(true);
+    expect(service.audioReadiness).toMatchObject({
+      status: "ready",
+      localAudioReady: true,
+      activeMode: "nemotron_streaming",
+    });
+    await service.shutdown();
+  });
+
+  it("bounds explicit cancellation and leaves the stream for reset recovery", async () => {
+    const streamGate = deferred();
+    const audioSession = new GatedStreamingAudioSession(streamGate.promise);
+    const { service } = await createFixture({
+      audioSession,
+      operationDrainTimeoutMs: 5,
+    });
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+
+    await expect(service.cancelAudioStream(stream.streamId)).rejects.toThrow(
+      "audio cancellation could not safely stop active native operations",
+    );
+    expect(service.audioReadiness).toMatchObject({
+      status: "error",
+      localAudioReady: false,
+    });
+    expect(service.audioReadiness.fallbackReason).toContain("cancellation");
+    expect(audioSession.disposed).toBe(false);
+
+    streamGate.resolve();
+    await vi.waitFor(() => expect(audioSession.disposed).toBe(true));
+    await service.shutdown();
+  });
+
+  it("bounds a stalled stream reset and recovers after native settlement", async () => {
+    const streamGate = deferred();
+    const audioSession = new GatedStreamingAudioSession(streamGate.promise);
+    const { service, nemotronModel } = await createFixture({
+      audioSession,
+      operationDrainTimeoutMs: 20,
+    });
+    await service.prepareAudioOffline("nemotron_streaming");
+    await service.startAudioStream(() => {});
+
+    await expect(service.reset()).rejects.toThrow("could not safely stop active native operations");
+    expect(audioSession.disposed).toBe(false);
+    expect(service.readiness.status).toBe("recovering");
+
+    streamGate.resolve();
+    await vi.waitFor(() => {
+      expect(audioSession.disposed).toBe(true);
+      expect(nemotronModel.loaded).toBe(false);
+      expect(service.audioReadiness.status).toBe("not_initialized");
+      expect(service.readiness.status).not.toBe("recovering");
+    });
+    await service.shutdown();
+  });
+
+  it.each(["reset", "shutdown"] as const)(
+    "waits for native stream settlement during %s",
+    async (lifecycle) => {
+      const streamGate = deferred();
+      const audioSession = new GatedStreamingAudioSession(streamGate.promise);
+      const { service, nemotronModel } = await createFixture({
+        audioSession,
+        operationDrainTimeoutMs: 1_000,
+      });
+      await service.prepareAudioOffline("nemotron_streaming");
+      await service.startAudioStream(() => {});
+
+      const cleanup = lifecycle === "reset" ? service.resetAudio() : service.shutdown();
+      await Promise.resolve();
+      expect(audioSession.disposed).toBe(false);
+
+      streamGate.resolve();
+      await cleanup;
+      expect(audioSession.disposed).toBe(true);
+      expect(nemotronModel.loaded).toBe(false);
+      if (lifecycle === "reset") {
+        await service.shutdown();
+      }
+    },
+  );
+
+  it("rejects out-of-order chunks and cancels safely on reset", async () => {
+    const { service, audioSession, nemotronModel } = await createFixture();
+    await service.prepareAudioOffline("nemotron_streaming");
+    const stream = await service.startAudioStream(() => {});
+    expect(() => service.appendAudioStreamChunk(stream.streamId, 1, new Uint8Array(3200))).toThrow(
+      "Expected audio chunk 0",
+    );
+
+    await service.resetAudio();
+
+    expect(nemotronModel.loaded).toBe(false);
+    expect(audioSession.disposed).toBe(true);
+    expect(service.audioReadiness.status).toBe("not_initialized");
+    await service.shutdown();
+  });
+
+  it("labels Nemotron failure and switches only after explicit Whisper preparation", async () => {
+    const { service, nemotronModel, audioModel } = await createFixture();
+    nemotronModel.loadError = new Error("Nemotron load failed");
+
+    await expect(service.prepareAudioOffline("nemotron_streaming")).rejects.toThrow("Nemotron load failed");
+    expect(service.audioReadiness).toMatchObject({
+      status: "error",
+      fallbackAvailable: true,
+    });
+    expect(service.audioReadiness.fallbackReason).toContain("Nemotron");
+    expect(audioModel.loadCalls).toBe(0);
+
+    const fallback = await service.prepareAudioOffline("whisper_file");
+    expect(fallback).toMatchObject({
+      activeMode: "whisper_file",
+      localAudioReady: true,
+      model: { id: WHISPER_AUDIO_MODEL_ID },
+    });
+    expect(fallback.fallbackReason).toContain("Nemotron");
     await service.shutdown();
   });
 });

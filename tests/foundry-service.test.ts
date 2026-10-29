@@ -180,11 +180,13 @@ class GatedSession {
   turnCount = 0;
   disposed = false;
   disposeCalls = 0;
+  processCalls = 0;
 
   constructor(
     readonly toolInput: unknown,
     readonly processGate: Promise<void>,
     readonly processStarted: () => void,
+    readonly finishReason: Response["finishReason"] = "stop",
   ) {}
 
   async preflightRequest(_request: Request): Promise<RequestPreflightResult> {
@@ -201,9 +203,10 @@ class GatedSession {
   async processRequest(_request: Request): Promise<Response> {
     this.processStarted();
     await this.processGate;
+    this.processCalls += 1;
     this.turnCount += 1;
     return {
-      finishReason: "stop",
+      finishReason: this.finishReason,
       usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 },
       output: [{ type: "text", text: JSON.stringify(this.toolInput) }],
     };
@@ -388,6 +391,37 @@ describe("Foundry runtime target configuration", () => {
 });
 
 describe("Foundry offline preparation", () => {
+  it("never executes JSON returned with a truncated length finish reason", async () => {
+    const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
+    const manager = new FakeManager(model, true);
+    const state = createInitialDemoState();
+    const prompt = "Can a Queen bed and a standard desk fit?";
+    const session = new GatedSession(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: prompt,
+      }),
+      Promise.resolve(),
+      () => {},
+      "length",
+    );
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createSession: () => session,
+    });
+    await service.prepareOffline();
+
+    await expect(service.runTurn(prompt, state)).rejects.toMatchObject<Partial<FoundryRuntimeError>>({
+      code: "INVALID_TOOL_CALL",
+      message: expect.stringContaining("partial JSON is never executed"),
+    });
+    expect(session.processCalls).toBe(3);
+    expect(session.turnCount).toBe(0);
+    await service.shutdown();
+  });
+
   it("single-flights concurrent initialization and disposes the manager once", async () => {
     const model = new FakeModel(VALIDATED_MODEL_ID, "qwen2.5-1.5b", VALIDATED_EXECUTION_PROVIDER, true);
     const manager = new FakeManager(model);

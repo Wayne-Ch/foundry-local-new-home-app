@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { extractPcm16FromWav } from "../src/audio/audio-contract";
-import { TempAudioStore, withTemporaryWav } from "../src/audio/temp-audio-store";
+import {
+  TEMP_AUDIO_FILE_MODE,
+  TempAudioStore,
+  type TempAudioWriteOptions,
+  withTemporaryWav,
+} from "../src/audio/temp-audio-store";
 
 const tempRoots: string[] = [];
 
@@ -30,6 +35,24 @@ describe("temporary audio cleanup", () => {
     expect(result).toBe("transcript");
     await expect(readFile(capturedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(store.activeCount).toBe(0);
+  });
+
+  it("requests owner-only permissions for every temporary microphone WAV", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "new-home-audio-test-"));
+    tempRoots.push(root);
+    let writeOptions: TempAudioWriteOptions | undefined;
+    const store = new TempAudioStore(root, {
+      createId: () => "private-capture",
+      write: async (filePath, data, options) => {
+        writeOptions = options;
+        await writeFile(filePath, data, options);
+      },
+    });
+
+    const filePath = await store.createWav(new Uint8Array([0, 0]));
+
+    expect(writeOptions).toEqual({ mode: TEMP_AUDIO_FILE_MODE });
+    await store.remove(filePath);
   });
 
   it("deletes the temporary WAV after transcription errors", async () => {

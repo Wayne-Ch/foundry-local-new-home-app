@@ -1,4 +1,16 @@
-import type { AudioCapturePayload, AudioReadiness, AudioTranscriptionResult } from "../audio/audio-types";
+import type {
+  AudioCapturePayload,
+  AudioPartialTranscriptEvent,
+  AudioReadiness,
+  AudioStreamCancelRequest,
+  AudioStreamChunkRequest,
+  AudioStreamChunkResponse,
+  AudioStreamFinishRequest,
+  AudioStreamStartRequest,
+  AudioStreamStartResponse,
+  AudioTranscriptionResult,
+  PrepareAudioRequest,
+} from "../audio/audio-types";
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
@@ -13,6 +25,11 @@ export const ipcChannels = {
   initializeRuntime: "demo:initialize-runtime",
   prepareOffline: "demo:prepare-offline",
   prepareAudio: "demo:prepare-audio",
+  startAudioStream: "demo:start-audio-stream",
+  appendAudioChunk: "demo:append-audio-chunk",
+  finishAudioStream: "demo:finish-audio-stream",
+  cancelAudioStream: "demo:cancel-audio-stream",
+  audioPartial: "demo:audio-partial",
   authorizeMicrophone: "demo:authorize-microphone",
   transcribeAudio: "demo:transcribe-audio",
   runTurn: "demo:run-turn",
@@ -115,10 +132,15 @@ export interface DemoApi {
   getBootstrap(): Promise<BootstrapPayload>;
   initializeRuntime(): Promise<RuntimeReadiness>;
   prepareOffline(): Promise<PrepareOfflineResponse>;
-  prepareAudio(): Promise<PrepareAudioResponse>;
+  prepareAudio(request: PrepareAudioRequest): Promise<PrepareAudioResponse>;
   authorizeMicrophone(): Promise<void>;
   transcribeAudio(request: AudioCapturePayload): Promise<AudioTranscriptionResponse>;
+  startAudioStream(request: AudioStreamStartRequest): Promise<AudioStreamStartResponse>;
+  appendAudioChunk(request: AudioStreamChunkRequest): Promise<AudioStreamChunkResponse>;
+  finishAudioStream(request: AudioStreamFinishRequest): Promise<AudioTranscriptionResponse>;
+  cancelAudioStream(request: AudioStreamCancelRequest): Promise<void>;
   runTurn(request: RunTurnRequest): Promise<RunTurnResponse>;
   resetConversation(): Promise<BootstrapPayload>;
   onProgress(callback: (event: ProgressEvent) => void): () => void;
+  onAudioPartial(callback: (event: AudioPartialTranscriptEvent) => void): () => void;
 }

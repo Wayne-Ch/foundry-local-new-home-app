@@ -1,5 +1,15 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AudioCapturePayload } from "../audio/audio-types";
+import type {
+  AudioCapturePayload,
+  AudioPartialTranscriptEvent,
+  AudioStreamCancelRequest,
+  AudioStreamChunkRequest,
+  AudioStreamChunkResponse,
+  AudioStreamFinishRequest,
+  AudioStreamStartRequest,
+  AudioStreamStartResponse,
+  PrepareAudioRequest,
+} from "../audio/audio-types";
 import type { RuntimeReadiness } from "../domain/types";
 import {
   type AudioTranscriptionResponse,
@@ -18,7 +28,8 @@ const api: DemoApi = {
   getBootstrap: () => ipcRenderer.invoke(ipcChannels.getBootstrap) as Promise<BootstrapPayload>,
   initializeRuntime: () => ipcRenderer.invoke(ipcChannels.initializeRuntime) as Promise<RuntimeReadiness>,
   prepareOffline: () => ipcRenderer.invoke(ipcChannels.prepareOffline) as Promise<PrepareOfflineResponse>,
-  prepareAudio: () => ipcRenderer.invoke(ipcChannels.prepareAudio) as Promise<PrepareAudioResponse>,
+  prepareAudio: (request: PrepareAudioRequest) =>
+    ipcRenderer.invoke(ipcChannels.prepareAudio, request) as Promise<PrepareAudioResponse>,
   authorizeMicrophone: () => {
     const request: MicrophoneAuthorizationRequest = {
       hasTransientUserActivation: navigator.userActivation.isActive,
@@ -27,6 +38,14 @@ const api: DemoApi = {
   },
   transcribeAudio: (request: AudioCapturePayload) =>
     ipcRenderer.invoke(ipcChannels.transcribeAudio, request) as Promise<AudioTranscriptionResponse>,
+  startAudioStream: (request: AudioStreamStartRequest) =>
+    ipcRenderer.invoke(ipcChannels.startAudioStream, request) as Promise<AudioStreamStartResponse>,
+  appendAudioChunk: (request: AudioStreamChunkRequest) =>
+    ipcRenderer.invoke(ipcChannels.appendAudioChunk, request) as Promise<AudioStreamChunkResponse>,
+  finishAudioStream: (request: AudioStreamFinishRequest) =>
+    ipcRenderer.invoke(ipcChannels.finishAudioStream, request) as Promise<AudioTranscriptionResponse>,
+  cancelAudioStream: (request: AudioStreamCancelRequest) =>
+    ipcRenderer.invoke(ipcChannels.cancelAudioStream, request) as Promise<void>,
   runTurn: (request: RunTurnRequest) =>
     ipcRenderer.invoke(ipcChannels.runTurn, request) as Promise<RunTurnResponse>,
   resetConversation: () => ipcRenderer.invoke(ipcChannels.resetConversation) as Promise<BootstrapPayload>,
@@ -36,6 +55,13 @@ const api: DemoApi = {
     };
     ipcRenderer.on(ipcChannels.progress, listener);
     return () => ipcRenderer.removeListener(ipcChannels.progress, listener);
+  },
+  onAudioPartial: (callback: (event: AudioPartialTranscriptEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, partial: AudioPartialTranscriptEvent) => {
+      callback(partial);
+    };
+    ipcRenderer.on(ipcChannels.audioPartial, listener);
+    return () => ipcRenderer.removeListener(ipcChannels.audioPartial, listener);
   },
 };
 

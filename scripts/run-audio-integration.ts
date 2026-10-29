@@ -7,7 +7,12 @@ import {
   extractPcm16FromWav,
   validateAudioCapturePayload,
 } from "../src/audio/audio-contract";
-import { AUDIO_CHANNELS, AUDIO_FORMAT, AUDIO_MODEL_ID, AUDIO_SAMPLE_RATE } from "../src/audio/audio-types";
+import {
+  AUDIO_CHANNELS,
+  AUDIO_FORMAT,
+  AUDIO_SAMPLE_RATE,
+  WHISPER_AUDIO_MODEL_ID,
+} from "../src/audio/audio-types";
 import { FoundryLayoutService } from "../src/foundry/foundry-service";
 import { resolveFoundryPaths } from "../src/foundry/paths";
 
@@ -36,13 +41,13 @@ const beforeFiles = new Set(await listCaptureFiles(paths.audioTempDir));
 const service = new FoundryLayoutService();
 try {
   const preparationStarted = performance.now();
-  const readiness = await service.prepareAudioOffline((detail) => {
+  const readiness = await service.prepareAudioOffline("whisper_file", (detail) => {
     process.stdout.write(`\rAudio runtime: ${detail.padEnd(96).slice(0, 96)}`);
   });
   process.stdout.write("\n");
   const preparationMs = Math.round(performance.now() - preparationStarted);
   assert.equal(readiness.localAudioReady, true, readiness.detail);
-  assert.equal(readiness.model?.id, AUDIO_MODEL_ID);
+  assert.equal(readiness.model?.id, WHISPER_AUDIO_MODEL_ID);
   assert.equal(readiness.model?.executionProvider, "CPUExecutionProvider");
   assert.equal(readiness.externalEndpointUsed, false);
 
@@ -54,7 +59,7 @@ try {
     recall >= 0.85,
     `Expected at least 85% key-word recall. Matched ${matchedWords.join(", ")} from: ${result.transcript}`,
   );
-  assert.equal(result.model.id, AUDIO_MODEL_ID);
+  assert.equal(result.model.id, WHISPER_AUDIO_MODEL_ID);
   assert.equal(result.externalEndpointUsed, false);
   assert.ok(result.transcriptionMs < 5000, `Transcription took ${result.transcriptionMs} ms.`);
 

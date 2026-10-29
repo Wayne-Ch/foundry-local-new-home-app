@@ -1,6 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { validateAudioCapturePayload } from "../audio/audio-contract";
-import type { AudioCapturePayload } from "../audio/audio-types";
+import {
+  validateAudioCapturePayload,
+  validateAudioStreamCancel,
+  validateAudioStreamChunk,
+  validateAudioStreamFinish,
+  validateAudioStreamStart,
+  validatePrepareAudioRequest,
+} from "../audio/audio-contract";
+import type {
+  AudioCapturePayload,
+  AudioPartialTranscriptEvent,
+  AudioStreamCancelRequest,
+  AudioStreamChunkRequest,
+  AudioStreamChunkResponse,
+  AudioStreamFinishRequest,
+  AudioStreamStartRequest,
+  AudioStreamStartResponse,
+  PrepareAudioRequest,
+} from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import type { DemoState, EvaluatedLayoutOption } from "../domain/types";
@@ -39,6 +56,10 @@ type DemoFoundryService = Pick<
   | "prepareOffline"
   | "prepareAudioOffline"
   | "transcribeAudio"
+  | "startAudioStream"
+  | "appendAudioStreamChunk"
+  | "finishAudioStream"
+  | "cancelAudioStream"
   | "runTurn"
   | "reset"
   | "shutdown"
@@ -100,9 +121,13 @@ export class DemoController {
     return { readiness, model: readiness.model };
   }
 
-  async prepareAudio(onProgress?: (event: ProgressEvent) => void): Promise<PrepareAudioResponse> {
+  async prepareAudio(
+    request: PrepareAudioRequest,
+    onProgress?: (event: ProgressEvent) => void,
+  ): Promise<PrepareAudioResponse> {
     const generation = this.#beginOperation();
-    const readiness = await this.#foundry.prepareAudioOffline((detail) => {
+    const validated = validatePrepareAudioRequest(request);
+    const readiness = await this.#foundry.prepareAudioOffline(validated.mode, (detail) => {
       if (this.#isOperationCurrent(generation)) {
         onProgress?.({ phase: "audio-preparing", detail });
       }
@@ -110,6 +135,60 @@ export class DemoController {
     this.#assertOperationCurrent(generation);
     this.#pushTrace("runtime", "Audio runtime prepared", readiness);
     return { readiness };
+  }
+
+  async startAudioStream(
+    request: AudioStreamStartRequest,
+    onPartial: (event: AudioPartialTranscriptEvent) => void,
+  ): Promise<AudioStreamStartResponse> {
+    validateAudioStreamStart(request);
+    const generation = this.#beginOperation();
+    return this.#foundry.startAudioStream((event) => {
+      if (this.#isOperationCurrent(generation)) {
+        onPartial(event);
+      }
+    });
+  }
+
+  appendAudioStreamChunk(request: AudioStreamChunkRequest): AudioStreamChunkResponse {
+    const validated = validateAudioStreamChunk(request);
+    return this.#foundry.appendAudioStreamChunk(validated.streamId, validated.sequence, validated.pcmBytes);
+  }
+
+  async finishAudioStream(
+    request: AudioStreamFinishRequest,
+    onProgress?: (event: ProgressEvent) => void,
+  ): Promise<AudioTranscriptionResponse> {
+    const generation = this.#beginOperation();
+    const validated = validateAudioStreamFinish(request);
+    if (this.#isOperationCurrent(generation)) {
+      onProgress?.({ phase: "audio-transcribing", detail: "Finalizing Nemotron live captions." });
+    }
+    const result = await this.#foundry.finishAudioStream(validated);
+    this.#assertOperationCurrent(generation);
+    this.#pushTrace("audio-transcription", "Nemotron live caption result", {
+      transcript: result.transcript,
+      transcriptionMs: result.transcriptionMs,
+      audioDurationMs: result.audioDurationMs,
+      firstPartialMs: result.firstPartialMs,
+      finalizationMs: result.finalizationMs,
+      transcriptSource: result.transcriptSource,
+      mode: result.mode,
+      model: result.model,
+      externalEndpointUsed: result.externalEndpointUsed,
+      autoSubmitted: false,
+    });
+    onProgress?.({ phase: "complete", detail: "Final transcript is ready for review." });
+    return {
+      result,
+      audioReadiness: this.#foundry.audioReadiness,
+      trace: this.#trace,
+    };
+  }
+
+  async cancelAudioStream(request: AudioStreamCancelRequest): Promise<void> {
+    const validated = validateAudioStreamCancel(request);
+    await this.#foundry.cancelAudioStream(validated.streamId);
   }
 
   async transcribeAudio(
@@ -134,6 +213,10 @@ export class DemoController {
         transcriptionMs: result.transcriptionMs,
         audioDurationMs: result.audioDurationMs,
         model: result.model,
+        mode: result.mode,
+        transcriptSource: result.transcriptSource,
+        firstPartialMs: result.firstPartialMs,
+        finalizationMs: result.finalizationMs,
         externalEndpointUsed: result.externalEndpointUsed,
         autoSubmitted: false,
       });

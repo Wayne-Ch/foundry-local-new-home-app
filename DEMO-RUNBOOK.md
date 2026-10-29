@@ -15,9 +15,12 @@ Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
+npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:microphone-permission
+npm run capture:ui
 npm run start:built
 ```
 
@@ -34,18 +37,28 @@ In the app:
    - model cached, EP registered, local inference ready;
    - external endpoint used: `false`;
    - planning mode: runtime-guided JSON Schema to app tool invocation.
-4. Select **Prepare microphone** and confirm the separate voice badge shows
-   `whisper-tiny · CPU`.
+4. Select **Prepare Nemotron live** and confirm the separate voice badge shows the exact
+   `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
+   Confirm the separately labeled Whisper Tiny record-then-transcribe fallback is visible, but do
+   not select it for the default stage flow.
 5. In **Runtime + locked state**, confirm audio readiness identifies
-   `openai-whisper-tiny-generic-cpu:4`, CPU EP, English, and no external endpoint. The
-   **Speech-to-text** pane remains empty until a voice turn is transcribed.
+   `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, streaming PCM `ItemQueue`,
+   and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
+   produced; live revisions remain in the explicitly labeled draft panel.
 6. Select **Reset**, then load both models again. Reset intentionally unloads the audio model and
-   deletes tracked captures. If native work exceeds the reset bound, the UI stays quarantined until
-   automatic session replacement succeeds or a later explicit Reset succeeds.
+   settles/disposes an active stream and deletes tracked Whisper fallback captures. If native work
+   exceeds the reset bound, the UI stays quarantined until automatic session replacement succeeds
+   or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 
-Observed integration timings on the validated laptop were 11–31 seconds per turn, including bounded
-correction attempts. Do not start the first inference while still delivering setup remarks.
+Observed integration timings on the validated laptop were 11.167–29.263 seconds per turn, including
+bounded correction attempts. The preflight suite passed 13 test files / 120 tests in Vitest's
+reported 1.10 seconds. Do not start the first inference while still delivering setup remarks.
+
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,284 ms,
+stop-to-final at 115 ms, and 6,037 ms cached preparation. The explicit Whisper fallback prepared in
+5,073 ms and transcribed the same fixture in 239 ms. Treat these as machine-specific preflight
+evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow
 
@@ -53,8 +66,9 @@ correction attempts. Do not start the first inference while still delivering set
 
 Before the audience arrives:
 
-1. Start the actual Electron app and load both the layout and audio models.
-2. Rehearse one real voice Turn A and verify the transcript before clicking Send.
+1. Start the actual Electron app and load the layout model plus Nemotron.
+2. Rehearse one real voice Turn A. Confirm multiple partial revisions appear while speaking, select
+   **Stop**, and verify the final transcript in Manual prompt before clicking **Send**.
 3. Run Turn B and Turn C with typed/scripted input.
 4. Capture clearly labeled pre-run evidence for Turn B and Turn C, including the ASR identity,
    model plan, app validation, and geometry result.
@@ -92,12 +106,16 @@ Use exactly one voice input:
 
    > Can a Queen-size bed and a desk fit here without blocking the closet or the door?
 
-3. Select **Stop & transcribe**.
-4. Point out that the transcript appears in Manual prompt and has not run anything.
-5. Briefly review the text, then select **Send**.
-6. While the layout model runs, explain that ASR is a separate local model and the reviewed text
-   enters the same validated pipeline as typed input.
-7. Show the real Queen + standard desk result.
+3. While speaking, point to **Live draft — not sent**, its changing subtitle hypothesis, the timer,
+   and the exact Nemotron model/mode badge.
+4. Select **Stop**.
+5. Point out that only the final aggregate transcript appears in Manual prompt and has not run
+   anything.
+6. Briefly review the text, then select **Send**.
+7. While the layout model runs, explain that subtitle partials are display-only. The reviewed final
+   text enters the same validated pipeline as typed input, and only a complete Qwen JSON plan with
+   `finishReason: "stop"` can reach geometry.
+8. Show the real Queen + standard desk result.
 
 Then switch to clearly labeled pre-run evidence:
 
@@ -126,7 +144,7 @@ Keep the remaining exact staged dialogue visible:
 Open **Developer trace** and point left-to-right:
 
 - runtime/model/EP and locked state;
-- Whisper Tiny identity and reviewed transcript;
+- exact Nemotron identity, live/final timing, and reviewed transcript;
 - model-proposed structured plan;
 - app validation;
 - deterministic geometry result;
@@ -141,7 +159,8 @@ Say:
 Follow [CODE-WALKTHROUGH.md](CODE-WALKTHROUGH.md) in its timed order:
 
 1. SDK/model/EP lifecycle.
-2. Minimal audio checkpoint: mic permission -> PCM -> `AudioSession` -> editable draft.
+2. Minimal audio checkpoint: mic permission -> AudioWorklet PCM -> bounded typed IPC ->
+   `AudioSession`/`ItemQueue` -> live draft -> final editable prompt.
 3. Stateful `ChatSession` request.
 4. Runtime JSON Schema guidance and bounded correction.
 5. App-side schema/state/intent validation.
@@ -225,7 +244,7 @@ Do this only as a manual rehearsal step:
 2. In Windows Quick Settings, disconnect Wi-Fi/Ethernet. Do not change global firewall policy.
 3. Run `npm run start:built`.
 4. Select **Load local model**.
-5. Select **Prepare microphone**.
+5. Select **Prepare Nemotron live**.
 6. Confirm both the layout badge and voice badge are ready before claiming offline voice readiness.
 7. Record one short Queen + desk request, stop, review the transcript, and send it.
 8. Run the typed controlled-failure turn.
@@ -247,7 +266,8 @@ alone—is the offline readiness gate.
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |
 | GPU/EP issue | Only use a pretested alternate by setting both exact `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`. The badge will identify it as an override and, unless it is the exact default pair, as not stage-validated. Do not improvise a new target on stage. |
 | Microphone permission denied / no mic | State the error shown by the app and use the existing typed Turn A prompt. Never bypass transcript review or switch to an online speech service. |
-| ASR model unavailable | Keep typed input. The voice badge must not claim ready; do not download Nemotron or another large model on stage. |
+| Nemotron unavailable or live stream fails | If the labeled **Whisper Tiny fallback (record then transcribe)** action is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
+| Whisper fallback unavailable | Keep typed input. The voice badge must not claim fallback readiness. |
 | Empty/incorrect transcript | Edit the draft or replace it with typed text, then click Send. The app never auto-submits ASR output. |
 
 There is no canned natural-language fallback. The visible response is explicitly labeled

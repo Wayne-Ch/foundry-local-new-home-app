@@ -6,10 +6,19 @@ import {
   AUDIO_MAX_PCM_BYTES,
   AUDIO_MIN_DURATION_MS,
   AUDIO_SAMPLE_RATE,
+  AUDIO_STREAM_CHUNK_BYTES,
+  AUDIO_STREAM_MAX_CHUNKS,
   type AudioCapturePayload,
   type AudioCaptureValidationResult,
+  type AudioPartialTranscriptEvent,
   type AudioRecorderEvent,
   type AudioRecorderState,
+  type AudioStreamCancelRequest,
+  type AudioStreamChunkRequest,
+  type AudioStreamFinishRequest,
+  type AudioStreamStartRequest,
+  type LiveTranscriptDraft,
+  type PrepareAudioRequest,
   type TranscriptDraftUpdate,
 } from "./audio-types";
 
@@ -69,6 +78,109 @@ export function validateAudioCapturePayload(input: unknown): AudioCaptureValidat
       durationMs: candidate.durationMs ?? 0,
       pcmBytes: new Uint8Array(candidate.data),
     },
+  };
+}
+
+export function validateAudioStreamStart(input: unknown): AudioStreamStartRequest {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Audio stream start payload must be an object.");
+  }
+  const candidate = input as Partial<AudioStreamStartRequest>;
+  if (
+    candidate.format !== AUDIO_FORMAT ||
+    candidate.sampleRate !== AUDIO_SAMPLE_RATE ||
+    candidate.channels !== AUDIO_CHANNELS ||
+    candidate.maxDurationMs !== AUDIO_MAX_DURATION_MS
+  ) {
+    throw new Error("Audio stream must be PCM16LE, 16 kHz, mono, and use the stage duration limit.");
+  }
+  return {
+    format: AUDIO_FORMAT,
+    sampleRate: AUDIO_SAMPLE_RATE,
+    channels: AUDIO_CHANNELS,
+    maxDurationMs: AUDIO_MAX_DURATION_MS,
+  };
+}
+
+export function validatePrepareAudioRequest(input: unknown): PrepareAudioRequest {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Audio preparation payload must be an object.");
+  }
+  const candidate = input as Partial<PrepareAudioRequest>;
+  if (candidate.mode !== "nemotron_streaming" && candidate.mode !== "whisper_file") {
+    throw new Error("Audio mode must be Nemotron streaming or the explicit Whisper file fallback.");
+  }
+  return { mode: candidate.mode };
+}
+
+export function validateAudioStreamChunk(input: unknown): {
+  readonly streamId: string;
+  readonly sequence: number;
+  readonly pcmBytes: Uint8Array;
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Audio stream chunk must be an object.");
+  }
+  const candidate = input as Partial<AudioStreamChunkRequest>;
+  const streamId = validateStreamId(candidate.streamId, "Audio stream chunk");
+  if (
+    !Number.isSafeInteger(candidate.sequence) ||
+    (candidate.sequence ?? -1) < 0 ||
+    (candidate.sequence ?? AUDIO_STREAM_MAX_CHUNKS) >= AUDIO_STREAM_MAX_CHUNKS
+  ) {
+    throw new Error("Audio stream chunk has an invalid sequence number.");
+  }
+  if (!(candidate.data instanceof ArrayBuffer)) {
+    throw new Error("Audio stream chunk data must be an ArrayBuffer.");
+  }
+  if (
+    candidate.data.byteLength === 0 ||
+    candidate.data.byteLength > AUDIO_STREAM_CHUNK_BYTES ||
+    candidate.data.byteLength % AUDIO_BYTES_PER_SAMPLE !== 0
+  ) {
+    throw new Error(`Audio stream chunks must contain 1-${AUDIO_STREAM_CHUNK_BYTES} PCM bytes.`);
+  }
+  return {
+    streamId,
+    sequence: candidate.sequence ?? 0,
+    pcmBytes: new Uint8Array(candidate.data),
+  };
+}
+
+export function validateAudioStreamFinish(input: unknown): AudioStreamFinishRequest {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Audio stream finish payload must be an object.");
+  }
+  const candidate = input as Partial<AudioStreamFinishRequest>;
+  const streamId = validateStreamId(candidate.streamId, "Audio stream finish");
+  if (
+    !Number.isSafeInteger(candidate.lastSequence) ||
+    (candidate.lastSequence ?? -2) < -1 ||
+    (candidate.lastSequence ?? AUDIO_STREAM_MAX_CHUNKS) >= AUDIO_STREAM_MAX_CHUNKS
+  ) {
+    throw new Error("Audio stream finish has an invalid last sequence.");
+  }
+  if (
+    !Number.isInteger(candidate.audioDurationMs) ||
+    (candidate.audioDurationMs ?? 0) < AUDIO_MIN_DURATION_MS ||
+    (candidate.audioDurationMs ?? 0) > AUDIO_MAX_DURATION_MS
+  ) {
+    throw new Error("Audio stream duration is outside the stage bounds.");
+  }
+  return {
+    streamId,
+    lastSequence: candidate.lastSequence ?? -1,
+    audioDurationMs: candidate.audioDurationMs ?? 0,
+  };
+}
+
+export function validateAudioStreamCancel(input: unknown): AudioStreamCancelRequest {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Audio stream cancellation payload must be an object.");
+  }
+  const candidate = input as Partial<AudioStreamCancelRequest>;
+  return {
+    streamId: validateStreamId(candidate.streamId, "Audio stream cancellation"),
   };
 }
 
@@ -186,6 +298,62 @@ export function createTranscriptDraftUpdate(currentValue: string, transcript: st
     value: existing ? `${existing} ${normalizedTranscript}` : normalizedTranscript,
     shouldSubmit: false,
   };
+}
+
+export class StreamingTranscriptAccumulator {
+  #committed = "";
+  #partial = "";
+
+  get text(): string {
+    return `${this.#committed}${this.#partial}`.trimStart();
+  }
+
+  push(item: { readonly kind: "none" | "partial" | "final"; readonly text: string }): string {
+    if (item.kind === "partial") {
+      this.#partial = item.text;
+    } else if (item.kind === "final") {
+      this.#committed += item.text;
+      this.#partial = "";
+    } else {
+      this.#committed += item.text;
+    }
+    return this.text;
+  }
+
+  finalize(finalText: string): string {
+    this.#committed = finalText;
+    this.#partial = "";
+    return this.#committed;
+  }
+}
+
+export function applyPartialTranscriptEvent(
+  current: LiveTranscriptDraft,
+  event: AudioPartialTranscriptEvent,
+): LiveTranscriptDraft {
+  if (
+    (current.streamId !== null && current.streamId !== event.streamId) ||
+    event.sequence <= current.sequence ||
+    current.isFinal
+  ) {
+    return current;
+  }
+  return {
+    streamId: event.streamId,
+    sequence: event.sequence,
+    text: event.text,
+    isFinal: false,
+  };
+}
+
+function validateStreamId(value: unknown, operation: string): string {
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  ) {
+    throw new Error(`${operation} has an invalid stream ID.`);
+  }
+  return value;
 }
 
 function failure(code: Parameters<typeof createFailure>[0], message: string): AudioCaptureValidationResult {

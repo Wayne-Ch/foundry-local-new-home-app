@@ -5,8 +5,10 @@
 ```mermaid
 flowchart LR
   MIC[Optional microphone] --> R[Electron renderer<br/>permission + PCM conversion]
-  R --> ASR[Foundry Local AudioSession<br/>Whisper Tiny CPU]
+  R --> ASR[Foundry Local AudioSession<br/>Nemotron live PCM ItemQueue]
+  R -. explicit fallback .-> W[Whisper Tiny<br/>record then transcribe]
   ASR --> D[Editable transcript draft]
+  W --> D
   D --> U[User review/edit + Send]
   U --> R
   R --> M[Electron main process]
@@ -23,7 +25,8 @@ flowchart LR
 
 **Foundry Local owns**
 
-- local English speech-to-text through a separate `AudioSession`;
+- local English speech-to-text through a separate `AudioSession`, with exact Nemotron live
+  streaming as the default and exact Whisper Tiny as an explicit fallback;
 - multi-turn language interpretation;
 - proposing catalog IDs and retained furniture;
 - emitting a structured plan under runtime JSON Schema guidance;
@@ -32,8 +35,11 @@ flowchart LR
 
 **The application owns**
 
-- explicit microphone permission UX, 20-second capture bound, and typed IPC validation;
-- local PCM conversion, temporary WAV lifecycle, and transcript-as-draft behavior;
+- explicit microphone permission UX, 20-second capture bound, `AudioWorklet` PCM conversion,
+  ordered typed IPC, renderer and native queue bounds, and transcript-as-draft behavior;
+- partial subtitle replacement for display only, final transcript insertion, and the explicit
+  Whisper fallback policy;
+- owner-only temporary WAV lifecycle for Whisper fallback;
 - verified room, zone, rule, and furniture dimensions;
 - accepted state and stale-state references;
 - strict ID/unit/version/schema checks;
@@ -54,50 +60,75 @@ sequenceDiagram
   participant A as Foundry Local AudioSession
   participant T as Existing text pipeline
 
-  U->>R: Start recording
+  U->>R: Start recording (explicit gesture)
   R->>U: OS/Electron microphone permission
-  R->>R: Record locally, max 20 s
-  U->>R: Stop & transcribe
-  R->>R: Decode, downmix, resample to PCM16LE 16 kHz mono
-  R->>M: Typed bounded ArrayBuffer
-  M->>M: Validate format, duration, bytes
-  M->>M: Write tracked temporary WAV
-  M->>A: AudioSession + audioFromUri + language=en
-  A-->>M: SpeechResult
-  M->>M: Delete temporary WAV
-  M-->>R: Transcript + model/timing evidence
-  R->>U: Editable Manual prompt draft
+  R->>R: AudioWorklet + streaming resample<br/>PCM16LE 16 kHz mono, max 20 s
+  R->>M: Ordered typed 100 ms chunks<br/>bounded invoke queue
+  M->>M: Validate stream, sequence, bytes,<br/>duration and native queue bound
+  M->>A: AudioSession + audio descriptor + ItemQueue
+  A-->>M: Revising SpeechSegment partials
+  M-->>R: Display-only partial transcript events
+  R-->>U: Live draft — not sent + timer
+  U->>R: Stop
+  R->>M: Finish with final sequence + duration
+  M->>A: ItemQueue.markFinished()
+  A-->>M: Final aggregate SpeechResult
+  M-->>R: Final transcript + model/timing evidence
+  R->>U: Editable Manual prompt draft; no submit
   U->>T: Review/edit, then click Send
+
+  opt Explicit fallback after deterministic Nemotron failure/user action
+    U->>R: Choose Whisper Tiny fallback
+    R->>R: Record PCM locally
+    R->>M: One bounded final capture
+    M->>M: Write owner-only tracked WAV
+    M->>A: AudioSession + audioFromUri + language=en
+    A-->>M: Final SpeechResult
+    M->>M: Delete tracked WAV
+    M-->>R: Final fallback transcript
+  end
 ```
 
-Pinned v2.2.1 accepts Whisper file transcription by URI. A measured inline
+The default path uses the v2.2.1 native `AudioSession` PCM `ItemQueue` contract directly. The request
+borrows the queue; the app marks it finished, waits for both the async item stream and terminal
+`response`, then disposes the queue and session. The renderer allows at most eight queued 100 ms
+chunks, main accepts at most 200 chunks for the 20-second capture, and both layers reject invalid
+stream UUIDs, stale/out-of-order chunks, byte-count mismatches, and a full native queue. Cancellation
+uses the v2.2.1 streaming abort signal plus request cancellation and remains under the existing
+bounded reset/shutdown drain and quarantine rules.
+
+Pinned v2.2.1 accepts Whisper fallback transcription by URI. A measured inline
 `Item.audioFromData("wav", bytes)` request failed with:
 
 > Inline audio data without streaming (ItemQueue) is not yet supported.
 
-The app therefore uses a bounded temporary WAV under a dedicated OS app temp directory. It deletes
-the tracked file on normal success, failure, reset, and clean quit. If shutdown is bounded by an
-active native request or the file is locked, cleanup remains explicitly pending and the next launch
-purges only this app's matching `capture-*.wav` files. Renderer code never receives filesystem or
-Node access.
+The fallback therefore uses a bounded owner-only temporary WAV under a dedicated OS app temp
+directory. It deletes the tracked file on normal success, failure, reset, and clean quit. If
+shutdown is bounded by an active native request or the file is locked, cleanup remains explicitly
+pending and the next launch purges only this app's matching `capture-*.wav` files. Renderer code
+never receives filesystem or Node access.
 
 Audio readiness is separate from layout-model readiness. The microphone control becomes stage-ready
-only when both exact model dependencies are loaded. Speech output is trace evidence, not a command:
-it never invokes `compare_layout_options` until the user reviews and submits the text.
+only when both exact default model dependencies are loaded. Speech output is trace evidence, not a
+command: live partials never enter the prompt, and the final transcript never invokes
+`compare_layout_options` until the user reviews and submits the text.
 
 ### ASR candidate evidence
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 169–279 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 5.073 s; transcription 239 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Uncached, downloaded only for benchmark, then removed | 696 MB / CPU / CPU EP | `AudioSession` PCM `ItemQueue`; pinned JS live sample also exposes deprecated live adapter | Exact text; first live segment 1.29 s, stop-to-final 189 ms, buffered 932–971 ms |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.284 s; stop-to-final 115 ms; cached prepare 6.037 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
-Whisper Tiny and Nemotron had comparable stop-to-final latency in the measured paths. Whisper Tiny
-won for this exact **record-then-transcribe** experience because it was already cached, its offline
-footprint is roughly one fifth of the English Nemotron model, its buffered benchmark was faster, and
-the UI does not use live partial text. A future live-caption feature should re-evaluate Nemotron.
+Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
+available for its smaller footprint and fast final-only transcription, but switching requires the
+visible fallback control. No code path silently substitutes it.
+
+Current validation covers 13 test files and 120 passing tests. The suite includes worklet startup
+cleanup, renderer reset concurrency, bounded cancellation/reset recovery, stale chunk/partial
+rejection, and the complete-Qwen-response execution gate.
 
 ## One turn
 
@@ -111,6 +142,7 @@ sequenceDiagram
   U->>A: Natural-language correction
   A->>F: New user message + current state ref
   F-->>A: JSON-Schema-constrained structured plan
+  A->>A: Require terminal finishReason=stop
   A->>A: Validate schema, IDs, units, versions, retained state
   alt invalid plan
     A->>F: Bounded correction diagnostic
@@ -122,6 +154,8 @@ sequenceDiagram
 ```
 
 The correction loop is capped at three attempts. A fourth blind generation is never made.
+`finishReason: "length"` is treated as truncated output even if its text happens to parse as JSON;
+partial JSON is rolled back and never reaches geometry.
 
 ## Structured plan contract
 
@@ -234,12 +268,15 @@ path, not a hidden fake.
 
 1. Create one `FoundryLocalManager`.
 2. Resolve exact model ID `qwen2.5-1.5b-instruct-generic-gpu:4` from the public catalog.
-3. Resolve exact audio ID `openai-whisper-tiny-generic-cpu:4` from the same manager/catalog.
+3. Resolve exact default audio ID `nemotron-speech-streaming-en-0.6b-generic-cpu:3` from the same
+   manager/catalog; resolve Whisper Tiny only after explicit fallback selection.
 4. Download either exact model once if its bounded preparation is approved and the cache is empty.
-5. Match/register WebGPU for text; CPU EP is built in for Whisper Tiny.
-6. Load the two models independently and expose separate readiness.
-7. Keep one planning `ChatSession`; create/dispose one `AudioSession` per reviewed capture.
-8. Cancel active ASR, delete tracked temp files, and unload Whisper on reset.
+5. Match/register WebGPU for text; CPU EP is built in for both ASR variants.
+6. Load text and the selected audio model independently and expose separate readiness.
+7. Keep one planning `ChatSession`; create/dispose one `AudioSession` plus `ItemQueue` per Nemotron
+   stream, or one `AudioSession` per reviewed Whisper capture.
+8. Cancel active ASR, settle native stream/response work, delete tracked fallback files, and unload
+   the selected audio model on reset.
 9. Keep reset-timeout sessions quarantined until the captured request settles and an automatic
    session replacement succeeds; require an explicit Reset retry if replacement fails.
 10. Dispose sessions, unload both models, then dispose the manager on clean quit.

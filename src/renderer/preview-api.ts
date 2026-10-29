@@ -1,9 +1,10 @@
 import {
   AUDIO_EXECUTION_PROVIDER,
   AUDIO_MAX_DURATION_MS,
-  AUDIO_MODEL_ALIAS,
-  AUDIO_MODEL_ID,
   type AudioReadiness,
+  NEMOTRON_AUDIO_MODEL_ALIAS,
+  NEMOTRON_AUDIO_MODEL_ID,
+  WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
@@ -47,22 +48,27 @@ const audioReadiness: AudioReadiness = {
   sdkVersion: "2.2.1",
   provider: "Foundry Local in-process SDK",
   model: {
-    alias: AUDIO_MODEL_ALIAS,
-    id: AUDIO_MODEL_ID,
+    alias: NEMOTRON_AUDIO_MODEL_ALIAS,
+    id: NEMOTRON_AUDIO_MODEL_ID,
     deviceType: "CPU",
     executionProvider: AUDIO_EXECUTION_PROVIDER,
-    fileSizeMb: 131,
+    fileSizeMb: 696,
     language: "en",
-    inputMode: "temporary PCM WAV file URI",
+    inputMode: "streaming PCM ItemQueue",
   },
+  preferredModelId: NEMOTRON_AUDIO_MODEL_ID,
+  fallbackModelId: WHISPER_AUDIO_MODEL_ID,
+  activeMode: "nemotron_streaming",
+  fallbackAvailable: true,
+  fallbackReason: null,
   modelCached: true,
   localAudioReady: true,
   externalEndpointUsed: false,
   maxDurationMs: AUDIO_MAX_DURATION_MS,
   inputFormat: "PCM16LE · 16 kHz · mono",
   status: "ready",
-  detail: "Visual preview of the validated local speech model.",
-  lastTranscriptionMs: 169,
+  detail: "Visual preview of the validated Nemotron live caption model.",
+  lastTranscriptionMs: 6183,
 };
 
 function buildPreview(): BootstrapPayload {
@@ -196,6 +202,16 @@ export function createPreviewApi(): DemoApi {
     transcribeAudio: async () => {
       throw new Error("Microphone transcription is unavailable in the visual-only browser preview.");
     },
+    startAudioStream: async () => {
+      throw new Error("Live microphone streaming is unavailable in the visual-only browser preview.");
+    },
+    appendAudioChunk: async () => {
+      throw new Error("Live microphone streaming is unavailable in the visual-only browser preview.");
+    },
+    finishAudioStream: async () => {
+      throw new Error("Live microphone streaming is unavailable in the visual-only browser preview.");
+    },
+    cancelAudioStream: async () => {},
     runTurn: async (): Promise<RunTurnResponse> => ({
       state: bootstrap.state,
       toolResult: bootstrap.lastToolResult,
@@ -210,5 +226,6 @@ export function createPreviewApi(): DemoApi {
       return bootstrap;
     },
     onProgress: () => () => {},
+    onAudioPartial: () => () => {},
   };
 }

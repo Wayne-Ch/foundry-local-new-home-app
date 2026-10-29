@@ -13,17 +13,23 @@ room plan.
 - **Default model target:** exact catalog ID `qwen2.5-1.5b-instruct-generic-gpu:4`.
 - **Execution provider:** `WebGPUExecutionProvider`, registered from the Foundry Local
   `webgpu-ep-0.2.1-win-x64` bundle.
-- **Local speech-to-text:** exact catalog ID `openai-whisper-tiny-generic-cpu:4` through native
-  `AudioSession`, `CPUExecutionProvider`, English only.
-- **Push-to-talk boundary:** the renderer records only after a button click and permission grant,
-  resamples to bounded PCM16LE/16 kHz/mono, and sends it through typed IPC. Main writes a temporary
-  WAV because v2.2.1 rejects one-shot inline audio. It deletes captures after normal success,
-  failure, reset, and clean quit; the next launch purges only owned `capture-*.wav` orphans left by
-  an interrupted or locked cleanup.
+- **Default live speech-to-text:** exact catalog ID
+  `nemotron-speech-streaming-en-0.6b-generic-cpu:3` through native v2.2.1 `AudioSession`,
+  PCM `ItemQueue`, `CPUExecutionProvider`, English only.
+- **Bounded live PCM path:** after an explicit button click and permission grant, an
+  `AudioWorklet` captures microphone frames, the renderer resamples them to PCM16LE/16 kHz/mono,
+  and a typed `ipcRenderer.invoke` pump preserves chunk order with an eight-chunk bound. Main
+  validates stream identity, sequence, chunk size, total bytes, and native queue capacity before
+  pushing each copied `Item.bytes(...)` frame.
+- **Explicit fallback:** exact `openai-whisper-tiny-generic-cpu:4` is available only through the
+  visibly labeled **Whisper Tiny fallback (record then transcribe)** action. The stage default
+  remains Nemotron; the fallback loads only after that explicit user choice and never activates
+  silently.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
   auto-submitted and never bypasses the existing structured planning/tool pipeline.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output. The application then
-  invokes `compare_layout_options` with the validated object.
+  invokes `compare_layout_options` only from a complete response with `finishReason: "stop"` and a
+  validated object. Length-truncated or otherwise partial JSON is rejected and never executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
   collision, and 250 mm furniture-clearance checks.
 - **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
@@ -35,26 +41,25 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 
 ## Audio model decision
 
-The app implements **record then transcribe**, not live streaming. Three cached/prepared English
-candidates were measured with the same deterministic 5.53-second stage phrase:
+Nemotron English streaming is the stage default because the UI now uses its actual advantage:
+revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
+produced 31 display revisions, first text at **1.284 s**, and the final aggregate transcript **115 ms**
+after input ended. Cached model preparation took **6.037 s** on the validated machine. The exact
+model is 696 MB on CPU/`CPUExecutionProvider`.
 
-| Candidate | Size | Path | Load | Transcription |
-|---|---:|---|---:|---:|
-| Whisper Tiny CPU | 131 MB | temporary WAV URI | 1.14 s | 0.17–0.28 s |
-| Whisper Base CPU | 205 MB | temporary WAV URI | 1.44 s | 0.36–0.43 s |
-| Nemotron Speech Streaming EN CPU | 696 MB | PCM `ItemQueue` | 2.70 s | 0.93–0.97 s buffered |
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **5.073 s** cached preparation,
+and **239 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
-Nemotron was also measured in true real-time streaming mode: first text at 1.29 s and final output
-189 ms after input ended. That is valuable for live partial captions, but this UI intentionally waits
-for **Stop & transcribe** and inserts one editable draft. Whisper Tiny and Nemotron had comparable
-stop-to-final latency in the measured paths. Whisper Tiny was selected because it was already cached,
-had a much smaller offline footprint, was faster in the buffered record-then-transcribe benchmark,
-and this UI does not use partial streaming. The authorized 696 MB Nemotron benchmark download was
-removed after measurement.
+The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
+`SpeechResult`, places only that final transcript into the editable Manual prompt, and stops. The
+user must click **Send** before Qwen receives text. Qwen's layout plan is a separate complete,
+JSON-Schema-constrained response that must finish normally and pass application validation before
+geometry can run.
 
-The v2.2.1 catalog also exposed `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` at 756 MB. It was
-uncached and was not downloaded because multilingual/Chinese input is optional for this milestone.
-No Chinese capability is claimed.
+The similarly named `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` model was not selected or
+downloaded. This demo makes no multilingual or Chinese claim. There is no TTS, cloud speech service,
+or external inference endpoint.
 
 ## Important implementation decision
 
@@ -98,14 +103,18 @@ In the app:
 1. Select **Load local model**.
 2. Wait for the green local-runtime badge. The app turns ready only after the exact configured model
    and configured EP are loaded and registered.
-3. Select **Prepare microphone**. The separate voice badge becomes ready only when both the layout
-   model and Whisper Tiny are loaded.
-4. Select **Start recording**, speak for at most 20 seconds, then select **Stop & transcribe**.
-5. Review or edit the transcript in **Manual prompt**, then select **Send**. Recording never submits
-   automatically.
-6. Existing typed and scripted controls remain available as the stage fallback.
-7. Open **Developer trace** to distinguish the ASR model/transcript from the layout model plan,
-   validation, and geometry evidence.
+3. Select **Prepare Nemotron live**. The separate badge shows the exact
+   `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
+4. Select **Start recording** and speak for at most 20 seconds. The **Live draft — not sent** panel
+   revises while speech is arriving and the timer remains visible.
+5. Select **Stop**. The final aggregate transcript is placed into **Manual prompt**.
+6. Review or edit the transcript, then select **Send**. Stop never submits automatically.
+7. If Nemotron deterministically fails, the UI exposes
+   **Whisper Tiny fallback (record then transcribe)**. Selecting it is an explicit model switch;
+   record again, wait for the final Whisper transcript, then review and click **Send**.
+8. Existing typed and scripted controls remain available as the stage fallback.
+9. Open **Developer trace** to distinguish the display-only ASR stream/final transcript from the
+   complete layout-model plan, validation, and geometry evidence.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
 exact default from the public catalog and can download it into an empty cache.
@@ -136,9 +145,11 @@ Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
+npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
+npm run probe:microphone-permission
 npm run capture:ui
 ```
 
@@ -150,11 +161,19 @@ npm run capture:ui
 4. King + compact desk + crib: no bounded feasible option.
 5. Adversarial correction: do not use King, remove crib, retain Queen + compact desk.
 
-`npm run test:audio-integration` loads exact Whisper Tiny, transcribes
+`npm run test:nemotron-integration` loads exact Nemotron, streams deterministic PCM in ordered
+100 ms chunks, requires multiple changing partials, captures first-partial and stop-to-final timing,
+checks the exact CPU model identity, and verifies the final transcript with no external endpoint.
+
+`npm run test:audio-integration` explicitly selects Whisper Tiny, transcribes
 `tests/fixtures/queen-desk.wav`, requires at least 85% key-word recall, asserts no external endpoint,
 and proves no temporary capture file remains. The validated transcript was exact:
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
+
+The October 28 validation completed **13 test files / 120 tests** in Vitest's reported **1.10 s**,
+with 55 files passing Biome, TypeScript passing, and the production build completing in **4.597 s**.
+The real Qwen turns measured **11.167 s, 19.068 s, 22.554 s, 25.766 s, and 29.263 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md).
@@ -198,13 +217,15 @@ As verified on October 28, 2026:
 
 ## Offline readiness
 
-The app uses separate text and audio readiness. Voice input is shown as fully ready only when:
+The app uses separate text and audio readiness. Default live voice input is shown as fully ready only
+when:
 
 - exact layout model `qwen2.5-1.5b-instruct-generic-gpu:4` and WebGPU EP are ready;
-- exact ASR model `openai-whisper-tiny-generic-cpu:4` is cached and loaded on CPU;
+- exact ASR model `nemotron-speech-streaming-en-0.6b-generic-cpu:3` is cached and loaded on CPU;
 - no external inference endpoint is configured or started.
 
-Prepare both models while connected before the adapter-disconnect rehearsal. The manager sets
+Prepare the layout model, Nemotron, and optionally the explicit Whisper Tiny fallback while connected
+before the adapter-disconnect rehearsal. The manager sets
 `disableNonessentialTelemetry: true`. Foundry Local documents that a minimal
 `ProcessInfo` telemetry event may still be attempted. Prepare the model and EP while connected, then
 follow the manual adapter-disconnect rehearsal in [DEMO-RUNBOOK.md](DEMO-RUNBOOK.md). Development
@@ -215,16 +236,17 @@ did not globally disable the machine network.
 | Path | Purpose |
 |---|---|
 | `src/foundry/foundry-service.ts` | SDK lifecycle, model selection, schema-guided multi-turn planning |
-| `src/audio/audio-contract.ts` | PCM IPC bounds, WAV encoding, recorder state, editable transcript draft |
+| `src/audio/audio-contract.ts` | PCM IPC bounds, partial replacement, final transcript draft, WAV encoding |
 | `src/audio/temp-audio-store.ts` | owned temporary WAV creation, retryable cleanup, and startup orphan recovery |
-| `src/renderer/audio-capture.ts` | explicit mic capture, decode, downmix, and 16 kHz PCM resampling |
+| `src/renderer/audio-capture.ts` | AudioWorklet capture, streaming resampling, ordered bounded chunk pump |
 | `src/domain/tool-contract.ts` | strict schema, stale-state checks, explicit intent/retention guards |
 | `src/domain/layout-engine.ts` | bounded option enumeration and typed tool result |
 | `src/domain/geometry.ts` | deterministic collision, boundary, door-swing, and clearance checks |
 | `src/domain/fixture.ts` | verified demo room, catalog dimensions, and known options |
 | `src/renderer/renderer.ts` | stage UI, SVG layout, evidence cards, developer trace |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |
-| `scripts/run-audio-integration.ts` | real Whisper Tiny transcription and cleanup acceptance |
+| `scripts/run-nemotron-integration.ts` | real Nemotron partial/final streaming and timing acceptance |
+| `scripts/run-audio-integration.ts` | explicit Whisper Tiny fallback and cleanup acceptance |
 | `tests/` | geometry, schema, state, fixture, and semantic tests |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md), [DEMO-RUNBOOK.md](DEMO-RUNBOOK.md), and
@@ -236,6 +258,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [DEMO-RUNBOOK.md](DEMO-RUNBOOK.md), and
 - Not infant-safety advice, structural review, accessibility certification, or global optimization.
 - Exact measurements are fixture data; images are never used to infer dimensions.
 - Bounded known options are evaluated; the engine does not search arbitrary placements.
-- Audio is English record-then-transcribe only; no live captions, Chinese claim, or TTS.
+- Audio is English only. Nemotron provides display-only live captions; Whisper Tiny is an explicit
+  record-then-transcribe fallback. There is no Chinese/multilingual claim or TTS.
 - The committed deterministic WAV validates ASR, not real microphone permission or human speech.
 - Windows was validated. Apple-silicon macOS remains a documented validation blocker.

@@ -70,7 +70,15 @@
             </div>
             <div class="audio-control-row">
               <button id="audioPrepareButton" class="button button-secondary audio-button" type="button">
-                Prepare microphone
+                Prepare Nemotron live
+              </button>
+              <button
+                id="audioFallbackButton"
+                class="button button-ghost audio-button"
+                type="button"
+                hidden
+              >
+                Use Whisper Tiny fallback (record then transcribe)
               </button>
               <button
                 id="recordButton"
@@ -85,6 +93,10 @@
                 <span id="audioStatus">Editable draft only; click Send to submit.</span>
                 <span id="recordingTimer" class="recording-timer">00:00</span>
               </div>
+            </div>
+            <div id="liveTranscriptPanel" class="live-transcript-panel" hidden>
+              <strong>Live draft — not sent</strong>
+              <span id="liveTranscriptText"></span>
             </div>
             <p class="input-note">
               Every submitted turn uses the existing validated text pipeline. No cloud fallback.

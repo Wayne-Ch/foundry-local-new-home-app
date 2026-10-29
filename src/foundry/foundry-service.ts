@@ -1,23 +1,42 @@
+import { randomUUID } from "node:crypto";
 import type { EpDownloadResult, EpInfo, FoundryLocalConfig, IModel, ModelInfo } from "foundry-local-sdk";
 import {
   AudioSession,
   ChatSession,
   FoundryLocalManager,
   Item,
+  ItemQueue,
   Request,
   type RequestPreflightResult,
   type Response,
+  type StreamingResponse,
 } from "foundry-local-sdk";
+import { audioDurationMsFromPcmBytes, StreamingTranscriptAccumulator } from "../audio/audio-contract";
 import {
+  AUDIO_BYTES_PER_SAMPLE,
+  AUDIO_CHANNELS,
   AUDIO_EXECUTION_PROVIDER,
   AUDIO_LANGUAGE,
   AUDIO_MAX_DURATION_MS,
-  AUDIO_MODEL_ALIAS,
-  AUDIO_MODEL_ID,
+  AUDIO_MAX_PCM_BYTES,
+  AUDIO_MIN_DURATION_MS,
+  AUDIO_SAMPLE_RATE,
+  AUDIO_STREAM_CHUNK_BYTES,
+  AUDIO_STREAM_MAX_CHUNKS,
+  AUDIO_STREAM_MAX_QUEUED_CHUNKS,
+  type AudioMode,
   type AudioModelIdentity,
+  type AudioPartialTranscriptEvent,
   type AudioReadiness,
+  type AudioStreamChunkResponse,
+  type AudioStreamFinishRequest,
+  type AudioStreamStartResponse,
   type AudioTranscriptionResult,
+  NEMOTRON_AUDIO_MODEL_ALIAS,
+  NEMOTRON_AUDIO_MODEL_ID,
   type ValidatedAudioCapture,
+  WHISPER_AUDIO_MODEL_ALIAS,
+  WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
@@ -73,7 +92,31 @@ interface FoundrySessionHandle {
 
 interface FoundryAudioSessionHandle {
   processRequest(request: Request): Promise<Response>;
+  processStreamingRequest(request: Request, options?: { readonly signal?: AbortSignal }): StreamingResponse;
   dispose(): void;
+}
+
+interface ActiveAudioStream {
+  readonly id: string;
+  readonly generation: number;
+  readonly model: IModel;
+  readonly session: FoundryAudioSessionHandle;
+  readonly queue: ItemQueue;
+  readonly request: Request;
+  readonly abortController: AbortController;
+  readonly stream: StreamingResponse;
+  readonly accumulator: StreamingTranscriptAccumulator;
+  readonly startedAt: number;
+  readonly onPartial: (event: AudioPartialTranscriptEvent) => void;
+  consumePromise: Promise<void>;
+  nextSequence: number;
+  partialSequence: number;
+  totalBytes: number;
+  firstPartialMs: number | null;
+  stopRequestedAt: number | null;
+  streamError: unknown | null;
+  cancellationPromise: Promise<void> | null;
+  cleanedUp: boolean;
 }
 
 export interface FoundryLayoutServiceOptions {
@@ -170,6 +213,7 @@ function modelIdentity(model: IModel): ModelIdentity {
 }
 
 function audioModelIdentity(model: IModel): AudioModelIdentity {
+  const streaming = model.id === NEMOTRON_AUDIO_MODEL_ID;
   return {
     alias: model.alias,
     id: model.id,
@@ -177,8 +221,17 @@ function audioModelIdentity(model: IModel): AudioModelIdentity {
     executionProvider: executionProvider(model),
     fileSizeMb: model.info.fileSizeMb ?? null,
     language: AUDIO_LANGUAGE,
-    inputMode: "temporary PCM WAV file URI",
+    inputMode: streaming ? "streaming PCM ItemQueue" : "temporary PCM WAV file URI",
   };
+}
+
+function audioTarget(mode: AudioMode): {
+  readonly id: string;
+  readonly alias: string;
+} {
+  return mode === "nemotron_streaming"
+    ? { id: NEMOTRON_AUDIO_MODEL_ID, alias: NEMOTRON_AUDIO_MODEL_ALIAS }
+    : { id: WHISPER_AUDIO_MODEL_ID, alias: WHISPER_AUDIO_MODEL_ALIAS };
 }
 
 function extractDefaultText(response: Response): string {
@@ -240,6 +293,11 @@ function initialAudioReadiness(): AudioReadiness {
     sdkVersion: "2.2.1",
     provider: "Foundry Local in-process SDK",
     model: null,
+    preferredModelId: NEMOTRON_AUDIO_MODEL_ID,
+    fallbackModelId: WHISPER_AUDIO_MODEL_ID,
+    activeMode: null,
+    fallbackAvailable: true,
+    fallbackReason: null,
     modelCached: false,
     localAudioReady: false,
     externalEndpointUsed: false,
@@ -271,8 +329,11 @@ export class FoundryLayoutService {
   #layoutResetPromise: Promise<void> | null = null;
   #resetPromise: Promise<void> | null = null;
   #audioModel: IModel | null = null;
+  #audioMode: AudioMode | null = null;
   #activeAudioRequest: Request | null = null;
+  #activeAudioStream: ActiveAudioStream | null = null;
   #audioPreparePromise: Promise<AudioReadiness> | null = null;
+  #audioPrepareMode: AudioMode | null = null;
   #audioTranscriptionPromise: Promise<AudioTranscriptionResult> | null = null;
   #audioResetPromise: Promise<void> | null = null;
   #shutdownPromise: Promise<void> | null = null;
@@ -510,15 +571,24 @@ export class FoundryLayoutService {
     return readiness;
   }
 
-  prepareAudioOffline(onProgress?: (detail: string) => void): Promise<AudioReadiness> {
+  prepareAudioOffline(
+    mode: AudioMode = "nemotron_streaming",
+    onProgress?: (detail: string) => void,
+  ): Promise<AudioReadiness> {
     this.#assertAudioLifecycleAvailable();
     if (this.#audioPreparePromise !== null) {
+      if (this.#audioPrepareMode !== mode) {
+        throw new FoundryAudioError(
+          `Audio preparation for ${this.#audioPrepareMode} is already running.`,
+          "AUDIO_BUSY",
+        );
+      }
       if (onProgress !== undefined) {
         this.#audioPrepareProgressListeners.add(onProgress);
       }
       return this.#audioPreparePromise;
     }
-    if (this.#audioTranscriptionPromise !== null) {
+    if (this.#audioTranscriptionPromise !== null || this.#activeAudioStream !== null) {
       throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
     }
     if (onProgress !== undefined) {
@@ -527,9 +597,11 @@ export class FoundryLayoutService {
 
     const generation = this.#audioGeneration;
     let trackedPromise: Promise<AudioReadiness>;
-    trackedPromise = this.#prepareAudioOffline(generation).finally(() => {
+    this.#audioPrepareMode = mode;
+    trackedPromise = this.#prepareAudioOffline(generation, mode).finally(() => {
       if (this.#audioPreparePromise === trackedPromise) {
         this.#audioPreparePromise = null;
+        this.#audioPrepareMode = null;
         this.#audioPrepareProgressListeners.clear();
       }
     });
@@ -541,6 +613,13 @@ export class FoundryLayoutService {
     this.#assertAudioLifecycleAvailable();
     if (this.#audioTranscriptionPromise !== null) {
       throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
+    }
+
+    if (this.#audioMode !== "whisper_file") {
+      throw new FoundryAudioError(
+        "Whisper file transcription is not the active audio mode.",
+        "AUDIO_NOT_READY",
+      );
     }
 
     const generation = this.#audioGeneration;
@@ -555,7 +634,334 @@ export class FoundryLayoutService {
     }
   }
 
-  async #initializeAudio(generation: number): Promise<AudioReadiness> {
+  async startAudioStream(
+    onPartial: (event: AudioPartialTranscriptEvent) => void,
+  ): Promise<AudioStreamStartResponse> {
+    this.#assertAudioLifecycleAvailable();
+    if (this.#activeAudioStream !== null || this.#audioTranscriptionPromise !== null) {
+      throw new FoundryAudioError("A local transcription is already running.", "AUDIO_BUSY");
+    }
+    if (!this.#audioReadiness.localAudioReady || this.#audioMode !== "nemotron_streaming") {
+      throw new FoundryAudioError(
+        "Prepare the exact Nemotron live model before starting a microphone stream.",
+        "AUDIO_NOT_READY",
+      );
+    }
+
+    const generation = this.#audioGeneration;
+    this.#assertAudioOperationCurrent(generation);
+    const model = this.#requireAudioModel();
+    this.#assertAudioModel(model, "nemotron_streaming");
+
+    let session: FoundryAudioSessionHandle | null = null;
+    let queue: ItemQueue | null = null;
+    try {
+      session = this.#audioSessionFactory(model);
+      queue = new ItemQueue();
+      const request = new Request()
+        .addItem(Item.audioDescriptor("pcm", AUDIO_SAMPLE_RATE, AUDIO_CHANNELS))
+        .addItem(queue);
+      const abortController = new AbortController();
+      const stream = session.processStreamingRequest(request, { signal: abortController.signal });
+      const active: ActiveAudioStream = {
+        id: randomUUID(),
+        generation,
+        model,
+        session,
+        queue,
+        request,
+        abortController,
+        stream,
+        accumulator: new StreamingTranscriptAccumulator(),
+        startedAt: performance.now(),
+        onPartial,
+        consumePromise: Promise.resolve(),
+        nextSequence: 0,
+        partialSequence: 0,
+        totalBytes: 0,
+        firstPartialMs: null,
+        stopRequestedAt: null,
+        streamError: null,
+        cancellationPromise: null,
+        cleanedUp: false,
+      };
+      active.consumePromise = this.#consumeAudioStream(active);
+      this.#activeAudioStream = active;
+      this.#activeAudioRequest = request;
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "streaming",
+        localAudioReady: false,
+        detail: "Nemotron live captions are receiving local PCM audio.",
+      };
+      return {
+        streamId: active.id,
+        model: audioModelIdentity(model),
+        mode: "nemotron_streaming",
+      };
+    } catch (error) {
+      try {
+        queue?.dispose();
+      } finally {
+        session?.dispose();
+      }
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        localAudioReady: false,
+        fallbackAvailable: true,
+        fallbackReason: `Nemotron live stream failed to start: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        detail: `Nemotron live stream failed to start: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_TRANSCRIPTION_FAILED", {
+        cause: error,
+      });
+    }
+  }
+
+  appendAudioStreamChunk(streamId: string, sequence: number, pcmBytes: Uint8Array): AudioStreamChunkResponse {
+    const active = this.#requireAudioStream(streamId);
+    this.#assertAudioOperationCurrent(active.generation);
+    if (active.stopRequestedAt !== null || active.queue.finished) {
+      throw new FoundryAudioError(
+        "The live audio stream no longer accepts chunks.",
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    if (sequence !== active.nextSequence) {
+      throw new FoundryAudioError(
+        `Expected audio chunk ${active.nextSequence}, received ${sequence}.`,
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    if (active.nextSequence >= AUDIO_STREAM_MAX_CHUNKS) {
+      throw new FoundryAudioError(
+        "Audio stream exceeded the maximum number of stage chunks.",
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    if (active.streamError !== null) {
+      throw new FoundryAudioError(
+        `The native live audio stream has already failed: ${
+          active.streamError instanceof Error ? active.streamError.message : String(active.streamError)
+        }`,
+        "AUDIO_TRANSCRIPTION_FAILED",
+        { cause: active.streamError },
+      );
+    }
+    if (
+      pcmBytes.byteLength === 0 ||
+      pcmBytes.byteLength > AUDIO_STREAM_CHUNK_BYTES ||
+      pcmBytes.byteLength % AUDIO_BYTES_PER_SAMPLE !== 0
+    ) {
+      throw new FoundryAudioError(
+        `Audio chunks must contain 1-${AUDIO_STREAM_CHUNK_BYTES} complete PCM bytes.`,
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    if (active.totalBytes + pcmBytes.byteLength > AUDIO_MAX_PCM_BYTES) {
+      throw new FoundryAudioError(
+        "Audio stream exceeded the maximum stage duration.",
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    if (active.queue.size >= AUDIO_STREAM_MAX_QUEUED_CHUNKS) {
+      throw new FoundryAudioError(
+        "Audio stream backpressure capacity was exceeded.",
+        "AUDIO_TRANSCRIPTION_FAILED",
+      );
+    }
+    active.queue.push(Item.bytes(pcmBytes.slice()));
+    active.totalBytes += pcmBytes.byteLength;
+    active.nextSequence += 1;
+    return {
+      acceptedSequence: sequence,
+      totalBytes: active.totalBytes,
+    };
+  }
+
+  async finishAudioStream(input: AudioStreamFinishRequest): Promise<AudioTranscriptionResult> {
+    const active = this.#requireAudioStream(input.streamId);
+    this.#assertAudioOperationCurrent(active.generation);
+    active.stopRequestedAt = performance.now();
+    try {
+      if (input.lastSequence !== active.nextSequence - 1) {
+        throw new Error(
+          `Expected final audio sequence ${active.nextSequence - 1}, received ${input.lastSequence}.`,
+        );
+      }
+      const measuredDuration = audioDurationMsFromPcmBytes(active.totalBytes);
+      if (measuredDuration < AUDIO_MIN_DURATION_MS || measuredDuration > AUDIO_MAX_DURATION_MS) {
+        throw new Error(`Stream contains ${measuredDuration} ms of PCM audio, outside the stage bounds.`);
+      }
+      if (measuredDuration !== input.audioDurationMs) {
+        throw new Error(
+          `Stream duration ${input.audioDurationMs} ms does not match ${active.totalBytes} PCM bytes.`,
+        );
+      }
+
+      if (!active.queue.finished) {
+        active.queue.markFinished();
+      }
+      await active.consumePromise;
+      if (active.streamError !== null) {
+        throw active.streamError;
+      }
+      const response = await active.stream.response;
+      this.#assertAudioOperationCurrent(active.generation);
+      const result = response.output.find((item) => item.type === "speechResult");
+      if (result?.type !== "speechResult" || !result.text.trim()) {
+        throw new Error("Nemotron returned no final speech transcript.");
+      }
+      const transcript = active.accumulator.finalize(result.text.trim()).trim();
+      const completedAt = performance.now();
+      const transcriptionMs = Math.round(completedAt - active.startedAt);
+      const finalizationMs = Math.round(completedAt - active.stopRequestedAt);
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "ready",
+        localAudioReady: true,
+        detail: `${active.model.id} is ready for live local captions.`,
+        lastTranscriptionMs: transcriptionMs,
+      };
+      return {
+        transcript,
+        transcriptionMs,
+        audioDurationMs: measuredDuration,
+        model: audioModelIdentity(active.model),
+        mode: "nemotron_streaming",
+        transcriptSource: "live_stream_final",
+        firstPartialMs: active.firstPartialMs,
+        finalizationMs,
+        externalEndpointUsed: false,
+      };
+    } catch (error) {
+      await this.#settleAudioStream(active);
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        localAudioReady: false,
+        fallbackAvailable: true,
+        fallbackReason: `Nemotron live stream failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        detail: `Nemotron live stream failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+      throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_TRANSCRIPTION_FAILED", {
+        cause: error,
+      });
+    } finally {
+      await this.#cleanupAudioStream(active);
+    }
+  }
+
+  async cancelAudioStream(streamId: string): Promise<void> {
+    const active = this.#activeAudioStream;
+    if (active === null || active.id !== streamId) {
+      return;
+    }
+    const cancellation = this.#cancelActiveAudioStream(active);
+    try {
+      await this.#waitForOperationDrain("audio cancellation", cancellation);
+    } catch (error) {
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "error",
+        localAudioReady: false,
+        fallbackAvailable: true,
+        fallbackReason: `Nemotron cancellation did not settle: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        detail: `Nemotron cancellation did not settle. Select Reset before starting another voice operation. ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+      throw error;
+    }
+    if (
+      active.generation === this.#audioGeneration &&
+      !this.#shuttingDown &&
+      this.#resetPromise === null &&
+      this.#audioResetPromise === null &&
+      this.#audioModel === active.model
+    ) {
+      this.#audioReadiness = {
+        ...this.#audioReadiness,
+        status: "ready",
+        localAudioReady: true,
+        detail: `${active.model.id} is ready for live local captions.`,
+      };
+    }
+  }
+
+  async #consumeAudioStream(active: ActiveAudioStream): Promise<void> {
+    try {
+      for await (const item of active.stream) {
+        this.#assertAudioOperationCurrent(active.generation);
+        if (item.type !== "speechSegment") {
+          continue;
+        }
+        const text = active.accumulator.push({ kind: item.kind, text: item.text });
+        if (!text.trim()) {
+          continue;
+        }
+        if (active.firstPartialMs === null) {
+          active.firstPartialMs = Math.round(performance.now() - active.startedAt);
+        }
+        active.onPartial({
+          streamId: active.id,
+          sequence: active.partialSequence,
+          text,
+          firstPartialMs: active.firstPartialMs,
+          model: audioModelIdentity(active.model),
+          mode: "nemotron_streaming",
+          externalEndpointUsed: false,
+        });
+        active.partialSequence += 1;
+      }
+    } catch (error) {
+      active.streamError = error;
+    }
+  }
+
+  async #settleAudioStream(active: ActiveAudioStream): Promise<void> {
+    if (active.cleanedUp) {
+      return;
+    }
+    active.abortController.abort();
+    active.request.cancel();
+    if (!active.queue.finished) {
+      active.queue.markFinished();
+    }
+    await Promise.allSettled([active.consumePromise, active.stream.response]);
+  }
+
+  #cancelActiveAudioStream(active: ActiveAudioStream): Promise<void> {
+    if (active.cleanedUp) {
+      return Promise.resolve();
+    }
+    if (active.cancellationPromise !== null) {
+      return active.cancellationPromise;
+    }
+
+    let trackedPromise: Promise<void>;
+    trackedPromise = (async () => {
+      await this.#settleAudioStream(active);
+      await this.#cleanupAudioStream(active);
+    })().finally(() => {
+      if (active.cancellationPromise === trackedPromise) {
+        active.cancellationPromise = null;
+      }
+    });
+    active.cancellationPromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #initializeAudio(generation: number, mode: AudioMode): Promise<AudioReadiness> {
     this.#assertAudioOperationCurrent(generation);
     this.#audioReadiness = {
       ...this.#audioReadiness,
@@ -567,26 +973,39 @@ export class FoundryLayoutService {
       await this.initialize();
       this.#assertAudioOperationCurrent(generation);
       const manager = this.#requireManager();
+      const target = audioTarget(mode);
+      if (this.#audioModel !== null && this.#audioModel.id !== target.id) {
+        if (await this.#audioModel.isLoaded()) {
+          await this.#audioModel.unload();
+        }
+        this.#audioModel = null;
+      }
       if (this.#audioModel === null) {
         let publicCatalogError = "";
         try {
-          this.#audioModel = await manager.catalog.getModelVariant(AUDIO_MODEL_ID);
+          this.#audioModel = await manager.catalog.getModelVariant(target.id);
         } catch (error) {
           publicCatalogError = error instanceof Error ? error.message : String(error);
           this.#audioModel =
-            (await manager.catalog.getCachedModels()).find((model) => model.id === AUDIO_MODEL_ID) ?? null;
+            (await manager.catalog.getCachedModels()).find((model) => model.id === target.id) ?? null;
         }
         this.#assertAudioOperationCurrent(generation);
         if (this.#audioModel === null) {
           this.#audioReadiness = {
             ...this.#audioReadiness,
             status: "model_unavailable",
-            detail: `Exact audio model ${AUDIO_MODEL_ID} is unavailable. ${publicCatalogError}`,
+            fallbackAvailable: mode === "nemotron_streaming",
+            fallbackReason:
+              mode === "nemotron_streaming"
+                ? `Nemotron is unavailable: ${publicCatalogError}`
+                : this.#audioReadiness.fallbackReason,
+            detail: `Exact audio model ${target.id} is unavailable. ${publicCatalogError}`,
           };
           return this.#audioReadiness;
         }
       }
-      this.#assertAudioModel(this.#audioModel);
+      this.#assertAudioModel(this.#audioModel, mode);
+      this.#audioMode = mode;
       this.#assertAudioOperationCurrent(generation);
       const readiness = await this.#refreshAudioReadiness();
       this.#assertAudioOperationCurrent(generation);
@@ -598,28 +1017,41 @@ export class FoundryLayoutService {
       this.#audioReadiness = {
         ...this.#audioReadiness,
         status: "error",
+        fallbackAvailable: mode === "nemotron_streaming",
+        fallbackReason:
+          mode === "nemotron_streaming"
+            ? `Nemotron preparation failed: ${error instanceof Error ? error.message : String(error)}`
+            : this.#audioReadiness.fallbackReason,
         detail: error instanceof Error ? error.message : String(error),
       };
       return this.#audioReadiness;
     }
   }
 
-  async #prepareAudioOffline(generation: number): Promise<AudioReadiness> {
-    await this.#initializeAudio(generation);
+  async #prepareAudioOffline(generation: number, mode: AudioMode): Promise<AudioReadiness> {
+    await this.#initializeAudio(generation, mode);
     this.#assertAudioOperationCurrent(generation);
     const model = this.#requireAudioModel();
-    this.#assertAudioModel(model);
+    this.#assertAudioModel(model, mode);
 
     if (!model.isCached) {
       const sizeMb = model.info.fileSizeMb ?? Number.POSITIVE_INFINITY;
-      if (sizeMb > 256) {
-        throw new FoundryAudioError(
-          `Refusing to automatically download ${model.id} (${sizeMb} MB).`,
-          "AUDIO_MODEL_DOWNLOAD_FAILED",
-        );
+      const autoDownloadLimitMb = mode === "nemotron_streaming" ? 800 : 256;
+      if (sizeMb > autoDownloadLimitMb) {
+        this.#audioReadiness = {
+          ...this.#audioReadiness,
+          status: "error",
+          fallbackAvailable: mode === "nemotron_streaming",
+          fallbackReason:
+            mode === "nemotron_streaming"
+              ? `Nemotron download was refused because ${sizeMb} MB exceeds the bounded policy.`
+              : this.#audioReadiness.fallbackReason,
+          detail: `Refusing to automatically download ${model.id} (${sizeMb} MB).`,
+        };
+        throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED");
       }
       this.#reportAudioPrepareProgress(
-        `Downloading ${AUDIO_MODEL_ALIAS} (${sizeMb} MB) for offline speech input.`,
+        `Downloading ${audioTarget(mode).alias} (${sizeMb} MB) for offline speech input.`,
       );
       try {
         await model.download((percent) =>
@@ -629,6 +1061,11 @@ export class FoundryLayoutService {
         this.#audioReadiness = {
           ...this.#audioReadiness,
           status: "error",
+          fallbackAvailable: mode === "nemotron_streaming",
+          fallbackReason:
+            mode === "nemotron_streaming"
+              ? `Nemotron download failed: ${error instanceof Error ? error.message : String(error)}`
+              : this.#audioReadiness.fallbackReason,
           detail: `Failed to download ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
         };
         throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_DOWNLOAD_FAILED", {
@@ -655,6 +1092,11 @@ export class FoundryLayoutService {
       this.#audioReadiness = {
         ...this.#audioReadiness,
         status: "error",
+        fallbackAvailable: mode === "nemotron_streaming",
+        fallbackReason:
+          mode === "nemotron_streaming"
+            ? `Nemotron load failed: ${error instanceof Error ? error.message : String(error)}`
+            : this.#audioReadiness.fallbackReason,
         detail: `Failed to load ${model.id}: ${error instanceof Error ? error.message : String(error)}`,
       };
       throw new FoundryAudioError(this.#audioReadiness.detail, "AUDIO_MODEL_LOAD_FAILED", {
@@ -673,7 +1115,7 @@ export class FoundryLayoutService {
     generation: number,
   ): Promise<AudioTranscriptionResult> {
     if (!this.#audioReadiness.localAudioReady) {
-      await this.prepareAudioOffline();
+      await this.prepareAudioOffline("whisper_file");
     }
     this.#assertAudioOperationCurrent(generation);
     if (this.#activeAudioRequest !== null) {
@@ -723,6 +1165,10 @@ export class FoundryLayoutService {
         transcriptionMs,
         audioDurationMs: capture.durationMs,
         model: audioModelIdentity(model),
+        mode: "whisper_file",
+        transcriptSource: "whisper_file_final",
+        firstPartialMs: null,
+        finalizationMs: transcriptionMs,
         externalEndpointUsed: false,
       };
     } catch (error) {
@@ -850,10 +1296,13 @@ export class FoundryLayoutService {
       }
       this.#assertLayoutOperationCurrent(generation);
       this.#systemPromptPending = false;
-      if (!["stop", "length"].includes(planningResponse.finishReason)) {
+      if (planningResponse.finishReason !== "stop") {
         validationErrors.push({
           code: "INVALID_SCHEMA",
-          message: "The schema-guided planner returned an unexpected finish reason.",
+          message:
+            planningResponse.finishReason === "length"
+              ? "The schema-guided planner hit its output limit; partial JSON is never executed."
+              : "The schema-guided planner returned an unexpected finish reason.",
           details: [planningResponse.finishReason],
         });
         if (session.turnCount > turnCountBeforeAttempt) {
@@ -1005,12 +1454,15 @@ export class FoundryLayoutService {
     this.#audioGeneration += 1;
     this.#activeLayoutRequest?.cancel();
     this.#activeAudioRequest?.cancel();
+    const streamCancellation =
+      this.#activeAudioStream === null ? null : this.#cancelActiveAudioStream(this.#activeAudioStream);
     const operations = [
       this.#initializePromise,
       this.#preparePromise,
       this.#turnPromise,
       this.#audioPreparePromise,
       this.#audioTranscriptionPromise,
+      streamCancellation,
       this.#layoutResetPromise,
       this.#audioResetPromise,
     ];
@@ -1027,7 +1479,9 @@ export class FoundryLayoutService {
   #startAudioReset(): Promise<void> {
     this.#audioGeneration += 1;
     this.#activeAudioRequest?.cancel();
-    const operations = [this.#audioPreparePromise, this.#audioTranscriptionPromise];
+    const streamCancellation =
+      this.#activeAudioStream === null ? null : this.#cancelActiveAudioStream(this.#activeAudioStream);
+    const operations = [this.#audioPreparePromise, this.#audioTranscriptionPromise, streamCancellation];
     let trackedPromise: Promise<void>;
     trackedPromise = this.#resetAudio(operations).finally(() => {
       if (this.#audioResetPromise === trackedPromise) {
@@ -1106,6 +1560,9 @@ export class FoundryLayoutService {
   }
 
   async #resetAudioResources(): Promise<void> {
+    if (this.#activeAudioStream !== null) {
+      await this.#cancelActiveAudioStream(this.#activeAudioStream);
+    }
     this.#activeAudioRequest?.cancel();
     await this.#audioTempStore?.cleanupAll();
 
@@ -1119,7 +1576,7 @@ export class FoundryLayoutService {
         ...this.#audioReadiness,
         status: "error",
         localAudioReady: false,
-        detail: `Failed to unload ${model?.id ?? AUDIO_MODEL_ID}: ${
+        detail: `Failed to unload ${model?.id ?? this.#audioReadiness.model?.id ?? "audio model"}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       };
@@ -1129,6 +1586,7 @@ export class FoundryLayoutService {
     if (this.#audioModel === model) {
       this.#audioModel = null;
     }
+    this.#audioMode = null;
     this.#audioReadiness = initialAudioReadiness();
   }
 
@@ -1223,10 +1681,11 @@ export class FoundryLayoutService {
     }
   }
 
-  #assertAudioModel(model: IModel): void {
-    if (model.id !== AUDIO_MODEL_ID || model.alias !== AUDIO_MODEL_ALIAS) {
+  #assertAudioModel(model: IModel, mode: AudioMode): void {
+    const target = audioTarget(mode);
+    if (model.id !== target.id || model.alias !== target.alias) {
       throw new FoundryAudioError(
-        `Resolved audio model ${model.id} does not match ${AUDIO_MODEL_ID}.`,
+        `Resolved audio model ${model.id} does not match ${target.id}.`,
         "AUDIO_MODEL_UNAVAILABLE",
       );
     }
@@ -1529,6 +1988,11 @@ export class FoundryLayoutService {
       sdkVersion: "2.2.1",
       provider: "Foundry Local in-process SDK",
       model: audioModelIdentity(model),
+      preferredModelId: NEMOTRON_AUDIO_MODEL_ID,
+      fallbackModelId: WHISPER_AUDIO_MODEL_ID,
+      activeMode: this.#audioMode,
+      fallbackAvailable: true,
+      fallbackReason: this.#audioReadiness.fallbackReason,
       modelCached: model.isCached,
       localAudioReady: ready,
       externalEndpointUsed: false,
@@ -1536,7 +2000,9 @@ export class FoundryLayoutService {
       inputFormat: "PCM16LE · 16 kHz · mono",
       status: ready ? "ready" : model.isCached ? "loading" : "preparation_required",
       detail: ready
-        ? `${model.id} is loaded through ${AUDIO_EXECUTION_PROVIDER} for English speech-to-text.`
+        ? `${model.id} is loaded through ${AUDIO_EXECUTION_PROVIDER} for ${
+            this.#audioMode === "nemotron_streaming" ? "live English captions" : "English speech-to-text"
+          }.`
         : model.isCached
           ? `${model.id} is cached and ready to load.`
           : `${model.id} is available but must be downloaded before offline speech input.`,
@@ -1638,6 +2104,32 @@ export class FoundryLayoutService {
       throw new FoundryRuntimeError("Foundry Local chat session is not ready.", "RUNTIME_NOT_READY");
     }
     return this.#session;
+  }
+
+  #requireAudioStream(streamId: string): ActiveAudioStream {
+    const active = this.#activeAudioStream;
+    if (active === null || active.id !== streamId || active.cleanedUp) {
+      throw new FoundryAudioError("The live audio stream is not active.", "AUDIO_NOT_READY");
+    }
+    return active;
+  }
+
+  async #cleanupAudioStream(active: ActiveAudioStream): Promise<void> {
+    if (active.cleanedUp) {
+      return;
+    }
+    active.cleanedUp = true;
+    if (this.#activeAudioStream === active) {
+      this.#activeAudioStream = null;
+    }
+    if (this.#activeAudioRequest === active.request) {
+      this.#activeAudioRequest = null;
+    }
+    try {
+      active.queue.dispose();
+    } finally {
+      active.session.dispose();
+    }
   }
 
   #requireAudioModel(): IModel {

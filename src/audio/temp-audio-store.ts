@@ -5,12 +5,17 @@ import { encodePcm16Wav } from "./audio-contract";
 
 const CAPTURE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const OWNED_CAPTURE_PATTERN = /^capture-[A-Za-z0-9][A-Za-z0-9._-]*\.wav$/;
+export const TEMP_AUDIO_FILE_MODE = 0o600;
+
+export interface TempAudioWriteOptions {
+  readonly mode: typeof TEMP_AUDIO_FILE_MODE;
+}
 
 export interface TempAudioStoreOptions {
   readonly createId?: () => string;
   readonly ensureDirectory?: (directory: string) => Promise<void>;
   readonly listFiles?: (directory: string) => Promise<readonly string[]>;
-  readonly write?: (filePath: string, data: Uint8Array) => Promise<void>;
+  readonly write?: (filePath: string, data: Uint8Array, options: TempAudioWriteOptions) => Promise<void>;
   readonly remove?: (filePath: string) => Promise<void>;
 }
 
@@ -26,7 +31,7 @@ export class TempAudioStore {
   readonly #createId: () => string;
   readonly #ensureDirectory: (directory: string) => Promise<void>;
   readonly #listFiles: (directory: string) => Promise<readonly string[]>;
-  readonly #write: (filePath: string, data: Uint8Array) => Promise<void>;
+  readonly #write: (filePath: string, data: Uint8Array, options: TempAudioWriteOptions) => Promise<void>;
   readonly #remove: (filePath: string) => Promise<void>;
 
   constructor(
@@ -48,8 +53,8 @@ export class TempAudioStore {
           .map((entry) => entry.name));
     this.#write =
       options.write ??
-      (async (filePath, data) => {
-        await writeFile(filePath, data);
+      (async (filePath, data, writeOptions) => {
+        await writeFile(filePath, data, writeOptions);
       });
     this.#remove = options.remove ?? unlink;
   }
@@ -100,7 +105,9 @@ export class TempAudioStore {
     const filePath = this.#resolveOwnedPath(`capture-${captureId}.wav`);
     this.#activePaths.add(filePath);
     try {
-      await this.#write(filePath, encodePcm16Wav(pcmBytes));
+      await this.#write(filePath, encodePcm16Wav(pcmBytes), {
+        mode: TEMP_AUDIO_FILE_MODE,
+      });
       return filePath;
     } catch (writeError) {
       try {

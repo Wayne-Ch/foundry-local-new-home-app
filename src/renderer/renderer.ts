@@ -1,5 +1,21 @@
-import { createTranscriptDraftUpdate, reduceAudioRecorderState } from "../audio/audio-contract";
-import { AUDIO_MAX_DURATION_MS, type AudioRecorderState } from "../audio/audio-types";
+import {
+  applyPartialTranscriptEvent,
+  audioDurationMsFromPcmBytes,
+  createTranscriptDraftUpdate,
+  reduceAudioRecorderState,
+} from "../audio/audio-contract";
+import {
+  AUDIO_CHANNELS,
+  AUDIO_FORMAT,
+  AUDIO_MAX_DURATION_MS,
+  AUDIO_MAX_PCM_BYTES,
+  AUDIO_MIN_DURATION_MS,
+  AUDIO_SAMPLE_RATE,
+  type AudioMode,
+  type AudioPartialTranscriptEvent,
+  type AudioRecorderState,
+  type LiveTranscriptDraft,
+} from "../audio/audio-types";
 import type {
   CheckedRoomState,
   EvaluatedLayoutOption,
@@ -9,6 +25,7 @@ import type {
   RuntimeReadiness,
 } from "../domain/types";
 import type {
+  AudioTranscriptionResponse,
   BootstrapPayload,
   ConversationMessage,
   ProgressEvent,
@@ -18,17 +35,20 @@ import type {
   TraceEntry,
 } from "../shared/contracts";
 import {
-  type AudioRecorderOperation,
-  type AudioRecorderOperationRef,
-  chooseRecordingMimeType,
-  cleanupRecorderOperation,
-  isCurrentRecorderOperation,
-  recordedBlobToAudioPayload,
+  audioModeDisplay,
+  BoundedAudioChunkPump,
+  LivePcmCapture,
   releaseMediaStream,
+  shouldOfferWhisperFallback,
 } from "./audio-capture";
 import { createLayoutPresentation } from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
 import { createPreviewApi } from "./preview-api";
+import {
+  isAudioPreparationActive,
+  resetAfterStartingCleanup,
+  SingleFlightOperation,
+} from "./renderer-lifecycle";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import "./styles.css";
 
@@ -42,8 +62,15 @@ let isBusy = false;
 let runtimeStartupPending = true;
 let audioRecorderState: AudioRecorderState = { status: "idle", elapsedMs: 0, detail: "" };
 let audioNotice = "Editable draft only; click Send to submit.";
-const recorderOperationRef: AudioRecorderOperationRef = { current: null };
+let voiceOperation: VoiceCaptureOperation | null = null;
+let liveTranscriptDraft: LiveTranscriptDraft = {
+  streamId: null,
+  sequence: -1,
+  text: "",
+  isFinal: false,
+};
 const operationBarrier = new RendererOperationBarrier();
+const audioPreparation = new SingleFlightOperation();
 let audioOperationId = 0;
 let resetRecoveryMonitor: Promise<void> | null = null;
 
@@ -53,10 +80,13 @@ const prepareButton = requiredButton("prepareButton");
 const audioBadge = requiredElement("audioBadge");
 const audioLabel = requiredElement("audioLabel");
 const audioPrepareButton = requiredButton("audioPrepareButton");
+const audioFallbackButton = requiredButton("audioFallbackButton");
 const recordButton = requiredButton("recordButton");
 const audioStatus = requiredElement("audioStatus");
 const recordingIndicator = requiredElement("recordingIndicator");
 const recordingTimer = requiredElement("recordingTimer");
+const liveTranscriptPanel = requiredElement("liveTranscriptPanel");
+const liveTranscriptText = requiredElement("liveTranscriptText");
 const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
@@ -87,6 +117,22 @@ const toolTrace = requiredElement("toolTrace");
 const geometryTrace = requiredElement("geometryTrace");
 const previewBanner = requiredElement("previewBanner");
 
+interface VoiceCaptureOperation {
+  readonly operationId: number;
+  readonly lifecycleGeneration: number;
+  readonly mode: AudioMode;
+  readonly stream: MediaStream;
+  readonly startedAt: number;
+  capture: LivePcmCapture | null;
+  pump: BoundedAudioChunkPump | null;
+  streamId: string | null;
+  chunks: Uint8Array[];
+  totalBytes: number;
+  recordingTimerId: number | null;
+  recordingLimitId: number | null;
+  stopped: boolean;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   void initialize();
 });
@@ -101,6 +147,7 @@ async function initialize(): Promise<void> {
   latestToolResult = viewState.lastToolResult;
   renderAll();
   demoApi.onProgress(renderProgress);
+  demoApi.onAudioPartial(handleAudioPartial);
   try {
     const readiness = await demoApi.initializeRuntime();
     if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
@@ -154,8 +201,17 @@ prepareButton.addEventListener("click", async () => {
 });
 
 audioPrepareButton.addEventListener("click", async () => {
+  await prepareAudioMode("nemotron_streaming");
+});
+
+audioFallbackButton.addEventListener("click", async () => {
+  await prepareAudioMode("whisper_file");
+});
+
+async function prepareAudioMode(mode: AudioMode): Promise<void> {
+  const api = demoApi;
   if (
-    demoApi === null ||
+    api === null ||
     previewMode ||
     runtimeStartupPending ||
     operationBarrier.operationsBlocked ||
@@ -163,8 +219,18 @@ audioPrepareButton.addEventListener("click", async () => {
   ) {
     return;
   }
+
+  await audioPreparation
+    .run(() => runAudioPreparation(api, mode))
+    .finally(() => {
+      renderAudio();
+    });
+}
+
+async function runAudioPreparation(api: NonNullable<typeof demoApi>, mode: AudioMode): Promise<void> {
   const lifecycleGeneration = operationBarrier.beginOperation();
   const operationId = ++audioOperationId;
+  liveTranscriptDraft = emptyLiveTranscriptDraft();
   viewState = {
     ...viewState,
     audioReadiness: {
@@ -176,12 +242,15 @@ audioPrepareButton.addEventListener("click", async () => {
   audioNotice = "Preparing local speech-to-text.";
   renderAudio();
   try {
-    const response = await demoApi.prepareAudio();
+    const response = await api.prepareAudio({ mode });
     if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
     viewState = { ...viewState, audioReadiness: response.readiness };
-    audioNotice = "Microphone model is ready. Press Start recording.";
+    audioNotice =
+      mode === "nemotron_streaming"
+        ? "Nemotron live captions are ready. Press Start recording."
+        : "Whisper fallback is ready. Press Start recording.";
   } catch (error) {
     if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
@@ -190,7 +259,7 @@ audioPrepareButton.addEventListener("click", async () => {
     showAudioError(error);
   }
   renderAudio();
-});
+}
 
 recordButton.addEventListener("click", () => {
   if (audioRecorderState.status === "recording") {
@@ -204,14 +273,17 @@ traceToggle.addEventListener("click", () => setTraceOpen(!tracePanel.classList.c
 traceClose.addEventListener("click", () => setTraceOpen(false));
 
 resetButton.addEventListener("click", async () => {
-  if (demoApi === null || operationBarrier.resetInFlight) {
+  const api = demoApi;
+  if (api === null || operationBarrier.resetInFlight) {
     return;
   }
   const resetGeneration = operationBarrier.beginReset();
   setBusy(true);
   try {
-    await discardRecording();
-    const bootstrap = await demoApi.resetConversation();
+    const bootstrap = await resetAfterStartingCleanup(
+      () => discardRecording(false),
+      () => api.resetConversation(),
+    );
     if (!operationBarrier.isCurrentReset(resetGeneration)) {
       return;
     }
@@ -387,38 +459,53 @@ function renderRuntime(readiness: RuntimeReadiness): void {
 function renderAudio(): void {
   const readiness = viewState.audioReadiness;
   const pipelineReady = readiness.localAudioReady && viewState.readiness.localInferenceReady;
-  audioBadge.className = "audio-badge";
-  if (audioRecorderState.status === "error" || readiness.status === "error") {
-    audioBadge.classList.add("is-error");
-    audioLabel.textContent = "Voice input error";
-  } else if (isAudioBusy() || ["checking", "loading", "transcribing"].includes(readiness.status)) {
-    audioBadge.classList.add("is-busy");
-    audioLabel.textContent =
-      audioRecorderState.status === "recording"
-        ? "Recording locally"
-        : audioRecorderState.status === "transcribing"
-          ? "Transcribing locally"
-          : "Preparing voice input";
-  } else if (pipelineReady) {
-    audioBadge.classList.add("is-ready");
-    audioLabel.textContent = `${readiness.model?.alias ?? "Local ASR"} · ${readiness.model?.deviceType ?? ""}`;
-  } else if (readiness.localAudioReady) {
-    audioBadge.classList.add("is-busy");
-    audioLabel.textContent = "ASR ready · load layout model";
-  } else {
-    audioBadge.classList.add("is-idle");
-    audioLabel.textContent = "Voice input not ready";
-  }
-
-  audioPrepareButton.disabled =
+  const preparationActive = isAudioPreparationActive(audioPreparation.active, readiness.status);
+  const modeControlsBlocked =
     previewMode ||
     runtimeStartupPending ||
     operationBarrier.operationsBlocked ||
     isBusy ||
     isAudioBusy() ||
-    ["checking", "loading"].includes(readiness.status) ||
-    readiness.localAudioReady;
-  audioPrepareButton.textContent = readiness.localAudioReady ? "ASR model ready" : "Prepare microphone";
+    preparationActive;
+  const modeDisplay = audioModeDisplay(readiness);
+  audioBadge.className = "audio-badge";
+  audioBadge.title = `${modeDisplay}. ${readiness.detail}`;
+  if (audioRecorderState.status === "error" || readiness.status === "error") {
+    audioBadge.classList.add("is-error");
+    audioLabel.textContent = `${modeDisplay} · error`;
+  } else if (
+    isAudioBusy() ||
+    ["checking", "loading", "streaming", "transcribing"].includes(readiness.status)
+  ) {
+    audioBadge.classList.add("is-busy");
+    const activity =
+      audioRecorderState.status === "recording"
+        ? "recording locally"
+        : audioRecorderState.status === "transcribing"
+          ? "finalizing locally"
+          : "preparing";
+    audioLabel.textContent = `${modeDisplay} · ${activity}`;
+  } else if (pipelineReady) {
+    audioBadge.classList.add("is-ready");
+    audioLabel.textContent = modeDisplay;
+  } else if (readiness.localAudioReady) {
+    audioBadge.classList.add("is-busy");
+    audioLabel.textContent = `${modeDisplay} · load layout model`;
+  } else {
+    audioBadge.classList.add("is-idle");
+    audioLabel.textContent = `${modeDisplay} · not ready`;
+  }
+
+  audioPrepareButton.disabled =
+    modeControlsBlocked ||
+    readiness.status === "streaming" ||
+    (readiness.localAudioReady && readiness.activeMode === "nemotron_streaming");
+  audioPrepareButton.textContent =
+    readiness.localAudioReady && readiness.activeMode === "nemotron_streaming"
+      ? "Nemotron ready"
+      : "Prepare Nemotron live";
+  audioFallbackButton.hidden = !shouldOfferWhisperFallback(readiness);
+  audioFallbackButton.disabled = modeControlsBlocked;
   recordButton.disabled =
     previewMode ||
     isBusy ||
@@ -428,11 +515,14 @@ function renderAudio(): void {
     (!pipelineReady && audioRecorderState.status !== "recording");
   recordButton.classList.toggle("is-recording", audioRecorderState.status === "recording");
   recordButton.setAttribute("aria-pressed", String(audioRecorderState.status === "recording"));
-  recordButton.textContent =
-    audioRecorderState.status === "recording" ? "Stop & transcribe" : "Start recording";
+  recordButton.textContent = audioRecorderState.status === "recording" ? "Stop" : "Start recording";
   recordingIndicator.hidden = audioRecorderState.status !== "recording";
   recordingTimer.textContent = formatElapsedTime(audioRecorderState.elapsedMs);
   audioStatus.textContent = audioRecorderState.detail || audioNotice || readiness.detail;
+  liveTranscriptPanel.hidden =
+    readiness.activeMode !== "nemotron_streaming" ||
+    (!liveTranscriptDraft.text && audioRecorderState.status !== "recording");
+  liveTranscriptText.textContent = liveTranscriptDraft.text || "Listening…";
 }
 
 function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
@@ -688,6 +778,21 @@ function renderProgress(event: ProgressEvent): void {
   }
 }
 
+function handleAudioPartial(event: AudioPartialTranscriptEvent): void {
+  const operation = voiceOperation;
+  if (
+    operation === null ||
+    operation.mode !== "nemotron_streaming" ||
+    operation.streamId !== event.streamId ||
+    !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
+  ) {
+    return;
+  }
+  liveTranscriptDraft = applyPartialTranscriptEvent(liveTranscriptDraft, event);
+  audioNotice = `Live Nemotron draft · first partial ${event.firstPartialMs} ms · not sent`;
+  renderAudio();
+}
+
 function setBusy(value: boolean): void {
   isBusy = value;
   sendButton.disabled =
@@ -742,6 +847,12 @@ async function startRecording(): Promise<void> {
     return;
   }
 
+  const mode = viewState.audioReadiness.activeMode;
+  if (mode === null) {
+    showAudioError(new Error("Prepare a voice model before recording."));
+    return;
+  }
+
   const lifecycleGeneration = operationBarrier.beginOperation();
   const operationId = ++audioOperationId;
   audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
@@ -751,6 +862,7 @@ async function startRecording(): Promise<void> {
   renderAudio();
 
   let pendingStream: MediaStream | null = null;
+  let pendingStreamId: string | null = null;
   try {
     await demoApi.authorizeMicrophone();
     if (operationId !== audioOperationId || !operationBarrier.isCurrentOperation(lifecycleGeneration)) {
@@ -771,69 +883,121 @@ async function startRecording(): Promise<void> {
       return;
     }
 
-    const mimeType = chooseRecordingMimeType();
-    const recorder = new MediaRecorder(pendingStream, mimeType ? { mimeType } : undefined);
-    const operation: AudioRecorderOperation = {
+    if (mode === "nemotron_streaming") {
+      const start = await demoApi.startAudioStream({
+        format: AUDIO_FORMAT,
+        sampleRate: AUDIO_SAMPLE_RATE,
+        channels: AUDIO_CHANNELS,
+        maxDurationMs: AUDIO_MAX_DURATION_MS,
+      });
+      pendingStreamId = start.streamId;
+    }
+
+    const operation: VoiceCaptureOperation = {
       operationId,
       lifecycleGeneration,
-      recorder,
+      mode,
       stream: pendingStream,
+      capture: null,
+      pump: null,
+      streamId: pendingStreamId,
       chunks: [],
+      totalBytes: 0,
       startedAt: performance.now(),
       recordingTimerId: null,
       recordingLimitId: null,
+      stopped: false,
     };
-    recorderOperationRef.current = operation;
+    if (pendingStreamId !== null) {
+      const streamId = pendingStreamId;
+      operation.pump = new BoundedAudioChunkPump(
+        (sequence, data) =>
+          demoApi.appendAudioChunk({
+            streamId,
+            sequence,
+            data,
+          }),
+        (error) => {
+          if (!operation.stopped) {
+            void handleVoiceCaptureError(operation, error);
+          }
+        },
+      );
+    }
+    voiceOperation = operation;
     pendingStream = null;
-    recorder.addEventListener("dataavailable", (event) => {
-      if (isCurrentRecorderOperation(recorderOperationRef, operation) && event.data.size > 0) {
-        operation.chunks.push(event.data);
-      }
-    });
-    recorder.addEventListener("error", (event) => handleRecorderError(operation, event));
-    recorder.start(250);
+    pendingStreamId = null;
+    const capture = await LivePcmCapture.start(
+      operation.stream,
+      (chunk) => handlePcmChunk(operation, chunk),
+      (error) => {
+        void handleVoiceCaptureError(operation, error);
+      },
+    );
+    if (
+      voiceOperation !== operation ||
+      operationId !== audioOperationId ||
+      !operationBarrier.isCurrentOperation(lifecycleGeneration)
+    ) {
+      await capture.stop().catch(() => []);
+      releaseMediaStream(operation.stream);
+      return;
+    }
+    operation.capture = capture;
     audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "START" });
-    audioNotice = `Recording is capped at ${AUDIO_MAX_DURATION_MS / 1000} seconds.`;
+    liveTranscriptDraft = {
+      streamId: operation.streamId,
+      sequence: -1,
+      text: "",
+      isFinal: false,
+    };
+    audioNotice =
+      mode === "nemotron_streaming"
+        ? `Live captions are local and capped at ${AUDIO_MAX_DURATION_MS / 1000} seconds.`
+        : `Whisper fallback records locally for up to ${AUDIO_MAX_DURATION_MS / 1000} seconds.`;
     operation.recordingTimerId = window.setInterval(() => updateRecordingTimer(operation), 100);
     operation.recordingLimitId = window.setTimeout(() => {
-      if (isCurrentRecorderOperation(recorderOperationRef, operation)) {
+      if (voiceOperation === operation) {
         void stopAndTranscribe(operation);
       }
     }, AUDIO_MAX_DURATION_MS);
     renderAll();
   } catch (error) {
-    const operation = recorderOperationRef.current;
+    const operation = voiceOperation;
     if (operation?.operationId === operationId) {
-      cleanupActiveRecorder(operation, true);
+      await cleanupVoiceOperation(operation, true);
     }
     releaseMediaStream(pendingStream);
+    if (pendingStreamId !== null) {
+      await demoApi.cancelAudioStream({ streamId: pendingStreamId }).catch(() => undefined);
+    }
     if (operationId === audioOperationId && operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       showAudioError(error, microphoneErrorMessage(error));
     }
   }
 }
 
-async function stopAndTranscribe(
-  operation: AudioRecorderOperation | null = recorderOperationRef.current,
-): Promise<void> {
-  if (
-    operation === null ||
-    !isCurrentRecorderOperation(recorderOperationRef, operation) ||
-    operation.recorder.state === "inactive"
-  ) {
+async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voiceOperation): Promise<void> {
+  if (operation === null || voiceOperation !== operation || operation.stopped) {
     return;
   }
-  const { operationId, recorder } = operation;
+  const { operationId } = operation;
+  operation.stopped = true;
   clearRecordingTimers(operation);
   updateRecordingTimer(operation);
   audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "TRANSCRIBE" });
-  audioNotice = "Converting the local capture to 16 kHz mono PCM.";
+  audioNotice =
+    operation.mode === "nemotron_streaming"
+      ? "Finalizing the local live transcript."
+      : "Transcribing the local Whisper fallback recording.";
   renderAll();
 
+  let completed = false;
   try {
-    const blob = await stopRecorder(recorder, operation.chunks);
-    cleanupActiveRecorder(operation, false);
-    const payload = await recordedBlobToAudioPayload(blob);
+    for (const chunk of (await operation.capture?.stop()) ?? []) {
+      appendPcmChunk(operation, chunk);
+    }
+    releaseMediaStream(operation.stream);
     if (
       operationId !== audioOperationId ||
       !operationBarrier.isCurrentOperation(operation.lifecycleGeneration) ||
@@ -841,9 +1005,34 @@ async function stopAndTranscribe(
     ) {
       return;
     }
-    audioNotice = "Foundry Local is transcribing on device.";
-    renderAudio();
-    const response = await demoApi.transcribeAudio(payload);
+
+    const audioDurationMs = audioDurationMsFromPcmBytes(operation.totalBytes);
+    if (audioDurationMs < AUDIO_MIN_DURATION_MS) {
+      throw new Error(`Record at least ${AUDIO_MIN_DURATION_MS / 1000} seconds before stopping.`);
+    }
+
+    let response: AudioTranscriptionResponse;
+    if (operation.mode === "nemotron_streaming") {
+      await operation.pump?.flush();
+      if (operation.streamId === null || operation.pump === null) {
+        throw new Error("Nemotron stream state is incomplete.");
+      }
+      response = await demoApi.finishAudioStream({
+        streamId: operation.streamId,
+        lastSequence: operation.pump.lastSequence,
+        audioDurationMs,
+      });
+    } else {
+      const pcm = concatenatePcmChunks(operation.chunks, operation.totalBytes);
+      const data = pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer;
+      response = await demoApi.transcribeAudio({
+        format: AUDIO_FORMAT,
+        sampleRate: AUDIO_SAMPLE_RATE,
+        channels: AUDIO_CHANNELS,
+        durationMs: audioDurationMs,
+        data,
+      });
+    }
     if (
       operationId !== audioOperationId ||
       !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
@@ -859,7 +1048,16 @@ async function stopAndTranscribe(
     promptInput.value = draft.value;
     promptInput.focus();
     audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "COMPLETE" });
-    audioNotice = `Transcript added in ${response.result.transcriptionMs} ms. Review it, then click Send.`;
+    liveTranscriptDraft = {
+      streamId: operation.streamId,
+      sequence: Number.MAX_SAFE_INTEGER,
+      text: response.result.transcript,
+      isFinal: true,
+    };
+    audioNotice = `${
+      response.result.mode === "nemotron_streaming" ? "Nemotron final" : "Whisper fallback"
+    } transcript added. Review it, then click Send.`;
+    completed = true;
     renderAll();
   } catch (error) {
     if (
@@ -870,59 +1068,54 @@ async function stopAndTranscribe(
       showAudioError(error);
     }
   } finally {
-    cleanupActiveRecorder(operation, false);
+    await cleanupVoiceOperation(operation, !completed);
   }
 }
 
-async function discardRecording(): Promise<void> {
-  const operation = recorderOperationRef.current;
-  if (operation !== null) {
-    cleanupActiveRecorder(operation, true);
-  }
+async function discardRecording(cancelRemote = true): Promise<void> {
+  const operation = voiceOperation;
+  const cleanupPromise = operation === null ? null : cleanupVoiceOperation(operation, cancelRemote);
   audioOperationId += 1;
+  liveTranscriptDraft = emptyLiveTranscriptDraft();
   audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "RESET" });
+  await cleanupPromise;
 }
 
-function stopRecorder(recorder: MediaRecorder, chunks: readonly Blob[]): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const handleStop = () => {
-      recorder.removeEventListener("error", handleError);
-      resolve(new Blob([...chunks], { type: recorder.mimeType || "audio/webm" }));
-    };
-    const handleError = () => {
-      recorder.removeEventListener("stop", handleStop);
-      reject(new Error("Microphone recording failed before transcription."));
-    };
-    recorder.addEventListener("stop", handleStop, { once: true });
-    recorder.addEventListener("error", handleError, { once: true });
-    recorder.stop();
-  });
-}
-
-function handleRecorderError(operation: AudioRecorderOperation, event: Event): void {
+function handlePcmChunk(operation: VoiceCaptureOperation, chunk: Uint8Array): void {
   if (
-    !operationBarrier.isCurrentOperation(operation.lifecycleGeneration) ||
-    !cleanupActiveRecorder(operation, false)
+    voiceOperation !== operation ||
+    operation.stopped ||
+    !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
   ) {
     return;
   }
-  const message =
-    "error" in event && event.error instanceof Error
-      ? event.error.message
-      : "The browser recorder reported an error.";
-  audioRecorderState = reduceAudioRecorderState(audioRecorderState, {
-    type: "FAIL",
-    detail: message,
-  });
-  audioNotice = message;
-  renderAudio();
+  appendPcmChunk(operation, chunk);
 }
 
-function updateRecordingTimer(operation: AudioRecorderOperation): void {
-  if (
-    audioRecorderState.status !== "recording" ||
-    !isCurrentRecorderOperation(recorderOperationRef, operation)
-  ) {
+function appendPcmChunk(operation: VoiceCaptureOperation, chunk: Uint8Array): void {
+  const remaining = AUDIO_MAX_PCM_BYTES - operation.totalBytes;
+  if (remaining <= 0) {
+    return;
+  }
+  const bounded = chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining);
+  operation.totalBytes += bounded.byteLength;
+  if (operation.mode === "nemotron_streaming") {
+    operation.pump?.enqueue(bounded);
+  } else {
+    operation.chunks.push(bounded.slice());
+  }
+}
+
+async function handleVoiceCaptureError(operation: VoiceCaptureOperation, error: unknown): Promise<void> {
+  if (voiceOperation !== operation || !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)) {
+    return;
+  }
+  await cleanupVoiceOperation(operation, true);
+  showAudioError(error);
+}
+
+function updateRecordingTimer(operation: VoiceCaptureOperation): void {
+  if (audioRecorderState.status !== "recording" || voiceOperation !== operation) {
     return;
   }
   const elapsedMs = Math.min(
@@ -936,7 +1129,7 @@ function updateRecordingTimer(operation: AudioRecorderOperation): void {
   recordingTimer.textContent = formatElapsedTime(elapsedMs);
 }
 
-function clearRecordingTimers(operation: AudioRecorderOperation): void {
+function clearRecordingTimers(operation: VoiceCaptureOperation): void {
   if (operation.recordingTimerId !== null) {
     window.clearInterval(operation.recordingTimerId);
     operation.recordingTimerId = null;
@@ -947,13 +1140,39 @@ function clearRecordingTimers(operation: AudioRecorderOperation): void {
   }
 }
 
-function cleanupActiveRecorder(operation: AudioRecorderOperation, stopRecorder: boolean): boolean {
-  return cleanupRecorderOperation(recorderOperationRef, operation, {
-    stopRecorder,
-    clearInterval: (timerId) => window.clearInterval(timerId),
-    clearTimeout: (timerId) => window.clearTimeout(timerId),
-    releaseStream: releaseMediaStream,
-  });
+async function cleanupVoiceOperation(operation: VoiceCaptureOperation, cancelRemote: boolean): Promise<void> {
+  if (voiceOperation !== operation) {
+    return;
+  }
+  voiceOperation = null;
+  clearRecordingTimers(operation);
+  operation.pump?.cancel();
+  const captureCleanup = operation.capture?.stop().catch(() => []) ?? Promise.resolve([]);
+  releaseMediaStream(operation.stream);
+  operation.chunks.length = 0;
+  await captureCleanup;
+  if (cancelRemote && operation.streamId !== null && demoApi !== null) {
+    await demoApi.cancelAudioStream({ streamId: operation.streamId }).catch(() => undefined);
+  }
+}
+
+function concatenatePcmChunks(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+  const output = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+function emptyLiveTranscriptDraft(): LiveTranscriptDraft {
+  return {
+    streamId: null,
+    sequence: -1,
+    text: "",
+    isFinal: false,
+  };
 }
 
 function isAudioBusy(): boolean {
@@ -1057,7 +1276,7 @@ function formatElapsedTime(elapsedMs: number): string {
 }
 
 window.addEventListener("beforeunload", () => {
-  void discardRecording();
+  void discardRecording(false);
 });
 
 function appendSvgLabel(text: string, x: number, y: number, color: string): void {

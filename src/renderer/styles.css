@@ -449,6 +449,14 @@ h3 {
   background: #6f839b;
 }
 
+#audioLabel {
+  min-width: 0;
+  max-width: min(52vw, 620px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .audio-badge.is-ready {
   border-color: rgb(53 198 138 / 50%);
   color: #bdf6dd;
@@ -508,9 +516,33 @@ h3 {
 .audio-control-row {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 8px;
   align-items: center;
+}
+
+.live-transcript-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(110 168 254 / 45%);
+  border-radius: 9px;
+  background: rgb(38 84 135 / 18%);
+  color: #d7e8fb;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.live-transcript-panel strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #8fc0fb;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#liveTranscriptText {
+  white-space: pre-wrap;
 }
 
 .audio-button,
@@ -527,6 +559,7 @@ h3 {
 }
 
 .audio-status-row {
+  grid-column: 1 / -1;
   min-width: 0;
   display: flex;
   align-items: center;

@@ -1,8 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, BrowserWindow, ipcMain, session } from "electron";
-import type { AudioCapturePayload } from "../audio/audio-types";
+import { app, BrowserWindow, type IpcMainInvokeEvent, ipcMain, session } from "electron";
+import type {
+  AudioCapturePayload,
+  AudioStreamCancelRequest,
+  AudioStreamChunkRequest,
+  AudioStreamFinishRequest,
+  AudioStreamStartRequest,
+  PrepareAudioRequest,
+} from "../audio/audio-types";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import { DemoController } from "./demo-controller";
 import {
@@ -143,11 +150,32 @@ function registerIpc(): void {
       mainWindow?.webContents.send(ipcChannels.progress, event);
     }),
   );
-  ipcMain.handle(ipcChannels.prepareAudio, () =>
-    controller.prepareAudio((event) => {
-      mainWindow?.webContents.send(ipcChannels.progress, event);
-    }),
-  );
+  ipcMain.handle(ipcChannels.prepareAudio, (event, request: PrepareAudioRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.prepareAudio(request, (progress) => {
+      mainWindow?.webContents.send(ipcChannels.progress, progress);
+    });
+  });
+  ipcMain.handle(ipcChannels.startAudioStream, (event, request: AudioStreamStartRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.startAudioStream(request, (partial) => {
+      mainWindow?.webContents.send(ipcChannels.audioPartial, partial);
+    });
+  });
+  ipcMain.handle(ipcChannels.appendAudioChunk, (event, request: AudioStreamChunkRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.appendAudioStreamChunk(request);
+  });
+  ipcMain.handle(ipcChannels.finishAudioStream, (event, request: AudioStreamFinishRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.finishAudioStream(request, (progress) => {
+      mainWindow?.webContents.send(ipcChannels.progress, progress);
+    });
+  });
+  ipcMain.handle(ipcChannels.cancelAudioStream, (event, request: AudioStreamCancelRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.cancelAudioStream(request);
+  });
   ipcMain.handle(ipcChannels.authorizeMicrophone, (event, request: MicrophoneAuthorizationRequest) => {
     const window = mainWindow;
     const gate = microphonePermissionGate;
@@ -167,17 +195,33 @@ function registerIpc(): void {
       throw new Error("Microphone capture was not authorized by an active app gesture.");
     }
   });
-  ipcMain.handle(ipcChannels.transcribeAudio, (_event, request: AudioCapturePayload) =>
-    controller.transcribeAudio(request, (progress) => {
+  ipcMain.handle(ipcChannels.transcribeAudio, (event, request: AudioCapturePayload) => {
+    assertTrustedRendererIpc(event);
+    return controller.transcribeAudio(request, (progress) => {
       mainWindow?.webContents.send(ipcChannels.progress, progress);
-    }),
-  );
+    });
+  });
   ipcMain.handle(ipcChannels.runTurn, (_event, request: RunTurnRequest) =>
     controller.runTurn(request, (progress) => {
       mainWindow?.webContents.send(ipcChannels.progress, progress);
     }),
   );
   ipcMain.handle(ipcChannels.resetConversation, () => controller.reset());
+}
+
+function assertTrustedRendererIpc(event: IpcMainInvokeEvent): void {
+  const window = mainWindow;
+  const frame = event.senderFrame;
+  if (
+    window === null ||
+    event.sender !== window.webContents ||
+    frame === null ||
+    frame !== event.sender.mainFrame ||
+    event.sender.getURL() !== rendererDocumentUrl ||
+    frame.url !== rendererDocumentUrl
+  ) {
+    throw new Error("Audio IPC is restricted to the active application main frame.");
+  }
 }
 
 registerIpc();

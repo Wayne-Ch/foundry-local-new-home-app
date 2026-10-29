@@ -23,7 +23,8 @@ Put on screen:
 - exact public-catalog lookup for `qwen2.5-1.5b-instruct-generic-gpu:4`;
 - one-time exact-model download when the cache is empty;
 - exact `WebGPUExecutionProvider` matching and registration;
-- exact `openai-whisper-tiny-generic-cpu:4` selection on CPU;
+- exact default `nemotron-speech-streaming-en-0.6b-generic-cpu:3` selection on CPU;
+- explicit `openai-whisper-tiny-generic-cpu:4` fallback selection only after user action;
 - separate text/audio readiness from one `FoundryLocalManager`;
 - `downloadAndRegisterEps`;
 - `model.load()` / `model.unload()` / `manager.dispose()`.
@@ -38,21 +39,25 @@ Message:
 **Files:** `src/renderer/audio-capture.ts`, `src/audio/audio-contract.ts`,
 `src/foundry/foundry-service.ts`
 
-**Symbols:** `recordedBlobToAudioPayload`, `validateAudioCapturePayload`, `transcribeAudio`
+**Symbols:** `LivePcmCapture`, `StreamingPcm16Resampler`, `BoundedAudioChunkPump`,
+`validateAudioStreamChunk`, `startAudioStream`, `finishAudioStream`, `transcribeAudio`
 
 Put on screen:
 
 - explicit `getUserMedia` button path and 20-second limit;
-- downmix/resample to PCM16LE, 16 kHz, mono;
-- typed IPC format/duration/size validation;
-- temporary WAV file because v2.2.1 rejects one-shot inline audio data;
-- native `AudioSession` and `Item.audioFromUri`;
-- `finally` cleanup and transcript draft with `shouldSubmit: false`.
+- `AudioWorklet` downmix/resample to PCM16LE, 16 kHz, mono;
+- ordered 100 ms renderer chunks, eight-chunk pump bound, typed IPC, and main/native queue bounds;
+- native v2.2.1 `AudioSession`, `Item.audioDescriptor`, `ItemQueue`, `Item.bytes`, and
+  `markFinished`;
+- partial hypothesis replacement in **Live draft — not sent**;
+- terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
+- explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
 
 Message:
 
-> Audio is an optional local input adapter. The user reviews the transcript before it becomes an
-> ordinary text turn; ASR never calls geometry.
+> Audio is an optional local input adapter. Nemotron partials are display-only. Stop produces one
+> final editable draft, and the user still clicks Send before it becomes an ordinary text turn; ASR
+> never calls geometry.
 
 ## 6:10–7:10 — Multi-turn local planning request
 
@@ -75,12 +80,14 @@ const request = new Request()
   });
 ```
 
-Then show the three-attempt loop and `session.undoTurns(1)`.
+Then show the three-attempt loop, the `finishReason === "stop"` gate, and
+`session.undoTurns(1)`.
 
 Message:
 
 > One `ChatSession` owns conversation history. Each request sends only the new turn plus the current
-> application state reference.
+> application state reference. Length-truncated JSON is rolled back even if it happens to parse; only
+> a complete, validated plan can execute.
 
 ## 7:10–8:40 — Tool contract and fail-closed validation
 
@@ -147,7 +154,8 @@ Message:
 
 ## 10:50–11:30 — Acceptance proof and transition to live offline turn
 
-**Files:** `scripts/run-foundry-integration.ts`, `scripts/run-audio-integration.ts`
+**Files:** `scripts/run-foundry-integration.ts`, `scripts/run-nemotron-integration.ts`,
+`scripts/run-audio-integration.ts`
 
 Show only:
 
@@ -157,9 +165,15 @@ Show only:
 - no-feasible assertion;
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
-- exact Whisper Tiny ID/CPU-EP assertion and transcript recall;
+- exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
+  recall;
+- explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
+Current checkpoint: 13 test files / 120 tests pass in Vitest's reported 1.10 seconds. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,284 ms, stop-to-final 115 ms, 6,037 ms cached
+prepare) and the explicit Whisper fallback prepared in 5,073 ms and transcribed in 239 ms.
+
 Then return to the app for the single fresh offline controlled-failure input. Do not attempt to run
-all four story turns live; measured Windows latency is 11–31 seconds per turn.
+all four story turns live; measured Windows latency is 11.167–29.263 seconds per turn.
