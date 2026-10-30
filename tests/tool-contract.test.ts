@@ -1346,6 +1346,14 @@ describe("missing verified dimensions", () => {
     "Use tables to format the results.",
     "Use two tables—for the results!",
     "Use tables—to summarize the comparison?",
+    "Use two tables (for the results).",
+    "Use two tables [for the results].",
+    "Use two tables {for the results}.",
+    "Use tables (to summarize the results).",
+    "Use tables [to summarize the results].",
+    "Use tables {to summarize the results}.",
+    "Use two tables, [for the results].",
+    "Use tables—{to summarize the comparison}?",
     "Do not use two tables for the results.",
     "Don't use tables to summarize the comparison.",
   ])("keeps plural presentation tables out of the furniture catalog: %s", (prompt) => {
@@ -1375,6 +1383,19 @@ describe("missing verified dimensions", () => {
     expect(analysis.clarification).toBe("required");
     expect(analysis.unknowns).toContain("Missing verified catalog dimensions for table.");
   });
+
+  it.each(["Add two tables (beside the bed).", "Put tables [near the window]."])(
+    "keeps wrapped physical table requests fail-closed without malformed evidence: %s",
+    (prompt) => {
+      const state = stateWithQueenDesk();
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["table"]);
+      const analysis = analyzeLayoutPrompt(state, prompt);
+      expect(analysis.clarification).toBe("required");
+      expect(
+        analysis.unknowns.filter((unknown) => unknown.startsWith("Missing verified catalog dimensions for ")),
+      ).toEqual(["Missing verified catalog dimensions for table."]);
+    },
+  );
 
   it.each([
     "Do not add two tables beside the bed.",

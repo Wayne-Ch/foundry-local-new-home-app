@@ -421,7 +421,13 @@ const presentationTableSources = [
 ] as const;
 
 function normalizePromptText(value: string): string {
-  return value.toLowerCase().replaceAll(/[’‘]/g, "'").replaceAll(/[–—]/g, "-").replaceAll(/\s+/g, " ").trim();
+  return value
+    .toLowerCase()
+    .replaceAll(/[’‘]/g, "'")
+    .replaceAll(/[–—]/g, "-")
+    .replaceAll(/[()[\]{}]/g, " ")
+    .replaceAll(/\s+/g, " ")
+    .trim();
 }
 
 function singularizeFurnitureHead(phrase: string): string {
