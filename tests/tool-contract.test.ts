@@ -56,6 +56,42 @@ function expectBuiltToolInput(
   return result.value;
 }
 
+const presentationTableOperationPrompts = [
+  "Use two tables to compare the results.",
+  "Use tables to organize the findings.",
+  "Use two tables to render the comparison.",
+  "Use tables to summarize the output.",
+  "Use tables to display the data.",
+  "Use two tables to show the summary.",
+  "Use tables to compare results and findings.",
+  "Use tables—to compare (the results)?",
+  "Use two tables {to render the comparison}?",
+] as const;
+
+const requestedNonPresentationTableOperationCases = [
+  ["Use two tables to organize lamps.", "physical"],
+  ["Use two tables to compare lamps.", "physical"],
+  ["Use two tables to organize output devices.", "physical"],
+  ["Use two tables to render comparison boards.", "physical"],
+  ["Use tables to display chairs.", "physical"],
+  ["Use tables to display output devices.", "physical"],
+  ["Use tables to show comparison boards.", "physical"],
+  ["Use tables to summarize presentation materials.", "physical"],
+  ["Use two tables to compare the results and lamps.", "physical"],
+  ["Use two tables to compare lamps and the results.", "physical"],
+  ["Use two tables [to organize lamps]!", "physical"],
+  ["Use tables to compare the results beside the bed.", "physical"],
+  ["Use tables to summarize report binders.", "ambiguous"],
+  ["Use two tables to format boxes.", "ambiguous"],
+  ["Use tables to organize.", "ambiguous"],
+] as const;
+
+const negatedNonPresentationTableOperationCases = [
+  ["Do not use two tables to compare lamps.", "physical"],
+  ["Don't use tables to organize report binders.", "ambiguous"],
+  ["Do not use tables—to render (comparison boards).", "physical"],
+] as const;
+
 describe("strict tool-call validation", () => {
   it("accepts a current, millimetre-based, known-ID call", () => {
     const state = createInitialDemoState();
@@ -1199,6 +1235,46 @@ describe("table reference intent classifier", () => {
     expect(classifyTableReference(separateClauses, 0)).toBe("physical");
     expect(classifyTableReference(separateClauses, 1)).toBe("presentation");
   });
+
+  it.each(presentationTableOperationPrompts)(
+    "uses an abstract operation object as presentation evidence: %s",
+    (prompt) => {
+      const state = stateWithQueenDesk();
+      expect(classifyTableReference(prompt)).toBe("presentation");
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "none",
+        unknowns: [],
+      });
+    },
+  );
+
+  it.each(requestedNonPresentationTableOperationCases)(
+    "fails closed for a physical or unresolved operation object: %s",
+    (prompt, expectedIntent) => {
+      const state = stateWithQueenDesk();
+      expect(classifyTableReference(prompt)).toBe(expectedIntent);
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["table"]);
+      const analysis = analyzeLayoutPrompt(state, prompt);
+      expect(analysis.clarification).toBe("required");
+      expect(
+        analysis.unknowns.filter((unknown) => unknown === "Missing verified catalog dimensions for table."),
+      ).toEqual(["Missing verified catalog dimensions for table."]);
+    },
+  );
+
+  it.each(negatedNonPresentationTableOperationCases)(
+    "keeps negated operation objects classified without requesting furniture: %s",
+    (prompt, expectedIntent) => {
+      const state = stateWithQueenDesk();
+      expect(classifyTableReference(prompt)).toBe(expectedIntent);
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        clarification: "none",
+        unknowns: [],
+      });
+    },
+  );
 });
 
 describe("missing verified dimensions", () => {

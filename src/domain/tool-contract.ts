@@ -450,16 +450,18 @@ const physicalTableContentHeads = new Set([
   "thing",
 ]);
 
-const tableAbstractOperationVerbs = new Set([
+const tableObjectSensitiveOperationVerbs = new Set([
   "compare",
+  "display",
   "format",
   "organize",
   "output",
+  "present",
   "render",
+  "show",
   "summarize",
   "tabulate",
 ]);
-const tableDisplayVerbs = new Set(["display", "present", "show"]);
 const tablePhysicalSupportVerbs = new Set(["carry", "hold", "mount", "place", "store", "support"]);
 const tableAdditionalActionSource =
   "(?:compare|display|format|organize|present|provide|render|return|show|summarize|tabulate)";
@@ -625,6 +627,25 @@ function tableIntentForContent(kind: TableContentKind): TableReferenceIntent {
   return kind === "physical" ? "physical" : "ambiguous";
 }
 
+function classifyTableOperationObject(value: string): TableReferenceIntent {
+  const phrase = leadingTableRelationPhrase(value);
+  if (!phrase) {
+    return "ambiguous";
+  }
+  const components = phrase.split(/\b(?:and|nor|or|with)\b/);
+  if (components.some((component) => component.trim().length === 0)) {
+    return "ambiguous";
+  }
+  const kinds = components.map((component) => tableContentKind(component));
+  if (kinds.includes("physical")) {
+    return "physical";
+  }
+  if (kinds.includes("unknown")) {
+    return "ambiguous";
+  }
+  return "presentation";
+}
+
 function classifyTableAfterReference(after: string): TableReferenceIntent | null {
   const normalizedAfter = after.replace(/^[\s,:-]+/, "");
   const relation = /^(of|for|as)\b\s*(.*)$/.exec(normalizedAfter);
@@ -642,11 +663,8 @@ function classifyTableAfterReference(after: string): TableReferenceIntent | null
     if (tablePhysicalSupportVerbs.has(verb)) {
       return "physical";
     }
-    if (tableAbstractOperationVerbs.has(verb)) {
-      return "presentation";
-    }
-    if (tableDisplayVerbs.has(verb)) {
-      return tableIntentForContent(tableContentKind(leadingTableRelationPhrase(purpose[2] ?? "")));
+    if (tableObjectSensitiveOperationVerbs.has(verb)) {
+      return classifyTableOperationObject(purpose[2] ?? "");
     }
     return "ambiguous";
   }
