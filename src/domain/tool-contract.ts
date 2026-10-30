@@ -405,20 +405,97 @@ const pluralFurnitureHeads = new Map<string, string>([
   ["workstations", "workstation"],
 ]);
 
-const presentationTableContentSource =
-  "(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?|answers?)";
-const presentationTablePurposeSource = `(?:${presentationTableContentSource}|summaries|summary|formats?|formatting|reports?|presentation|view)`;
-const presentationTableVerbSource = "(?:compare|display|format|output|present|render|show|summarize)";
-const presentationTableLinkSource = "(?:\\s+|\\s*[-,:]\\s*)";
+export type TableReferenceIntent = "presentation" | "physical" | "ambiguous";
 
-const presentationTableSources = [
-  `\\btables?\\s+of\\s+${presentationTableContentSource}\\b`,
-  "\\b(?:summary|results?|comparison|output|data|markdown|presentation|formatted|report|findings)\\s+tables?\\b",
-  "\\btables?\\s+(?:output|format|summary|results?|view|report)\\b",
-  `\\btables?${presentationTableLinkSource}for\\s+(?:the\\s+)?${presentationTablePurposeSource}\\b`,
-  `\\btables?${presentationTableLinkSource}to\\s+${presentationTableVerbSource}\\s+(?:the\\s+)?${presentationTableContentSource}\\b`,
-  `\\b(?:in|as|into)\\s+(?:${furnitureQualifierSource}\\s+)?tables?\\b`,
-] as const;
+type TableContentKind = "abstract" | "physical" | "unknown";
+
+const abstractTableContentHeads = new Set([
+  "analysis",
+  "answer",
+  "comparison",
+  "content",
+  "data",
+  "detail",
+  "finding",
+  "format",
+  "formatted",
+  "formatting",
+  "information",
+  "markdown",
+  "metric",
+  "option",
+  "output",
+  "presentation",
+  "recommendation",
+  "report",
+  "result",
+  "statistic",
+  "summary",
+  "text",
+  "value",
+  "view",
+]);
+
+const physicalTableContentHeads = new Set([
+  "board",
+  "device",
+  "equipment",
+  "furniture",
+  "hardware",
+  "item",
+  "material",
+  "monitor",
+  "object",
+  "screen",
+  "thing",
+]);
+
+const tableAbstractOperationVerbs = new Set([
+  "compare",
+  "format",
+  "organize",
+  "output",
+  "render",
+  "summarize",
+  "tabulate",
+]);
+const tableDisplayVerbs = new Set(["display", "present", "show"]);
+const tablePhysicalSupportVerbs = new Set(["carry", "hold", "mount", "place", "store", "support"]);
+const tableAdditionalActionSource =
+  "(?:compare|display|format|organize|present|provide|render|return|show|summarize|tabulate)";
+const tableHeadStopWords = new Set([
+  "a",
+  "an",
+  "another",
+  "any",
+  "both",
+  "few",
+  "many",
+  "multiple",
+  "my",
+  "one",
+  "our",
+  "several",
+  "some",
+  "the",
+  "these",
+  "this",
+  "those",
+  "three",
+  "two",
+]);
+const tablePlacementActionSource = "(?:add|bring\\s+in|fit|move|place|position|put|set)";
+const tablePlacementActionPattern = new RegExp(`^${tablePlacementActionSource}$`);
+const tablePhysicalLocationPattern = new RegExp(
+  `\\b(?:beside|near|by|against|next\\s+to|in\\s+front\\s+of|behind|between|along|alongside)\\s+(?:${furnitureQualifierSource}\\s+)?(?:[a-z0-9.-]+\\s+){0,2}(?:beds?|desks?|cribs?|walls?|windows?|doors?|closets?|corners?|floors?|rooms?)\\b`,
+);
+const tablePhysicalPrepositionPattern = new RegExp(
+  `\\b(?:on|onto|upon|under|beneath|beside|near|by|against|next\\s+to|in\\s+front\\s+of)\\s+(?:${furnitureQualifierSource}\\s+)?(?:[a-z0-9.-]+\\s+){0,3}$`,
+);
+const tableRepresentationPrepositionPattern = new RegExp(
+  `\\b(?:in|into|as)\\s+(?:${furnitureQualifierSource}\\s+)?$`,
+);
+const tableDimensionPattern = /\b\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|inches|ft|foot|feet)\b/;
 
 function normalizePromptText(value: string): string {
   return value
@@ -428,6 +505,252 @@ function normalizePromptText(value: string): string {
     .replaceAll(/[()[\]{}]/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
+}
+
+interface TableReferenceContext {
+  readonly clause: string;
+  readonly localStart: number;
+  readonly tableEnd: number;
+  readonly before: string;
+  readonly after: string;
+}
+
+function normalizedTableHead(word: string): string {
+  if (word === "analyses") {
+    return "analysis";
+  }
+  if (word.endsWith("ies") && word.length > 3) {
+    return `${word.slice(0, -3)}y`;
+  }
+  if (
+    word.length > 3 &&
+    word.endsWith("s") &&
+    !word.endsWith("ss") &&
+    !word.endsWith("is") &&
+    word !== "data"
+  ) {
+    return word.slice(0, -1);
+  }
+  return word;
+}
+
+function tableSemanticHead(value: string): string | null {
+  const words = value.match(/[a-z]+/g);
+  if (words === null) {
+    return null;
+  }
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    const word = words[index];
+    if (word !== undefined && !tableHeadStopWords.has(word)) {
+      return normalizedTableHead(word);
+    }
+  }
+  return null;
+}
+
+function tableContentKind(value: string): TableContentKind {
+  const head = tableSemanticHead(value);
+  if (head === null) {
+    return "unknown";
+  }
+  if (abstractTableContentHeads.has(head)) {
+    return "abstract";
+  }
+  if (
+    physicalTableContentHeads.has(head) ||
+    likelyFurnitureHeads.has(head) ||
+    head === "crib" ||
+    head === "desk" ||
+    head === "workstation"
+  ) {
+    return "physical";
+  }
+  return "unknown";
+}
+
+function tableReferenceContext(normalized: string, tableStart: number): TableReferenceContext | null {
+  const clauseRange = promptClauseRanges(normalized).find(
+    (range) => tableStart >= range.start && tableStart < range.end,
+  );
+  if (clauseRange === undefined) {
+    return null;
+  }
+  const clause = normalized.slice(clauseRange.start, clauseRange.end);
+  const localStart = tableStart - clauseRange.start;
+  const tableMatch = /^tables?\b/.exec(clause.slice(localStart));
+  if (tableMatch === null) {
+    return null;
+  }
+  const tableEnd = localStart + tableMatch[0].length;
+  return {
+    clause,
+    localStart,
+    tableEnd,
+    before: clause.slice(0, localStart),
+    after: clause.slice(tableEnd),
+  };
+}
+
+function tableContextActions(value: string): RegExpMatchArray[] {
+  return [
+    ...value.matchAll(new RegExp(`\\b(?:${semanticActionSource}|${tableAdditionalActionSource})\\b`, "g")),
+  ];
+}
+
+function localTableAfter(value: string): string {
+  const normalized = value.replace(/^[\s,:-]+/, "");
+  const actionSource = `(?:${semanticActionSource}|${tableAdditionalActionSource})`;
+  if (new RegExp(`^(?:and|then)\\s+${actionSource}\\b`).test(normalized)) {
+    return "";
+  }
+  return normalized.split(new RegExp(`[,;]|\\b(?:and|then)\\s+(?=${actionSource}\\b)`), 1)[0] ?? "";
+}
+
+function leadingTableRelationPhrase(value: string): string {
+  return (
+    value
+      .replace(/^[\s,:-]+/, "")
+      .split(
+        /[,;]|\b(?:beside|near|by|against|next\s+to|in\s+front\s+of|behind|between|along|alongside|under|beneath|while|where|because)\b/,
+        1,
+      )[0]
+      ?.trim() ?? ""
+  );
+}
+
+function tableIntentForContent(kind: TableContentKind): TableReferenceIntent {
+  if (kind === "abstract") {
+    return "presentation";
+  }
+  return kind === "physical" ? "physical" : "ambiguous";
+}
+
+function classifyTableAfterReference(after: string): TableReferenceIntent | null {
+  const normalizedAfter = after.replace(/^[\s,:-]+/, "");
+  const relation = /^(of|for|as)\b\s*(.*)$/.exec(normalizedAfter);
+  if (relation !== null) {
+    const kind = tableContentKind(leadingTableRelationPhrase(relation[2] ?? ""));
+    if (relation[1] === "of" && kind === "physical") {
+      return "ambiguous";
+    }
+    return tableIntentForContent(kind);
+  }
+
+  const purpose = /^to\s+([a-z]+)\b\s*(.*)$/.exec(normalizedAfter);
+  if (purpose !== null) {
+    const verb = purpose[1] ?? "";
+    if (tablePhysicalSupportVerbs.has(verb)) {
+      return "physical";
+    }
+    if (tableAbstractOperationVerbs.has(verb)) {
+      return "presentation";
+    }
+    if (tableDisplayVerbs.has(verb)) {
+      return tableIntentForContent(tableContentKind(leadingTableRelationPhrase(purpose[2] ?? "")));
+    }
+    return "ambiguous";
+  }
+
+  const postfix = leadingTableRelationPhrase(normalizedAfter)
+    .split(/\b(?:for|of|to)\b/, 1)[0]
+    ?.trim();
+  if (!postfix) {
+    return null;
+  }
+  const kind = tableContentKind(postfix);
+  return kind === "unknown" ? null : tableIntentForContent(kind);
+}
+
+function classifyTableModifier(before: string): TableReferenceIntent | null {
+  const modifier = /\b([a-z]+)\s*$/.exec(before)?.[1];
+  if (modifier === undefined || tableHeadStopWords.has(modifier)) {
+    return null;
+  }
+  const kind = tableContentKind(modifier);
+  return kind === "unknown" ? null : tableIntentForContent(kind);
+}
+
+function classifyTableRepresentationObject(context: TableReferenceContext): TableReferenceIntent | null {
+  const preposition = tableRepresentationPrepositionPattern.exec(context.before);
+  if (preposition === null) {
+    return null;
+  }
+  return tableIntentForContent(tableContentKind(context.before.slice(0, preposition.index)));
+}
+
+function tableIsPlacementObject(context: TableReferenceContext, after: string): boolean {
+  const action = tableContextActions(context.before).at(-1);
+  if (action?.index === undefined) {
+    return /^fit\b/.test(after);
+  }
+  if (!tablePlacementActionPattern.test(action[0])) {
+    return false;
+  }
+  const between = context.before.slice(action.index + action[0].length);
+  return !/\b(?:about|as|beside|near|against|by|while|without|into|onto|in|on|under|between|for|from|of|to|with)\b/.test(
+    between,
+  );
+}
+
+function tableHasLayoutCoordination(context: TableReferenceContext, after: string): boolean {
+  const beforeCoordination = new RegExp(
+    `(?:,\\s*)?(?:and|or|with)\\s+(?:${furnitureQualifierSource}\\s+)?$`,
+  ).exec(context.before);
+  if (
+    beforeCoordination !== null &&
+    tableContentKind(context.before.slice(0, beforeCoordination.index)) === "physical"
+  ) {
+    return true;
+  }
+
+  const afterCoordination = new RegExp(
+    `^[\\s,:-]*(?:and|or|with)\\s+(?:${furnitureQualifierSource}\\s+)?([^,;]{1,60})`,
+  ).exec(after);
+  return (
+    afterCoordination !== null &&
+    tableContentKind(leadingTableRelationPhrase(afterCoordination[1] ?? "")) === "physical"
+  );
+}
+
+function classifyNormalizedTableReference(normalized: string, tableStart: number): TableReferenceIntent {
+  const context = tableReferenceContext(normalized, tableStart);
+  if (context === null) {
+    return "ambiguous";
+  }
+
+  const after = localTableAfter(context.after);
+  const nearbyDimensionText = `${context.before.slice(-32)} table ${after.slice(0, 24)}`;
+  if (
+    tablePhysicalLocationPattern.test(after.slice(0, 120)) ||
+    tablePhysicalPrepositionPattern.test(context.before) ||
+    tableDimensionPattern.test(nearbyDimensionText) ||
+    tableIsPlacementObject(context, after) ||
+    tableHasLayoutCoordination(context, after)
+  ) {
+    return "physical";
+  }
+
+  const signals = [
+    classifyTableAfterReference(after),
+    classifyTableModifier(context.before),
+    classifyTableRepresentationObject(context),
+  ].filter((signal): signal is TableReferenceIntent => signal !== null);
+  if (signals.includes("physical")) {
+    return "physical";
+  }
+  if (signals.includes("ambiguous")) {
+    return "ambiguous";
+  }
+  return signals.includes("presentation") ? "presentation" : "ambiguous";
+}
+
+export function classifyTableReference(prompt: string, occurrence = 0): TableReferenceIntent | null {
+  if (!Number.isInteger(occurrence) || occurrence < 0) {
+    return null;
+  }
+  const normalized = normalizePromptText(prompt);
+  const match = [...normalized.matchAll(/\btables?\b/g)][occurrence];
+  return match?.index === undefined ? null : classifyNormalizedTableReference(normalized, match.index);
 }
 
 function singularizeFurnitureHead(phrase: string): string {
@@ -452,17 +775,6 @@ function isOrdinaryNonFurnitureWord(word: string): boolean {
     return true;
   }
   return word.endsWith("s") && ordinaryNonFurnitureTerms.has(word.slice(0, -1));
-}
-
-function isPresentationTableReference(value: string, tableStart: number): boolean {
-  return presentationTableSources.some((source) =>
-    [...value.matchAll(new RegExp(source, "g"))].some(
-      (match) =>
-        match.index <= tableStart &&
-        tableStart < match.index + match[0].length &&
-        /\btables?\b/.test(match[0]),
-    ),
-  );
 }
 
 type ActionNegationScope = "none" | "clear" | "ambiguous";
@@ -726,6 +1038,21 @@ function lexiconMatchIsRequested(normalized: string, matchStart: number): boolea
   );
 }
 
+function tableComplementIsRequested(normalized: string, tableStart: number): boolean {
+  const context = tableReferenceContext(normalized, tableStart);
+  if (
+    context === null ||
+    (!tablePhysicalPrepositionPattern.test(context.before) &&
+      !tableRepresentationPrepositionPattern.test(context.before))
+  ) {
+    return false;
+  }
+  const nearestAction = tableContextActions(context.before).at(-1);
+  return (
+    nearestAction?.index !== undefined && actionNegationScope(context.clause, nearestAction.index) === "none"
+  );
+}
+
 function leadingObjectPhrase(value: string): string | null {
   const trimmed = value.trimStart();
   const delimiter =
@@ -800,10 +1127,12 @@ function actionObjectCandidates(
 function findUnsupportedCatalogTerms(normalized: string): string[] {
   const matches: { readonly term: string; readonly start: number }[] = [];
   for (const match of [...lexiconMatches(normalized), ...pluralFurnitureMatches(normalized)]) {
-    if (
-      !(match.term === "table" && isPresentationTableReference(normalized, match.start)) &&
-      lexiconMatchIsRequested(normalized, match.start)
-    ) {
+    const tableIntent =
+      match.term === "table" ? classifyNormalizedTableReference(normalized, match.start) : null;
+    const requested =
+      lexiconMatchIsRequested(normalized, match.start) ||
+      (match.term === "table" && tableComplementIsRequested(normalized, match.start));
+    if (tableIntent !== "presentation" && requested) {
       matches.push(match);
     }
   }
@@ -811,11 +1140,11 @@ function findUnsupportedCatalogTerms(normalized: string): string[] {
     const term = canonicalUnsupportedFurniturePhrase(candidate.phrase);
     const candidateWindow = normalized.slice(candidate.start, candidate.start + candidate.phrase.length + 32);
     const localTableStart = candidateWindow.search(/\btables?\b/);
-    const presentationTable =
-      term === "table" &&
-      localTableStart >= 0 &&
-      isPresentationTableReference(normalized, candidate.start + localTableStart);
-    if (term !== null && !presentationTable) {
+    const tableIntent =
+      term === "table" && localTableStart >= 0
+        ? classifyNormalizedTableReference(normalized, candidate.start + localTableStart)
+        : null;
+    if (term !== null && tableIntent !== "presentation") {
       matches.push({ term, start: candidate.start });
     }
   }

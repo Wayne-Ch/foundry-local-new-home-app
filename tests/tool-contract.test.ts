@@ -12,6 +12,7 @@ import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import {
   analyzeLayoutPrompt,
   buildCompareLayoutOptionsInput,
+  classifyTableReference,
   createIntentDeltaJsonSchema,
   createToolInputForTests,
   detectUnsupportedCatalogTerms,
@@ -1153,6 +1154,53 @@ describe("compact intent-delta contract", () => {
   });
 });
 
+describe("table reference intent classifier", () => {
+  it.each([
+    ["Return a table of results.", "presentation"],
+    ["Use a summary table for the comparison.", "presentation"],
+    ["Provide table output for the layout options.", "presentation"],
+    ["Show the results in two tables.", "presentation"],
+    ["Use two tables (for the results).", "presentation"],
+    ["Use tables—to summarize the comparison?", "presentation"],
+    ["Do not use two tables for the results.", "presentation"],
+    ["Use two tables to display the comparison.", "presentation"],
+    ["Use tables for output.", "presentation"],
+    ["Use tables for formatting.", "presentation"],
+    ["Put the report in a table.", "presentation"],
+    ["Show presentation results in two tables.", "presentation"],
+    ["Add a Queen bed and return a results table.", "presentation"],
+    ["Use a Queen bed and return the comparison in two tables.", "presentation"],
+    ["Add two tables beside the bed.", "physical"],
+    ["Use a Queen bed and two tables.", "physical"],
+    ["Add two tables for output.", "physical"],
+    ["Add two tables (for the output display) beside the bed.", "physical"],
+    ["Add two tables for report materials beside the bed.", "physical"],
+    ["Add two tables for presentation materials beside the bed.", "physical"],
+    ["Use two tables to display output devices near the window.", "physical"],
+    ["Use two tables to display lamps near the window.", "physical"],
+    ["Use two tables to display comparison boards near the wall.", "physical"],
+    ["Use tables for output devices.", "physical"],
+    ["Put the report on a table beside the desk.", "physical"],
+    ["Place presentation materials on two tables.", "physical"],
+    ["Do not add two tables beside the bed.", "physical"],
+    ["Use two tables.", "ambiguous"],
+    ["Use tables for display.", "ambiguous"],
+  ] as const)("classifies %s as %s", (prompt, expected) => {
+    expect(classifyTableReference(prompt)).toBe(expected);
+  });
+
+  it("classifies separate table mentions independently", () => {
+    const prompt = "Show the results in a table, then add a table beside the bed.";
+    expect(classifyTableReference(prompt, 0)).toBe("presentation");
+    expect(classifyTableReference(prompt, 1)).toBe("physical");
+    expect(classifyTableReference(prompt, 2)).toBeNull();
+
+    const separateClauses = "Add a table beside the bed. Show the results in a table.";
+    expect(classifyTableReference(separateClauses, 0)).toBe("physical");
+    expect(classifyTableReference(separateClauses, 1)).toBe("presentation");
+  });
+});
+
 describe("missing verified dimensions", () => {
   it("recognizes unsupported furniture fail-closed while preserving known intent", () => {
     const state = createInitialDemoState();
@@ -1354,6 +1402,14 @@ describe("missing verified dimensions", () => {
     "Use tables {to summarize the results}.",
     "Use two tables, [for the results].",
     "Use tables—{to summarize the comparison}?",
+    "Show the results in two tables.",
+    "Use two tables to display the comparison.",
+    "Use tables for output.",
+    "Use tables for formatting.",
+    "Put the report in a table.",
+    "Show presentation results in two tables.",
+    "Add a Queen bed and return a results table.",
+    "Use a Queen bed and return the comparison in two tables.",
     "Do not use two tables for the results.",
     "Don't use tables to summarize the comparison.",
   ])("keeps plural presentation tables out of the furniture catalog: %s", (prompt) => {
@@ -1375,7 +1431,18 @@ describe("missing verified dimensions", () => {
     "Put tables near the window?",
     "Use a Queen bed, and two tables.",
     "Add two tables for the display beside the bed.",
+    "Use two tables to display output devices near the window.",
+    "Add two tables (for the output display) beside the bed.",
+    "Add two tables for report materials beside the bed.",
+    "Add two tables for presentation materials beside the bed.",
     "Use two tables to display lamps near the window.",
+    "Use two tables to display comparison boards near the wall.",
+    "Use tables for output devices.",
+    "Put the report on a table beside the desk.",
+    "Place presentation materials on two tables.",
+    "Add two tables for output.",
+    "Use two tables.",
+    "Use tables for display.",
   ])("keeps physical table requests fail-closed: %s", (prompt) => {
     const state = stateWithQueenDesk();
     expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
