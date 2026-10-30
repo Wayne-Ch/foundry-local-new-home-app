@@ -1,3 +1,5 @@
+import { findTableActionMatches, type TableActionId, tableActionLeadWords } from "./table-actions";
+
 export interface TextSpan {
   readonly start: number;
   readonly end: number;
@@ -5,7 +7,9 @@ export interface TextSpan {
 
 export interface TableActionContext {
   readonly source: "local" | "inherited";
+  readonly id: TableActionId;
   readonly action: TextSpan;
+  readonly scope: TextSpan;
 }
 
 export interface TableClauseOccurrence {
@@ -41,11 +45,6 @@ function wordSet(value: string): ReadonlySet<string> {
 
 const tableClauseCoordinators = new Set(["and", "nor", "or", "plus", "then"]);
 const phraseCoordinators = new Set(["and", "nor", "or", "plus", "with"]);
-const tableClauseActions = wordSet(
-  "add bring carry change choose compare display drop fit format get go hold include keep leave mount move need organize output place position prefer present provide put render remove replace retain return select set show store summarize support swap switch tabulate take try use want",
-);
-const governingTableActionPattern =
-  /\b(?:bring\s+in|get\s+rid\s+of|swap(?:\s+out)?|take\s+out|replace|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|place|put|fit|remove|drop|compare|display|format|organize|present|provide|render|return|show|summarize|tabulate)\b/gi;
 const tableBindingPrepositions = wordSet(
   "against along alongside as beneath beside between behind by front in into near next on onto under upon",
 );
@@ -153,7 +152,7 @@ function splitBetweenTables(
     const words = gapTokens
       .filter((token) => token.kind === "word" && token.start >= candidate.rightStart)
       .map((token) => token.value);
-    const actionIndex = words.findIndex((word) => tableClauseActions.has(word));
+    const actionIndex = words.findIndex((word) => tableActionLeadWords.has(word));
     if (
       (actionIndex >= 0 && words.slice(0, actionIndex).every((word) => actionLeadWords.has(word))) ||
       (actionIndex < 0 && words.some((word) => tableBindingPrepositions.has(word)))
@@ -170,11 +169,61 @@ function splitBetweenTables(
   );
 }
 
-function governingTableActions(value: string, scope: TextSpan): readonly TextSpan[] {
-  return [...value.slice(scope.start, scope.end).matchAll(governingTableActionPattern)].map((match) => ({
-    start: scope.start + match.index,
-    end: scope.start + match.index + match[0].length,
+function governingTableActions(
+  value: string,
+  scope: TextSpan,
+): readonly { readonly id: TableActionId; readonly action: TextSpan }[] {
+  return findTableActionMatches(value.slice(scope.start, scope.end)).map((match) => ({
+    id: match.id,
+    action: {
+      start: scope.start + match.start,
+      end: scope.start + match.end,
+    },
   }));
+}
+
+function localGoverningTableAction(
+  value: string,
+  actions: readonly { readonly id: TableActionId; readonly action: TextSpan }[],
+  clause: TextSpan,
+  table: TextSpan,
+): Omit<TableActionContext, "source"> | null {
+  const candidates = actions.filter(
+    (action) => action.action.start >= clause.start && action.action.end <= table.start,
+  );
+  let selected = candidates[0] ?? null;
+  let scopeStart = clause.start;
+  for (const candidate of candidates.slice(1)) {
+    if (selected === null) {
+      selected = candidate;
+      continue;
+    }
+    const between = value.slice(selected.action.end, candidate.action.start);
+    const resetBoundary =
+      /(?<boundary>,\s*(?:(?:and|or|nor|then|but)\s+)?|\b(?:and|or|nor|then|but)\s+)(?:(?:also|could|did|do|does|don't|i|it|never|no\s+longer|not|please|should|then|they|we|would|you)\s+)*$/i.exec(
+        between,
+      );
+    if (resetBoundary !== null) {
+      selected = candidate;
+      scopeStart =
+        selected.action.start -
+        between.length +
+        resetBoundary.index +
+        (resetBoundary.groups?.boundary?.length ?? 0);
+    } else if (/\bto\s+(?:(?:also|please)\s+)*$/i.test(between)) {
+      selected = candidate;
+    }
+  }
+  return selected === null
+    ? null
+    : {
+        id: selected.id,
+        action: selected.action,
+        scope: {
+          start: scopeStart,
+          end: clause.end,
+        },
+      };
 }
 
 export function parseTableClauseOccurrences(value: string): readonly TableClauseOccurrence[] {
@@ -201,7 +250,7 @@ export function parseTableClauseOccurrences(value: string): readonly TableClause
         : splitBetweenTables(value, tokens, table, next);
     });
     const actions = governingTableActions(value, hardClause);
-    let governingAction: TextSpan | null = null;
+    let governingAction: Omit<TableActionContext, "source"> | null = null;
 
     for (let index = 0; index < tables.length; index += 1) {
       const table = tables[index];
@@ -213,13 +262,30 @@ export function parseTableClauseOccurrences(value: string): readonly TableClause
         start: index === 0 ? hardClause.start : (precedingSplit?.rightStart ?? hardClause.start),
         end: index === tables.length - 1 ? hardClause.end : (splits[index]?.leftEnd ?? hardClause.end),
       });
-      const localAction =
-        actions.filter((action) => action.start >= clause.start && action.end <= table.start).at(-1) ?? null;
+      const localActionMatch = localGoverningTableAction(value, actions, clause, table);
+      const localAction: TableActionContext | null =
+        localActionMatch === null
+          ? null
+          : {
+              source: "local",
+              id: localActionMatch.id,
+              action: localActionMatch.action,
+              scope: localActionMatch.scope,
+            };
       const inheritedAction =
-        localAction === null && precedingSplit?.coordinator != null ? governingAction : null;
-      const action = localAction ?? inheritedAction;
+        localAction === null && precedingSplit?.coordinator != null && governingAction !== null
+          ? {
+              source: "inherited" as const,
+              ...governingAction,
+            }
+          : null;
+      const actionContext = localAction ?? inheritedAction;
       if (localAction !== null) {
-        governingAction = localAction;
+        governingAction = {
+          id: localAction.id,
+          action: localAction.action,
+          scope: localAction.scope,
+        };
       } else if (precedingSplit?.coordinator === null) {
         governingAction = null;
       }
@@ -229,13 +295,7 @@ export function parseTableClauseOccurrences(value: string): readonly TableClause
         clause,
         scope: hardClause,
         coordinator: precedingSplit?.coordinator ?? null,
-        actionContext:
-          action === null
-            ? null
-            : {
-                source: localAction === null ? "inherited" : "local",
-                action,
-              },
+        actionContext,
       });
     }
   }

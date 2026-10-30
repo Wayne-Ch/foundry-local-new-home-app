@@ -9,6 +9,7 @@ import {
   ROOM_PLAN_VERSION,
 } from "../src/domain/fixture";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
+import { tableActionRegistry } from "../src/domain/table-actions";
 import {
   analyzeLayoutPrompt,
   buildCompareLayoutOptionsInput,
@@ -21,6 +22,20 @@ import {
   preferredCandidateFurnitureIds,
   preferredLayoutIntentDelta,
 } from "../src/domain/tool-contract";
+
+const tableActionForms = tableActionRegistry.flatMap((definition) =>
+  definition.forms.map((form) => ({
+    id: definition.id,
+    form,
+  })),
+);
+
+const contentSensitiveTableActionForms = tableActionRegistry
+  .filter((definition) => definition.directObjectIntent === "content-sensitive")
+  .map((definition) => ({
+    id: definition.id,
+    form: definition.forms[0],
+  }));
 
 function stateWithQueenDesk() {
   const initial = createInitialDemoState();
@@ -1201,6 +1216,103 @@ describe("compact intent-delta contract", () => {
 });
 
 describe("table reference intent classifier", () => {
+  it.each(tableActionForms)(
+    "requires canonical table evidence for positive $id action '$form' and suppresses its negated pair",
+    ({ form }) => {
+      const state = stateWithQueenDesk();
+      const positive = `${form} one table beside the wall.`;
+      const negated = `Do not ${form} one table beside the wall.`;
+
+      expect(classifyTableReference(positive)).toBe("physical");
+      expect(detectUnsupportedCatalogTerms(positive)).toEqual(["table"]);
+      expect(analyzeLayoutPrompt(state, positive)).toMatchObject({
+        clarification: "required",
+        unknowns: ["Missing verified catalog dimensions for table."],
+      });
+
+      expect(classifyTableReference(negated)).toBe("physical");
+      expect(detectUnsupportedCatalogTerms(negated)).toEqual([]);
+      expect(analyzeLayoutPrompt(state, negated)).toMatchObject({
+        clarification: "none",
+        unknowns: [],
+      });
+    },
+  );
+
+  it.each(contentSensitiveTableActionForms)(
+    "classifies $id occurrences independently from their governed content",
+    ({ form }) => {
+      const prompt = `${form} results in one table and boxes in another table.`;
+      expect([classifyTableReference(prompt, 0), classifyTableReference(prompt, 1)]).toEqual([
+        "presentation",
+        "ambiguous",
+      ]);
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["table"]);
+      expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+        clarification: "required",
+        unknowns: ["Missing verified catalog dimensions for table."],
+      });
+    },
+  );
+
+  it.each([
+    ["Position lamps on one table and chairs on another table.", ["physical", "physical"]],
+    ["Output results in one table and boxes in another table.", ["presentation", "ambiguous"]],
+    ["Move one table and another table.", ["physical", "physical"]],
+    [
+      "Output results in one table, position lamps on another table near the wall, and output boxes in a third table.",
+      ["presentation", "physical", "ambiguous"],
+    ],
+  ] as const)("fails closed for every non-presentation occurrence in %s", (prompt, intents) => {
+    expect(intents.map((_, occurrence) => classifyTableReference(prompt, occurrence))).toEqual(intents);
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["table"]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "required",
+      unknowns: ["Missing verified catalog dimensions for table."],
+    });
+  });
+
+  it.each([
+    "Do not show results in one table, then place lamps on another table near the wall.",
+    "Do not show results in one table then place lamps on another table near the wall.",
+    "Do not show results in one table, place lamps on another table near the wall.",
+    "Do not show results in one table, but place lamps on another table near the wall.",
+    "Do not show results in one table; place lamps on another table near the wall.",
+    "Do not show results in one table. Place lamps on another table near the wall.",
+    "Do not show results in one table and place lamps on another table near the wall.",
+  ])("resets inherited negation for a later explicit local action: %s", (prompt) => {
+    expect([classifyTableReference(prompt, 0), classifyTableReference(prompt, 1)]).toEqual([
+      "presentation",
+      "physical",
+    ]);
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
+    const analysis = analyzeLayoutPrompt(stateWithQueenDesk(), prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(analysis.unknowns).toContain("Missing verified catalog dimensions for table.");
+  });
+
+  it("scopes a single table to its own explicit action after an earlier negated action", () => {
+    const positive = "Do not show results, then place one table near the wall.";
+    expect(classifyTableReference(positive)).toBe("physical");
+    expect(detectUnsupportedCatalogTerms(positive)).toEqual(["table"]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), positive)).toMatchObject({
+      clarification: "required",
+      unknowns: ["Missing verified catalog dimensions for table."],
+    });
+
+    for (const negated of [
+      "Do not show results, then do not place one table near the wall.",
+      "Do not want to place one table near the wall.",
+    ]) {
+      expect(classifyTableReference(negated)).toBe("physical");
+      expect(detectUnsupportedCatalogTerms(negated)).toEqual([]);
+      expect(analyzeLayoutPrompt(stateWithQueenDesk(), negated)).toMatchObject({
+        clarification: "none",
+        unknowns: [],
+      });
+    }
+  });
+
   it.each([
     ["Return a table of results.", "presentation"],
     ["Use a summary table for the comparison.", "presentation"],

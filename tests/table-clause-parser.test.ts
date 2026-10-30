@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { tableActionRegistry } from "../src/domain/table-actions";
 import { parseCoordinatedPhrase, parseTableClauseOccurrences } from "../src/domain/table-clause-parser";
+
+const tableActionForms = tableActionRegistry.flatMap((definition) =>
+  definition.forms.map((form) => ({
+    id: definition.id,
+    form,
+  })),
+);
 
 function occurrenceSlices(value: string) {
   return parseTableClauseOccurrences(value).map((occurrence) => ({
@@ -16,7 +24,12 @@ function occurrenceSlices(value: string) {
         ? null
         : value.slice(occurrence.actionContext.action.start, occurrence.actionContext.action.end),
     actionStart: occurrence.actionContext?.action.start ?? null,
+    actionId: occurrence.actionContext?.id ?? null,
     actionSource: occurrence.actionContext?.source ?? null,
+    actionScope:
+      occurrence.actionContext === null
+        ? null
+        : value.slice(occurrence.actionContext.scope.start, occurrence.actionContext.scope.end),
     scope: value.slice(occurrence.scope.start, occurrence.scope.end),
   }));
 }
@@ -157,6 +170,125 @@ describe("table clause parser", () => {
       { action: "place", actionSource: "inherited" },
     ]);
     expect(occurrences[1]?.actionStart).toBe(occurrences[0]?.actionStart);
+    expect(occurrences.map((occurrence) => occurrence.actionScope)).toEqual([
+      "Do not place lamps on one table",
+      "Do not place lamps on one table",
+    ]);
+  });
+
+  it("keeps the complete declared table-action vocabulary in one registry", () => {
+    expect(tableActionRegistry.map((definition) => definition.id)).toEqual([
+      "add",
+      "bring",
+      "carry",
+      "change",
+      "choose",
+      "compare",
+      "display",
+      "drop",
+      "fit",
+      "format",
+      "get",
+      "go",
+      "hold",
+      "include",
+      "keep",
+      "leave",
+      "mount",
+      "move",
+      "need",
+      "organize",
+      "output",
+      "place",
+      "position",
+      "prefer",
+      "present",
+      "provide",
+      "put",
+      "render",
+      "remove",
+      "replace",
+      "retain",
+      "return",
+      "select",
+      "set",
+      "show",
+      "store",
+      "summarize",
+      "support",
+      "swap",
+      "switch",
+      "tabulate",
+      "take",
+      "try",
+      "use",
+      "want",
+    ]);
+  });
+
+  it.each(tableActionForms)(
+    "uses $id action form '$form' for explicit, inherited, and repeated occurrences",
+    ({ id, form }) => {
+      const inherited = occurrenceSlices(`${form} one table and another table.`);
+      expect(
+        inherited.map(({ actionId, actionSource }) => ({
+          actionId,
+          actionSource,
+        })),
+      ).toEqual([
+        { actionId: id, actionSource: "local" },
+        { actionId: id, actionSource: "inherited" },
+      ]);
+
+      const repeated = occurrenceSlices(`${form} one table and ${form} another table.`);
+      expect(
+        repeated.map(({ actionId, actionSource }) => ({
+          actionId,
+          actionSource,
+        })),
+      ).toEqual([
+        { actionId: id, actionSource: "local" },
+        { actionId: id, actionSource: "local" },
+      ]);
+    },
+  );
+
+  it.each([
+    "Do not show results in one table, then place lamps on another table near the wall.",
+    "Do not show results in one table then place lamps on another table near the wall.",
+    "Do not show results in one table, place lamps on another table near the wall.",
+    "Do not show results in one table, but place lamps on another table near the wall.",
+    "Do not show results in one table; place lamps on another table near the wall.",
+    "Do not show results in one table. Place lamps on another table near the wall.",
+    "Do not show results in one table and place lamps on another table near the wall.",
+  ])("gives a later explicit action its own local negation scope: %s", (value) => {
+    const occurrences = occurrenceSlices(value);
+    expect(
+      occurrences.map(({ actionId, actionSource }) => ({
+        actionId,
+        actionSource,
+      })),
+    ).toEqual([
+      { actionId: "show", actionSource: "local" },
+      { actionId: "place", actionSource: "local" },
+    ]);
+    expect(occurrences[1]?.actionScope?.toLowerCase()).toBe("place lamps on another table near the wall");
+  });
+
+  it.each([
+    ["Do not show results, then place one table near the wall.", "place one table near the wall"],
+    [
+      "Do not show results, then do not place one table near the wall.",
+      "do not place one table near the wall",
+    ],
+    ["Do not want to place one table near the wall.", "do not want to place one table near the wall"],
+  ] as const)("derives the local action scope without requiring an earlier table: %s", (value, scope) => {
+    const [occurrence] = occurrenceSlices(value);
+    expect(occurrence).toMatchObject({
+      actionId: "place",
+      actionSource: "local",
+    });
+    expect(occurrence?.actionScope?.toLowerCase()).toBe(scope);
   });
 
   it("preserves original spans while matching table tokens case-insensitively", () => {
