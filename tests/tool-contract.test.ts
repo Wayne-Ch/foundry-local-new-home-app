@@ -64,6 +64,9 @@ const presentationTableOperationPrompts = [
   "Use tables to display the data.",
   "Use two tables to show the summary.",
   "Use tables to compare results and findings.",
+  "Use tables to compare results, findings, and recommendations.",
+  "Use tables to compare findings plus results.",
+  "Use tables to compare results or findings.",
   "Use tables—to compare (the results)?",
   "Use two tables {to render the comparison}?",
 ] as const;
@@ -79,6 +82,13 @@ const requestedNonPresentationTableOperationCases = [
   ["Use tables to summarize presentation materials.", "physical"],
   ["Use two tables to compare the results and lamps.", "physical"],
   ["Use two tables to compare lamps and the results.", "physical"],
+  ["Use two tables to compare results, lamps, and chairs.", "physical"],
+  ["Use two tables to compare results, and lamps.", "physical"],
+  ["Use two tables to compare lamps plus results.", "physical"],
+  ["Use two tables to compare results plus lamps.", "physical"],
+  ["Use two tables to compare lamps, results.", "physical"],
+  ["Use two tables to compare results or lamps.", "physical"],
+  ["Use two tables to compare results, findings, and boxes.", "ambiguous"],
   ["Use two tables [to organize lamps]!", "physical"],
   ["Use tables to compare the results beside the bed.", "physical"],
   ["Use tables to summarize report binders.", "ambiguous"],
@@ -1218,6 +1228,8 @@ describe("table reference intent classifier", () => {
     ["Use tables for output devices.", "physical"],
     ["Put the report on a table beside the desk.", "physical"],
     ["Place presentation materials on two tables.", "physical"],
+    ["Add a report table.", "physical"],
+    ["Add an output table.", "physical"],
     ["Do not add two tables beside the bed.", "physical"],
     ["Use two tables.", "ambiguous"],
     ["Use tables for display.", "ambiguous"],
@@ -1234,6 +1246,65 @@ describe("table reference intent classifier", () => {
     const separateClauses = "Add a table beside the bed. Show the results in a table.";
     expect(classifyTableReference(separateClauses, 0)).toBe("physical");
     expect(classifyTableReference(separateClauses, 1)).toBe("presentation");
+  });
+
+  it.each([
+    "Show results in one table and findings in another table.",
+    "Show results in one table, and findings in another table.",
+    "Show results in one table, findings in another table, and recommendations in a third table.",
+    "Show results in one table and findings, recommendations, and data in another table.",
+    "Put results into one table, findings into another table, and recommendations into a third table.",
+    "Format results as one table and findings as another table.",
+    "Use one table to compare results, findings, and recommendations, and show data in another table.",
+    "Show results in one table. Show findings in another table.",
+    "Show (results) in one table, and [findings] in another table.",
+  ])("keeps every independent presentation occurrence presentation-only: %s", (prompt) => {
+    const tableCount = [...prompt.matchAll(/\btables?\b/gi)].length;
+    expect(
+      Array.from({ length: tableCount }, (_, occurrence) => classifyTableReference(prompt, occurrence)),
+    ).toEqual(Array.from({ length: tableCount }, () => "presentation"));
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "none",
+      unknowns: [],
+    });
+  });
+
+  it.each([
+    [
+      "Show results in one table and place lamps on another table near the wall.",
+      ["presentation", "physical"],
+    ],
+    [
+      "Place lamps on one table near the wall and show results in another table.",
+      ["physical", "presentation"],
+    ],
+    [
+      "Use one table to compare results, lamps, and chairs, and show findings in another table.",
+      ["physical", "presentation"],
+    ],
+    ["Show results in one table. Use another table to compare boxes.", ["presentation", "ambiguous"]],
+  ] as const)("aggregates mixed table occurrences fail-closed: %s", (prompt, expectedIntents) => {
+    expect(expectedIntents.map((_, occurrence) => classifyTableReference(prompt, occurrence))).toEqual(
+      expectedIntents,
+    );
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
+    const analysis = analyzeLayoutPrompt(stateWithQueenDesk(), prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(
+      analysis.unknowns.filter((unknown) => unknown === "Missing verified catalog dimensions for table."),
+    ).toEqual(["Missing verified catalog dimensions for table."]);
+  });
+
+  it("preserves negation for a physical occurrence beside a presentation occurrence", () => {
+    const prompt = "Show results in one table and do not place lamps on another table near the wall.";
+    expect(classifyTableReference(prompt, 0)).toBe("presentation");
+    expect(classifyTableReference(prompt, 1)).toBe("physical");
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "none",
+      unknowns: [],
+    });
   });
 
   it.each(presentationTableOperationPrompts)(
@@ -1516,6 +1587,8 @@ describe("missing verified dimensions", () => {
     "Use tables for output devices.",
     "Put the report on a table beside the desk.",
     "Place presentation materials on two tables.",
+    "Add a report table.",
+    "Add an output table.",
     "Add two tables for output.",
     "Use two tables.",
     "Use tables for display.",
