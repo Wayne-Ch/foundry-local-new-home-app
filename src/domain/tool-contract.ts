@@ -405,10 +405,18 @@ const pluralFurnitureHeads = new Map<string, string>([
   ["workstations", "workstation"],
 ]);
 
+const presentationTableContentSource =
+  "(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?|answers?)";
+const presentationTablePurposeSource = `(?:${presentationTableContentSource}|summaries|summary|formats?|formatting|reports?|presentation|view)`;
+const presentationTableVerbSource = "(?:compare|display|format|output|present|render|show|summarize)";
+const presentationTableLinkSource = "(?:\\s+|\\s*[-,:]\\s*)";
+
 const presentationTableSources = [
-  "\\btables?\\s+of\\s+(?:results?|options?|comparisons?|findings|values|data|details|contents?|outputs?|recommendations?)\\b",
+  `\\btables?\\s+of\\s+${presentationTableContentSource}\\b`,
   "\\b(?:summary|results?|comparison|output|data|markdown|presentation|formatted|report|findings)\\s+tables?\\b",
   "\\btables?\\s+(?:output|format|summary|results?|view|report)\\b",
+  `\\btables?${presentationTableLinkSource}for\\s+(?:the\\s+)?${presentationTablePurposeSource}\\b`,
+  `\\btables?${presentationTableLinkSource}to\\s+${presentationTableVerbSource}\\s+(?:the\\s+)?${presentationTableContentSource}\\b`,
   `\\b(?:in|as|into)\\s+(?:${furnitureQualifierSource}\\s+)?tables?\\b`,
 ] as const;
 
@@ -595,6 +603,7 @@ function canonicalUnsupportedFurniturePhrase(phrase: string): string | null {
     trimmed
       .slice(qualifier?.[0].length ?? 0)
       .replace(/\s+(?:fit|here|there|instead|together)$/g, "")
+      .replace(/[-,:]+\s*$/g, "")
       .trim(),
   );
   if (normalized.length === 0 || isSupportedFurniturePhrase(normalized)) {

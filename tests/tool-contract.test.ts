@@ -311,10 +311,14 @@ describe("final review exact-source adversarial matrix", () => {
   ])("$name", ({ prompt, unsupported, clarification, preferred }) => {
     const state = stateWithQueenDesk();
     expect(detectUnsupportedCatalogTerms(prompt)).toEqual(unsupported);
-    expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+    const analysis = analyzeLayoutPrompt(state, prompt);
+    expect(analysis).toMatchObject({
       clarification,
       preferred,
     });
+    for (const term of unsupported) {
+      expect(analysis.unknowns).toContain(`Missing verified catalog dimensions for ${term}.`);
+    }
   });
 
   const sharedRackPrefix = "ornate modular powder-coated adjustable narrow bedroom ".repeat(4);
@@ -1334,14 +1338,49 @@ describe("missing verified dimensions", () => {
   });
 
   it.each([
+    "Use two tables for the results.",
+    "Use two tables for the comparison.",
+    "Use tables to summarize the results.",
+    "Use two tables for output.",
+    "Use tables to display the comparison.",
+    "Use tables to format the results.",
+    "Use two tables—for the results!",
+    "Use tables—to summarize the comparison?",
+    "Do not use two tables for the results.",
+    "Don't use tables to summarize the comparison.",
+  ])("keeps plural presentation tables out of the furniture catalog: %s", (prompt) => {
+    const state = stateWithQueenDesk();
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+    expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+      clarification: "none",
+      unknowns: [],
+    });
+  });
+
+  it.each([
     "Add a table beside the bed.",
     "Add a 1200 mm table beside the bed.",
     "Could a table fit near the wall?",
+    "Add two tables beside the bed.",
+    "Put tables near the window.",
+    "Add two tables, beside the bed!",
+    "Put tables near the window?",
+    "Use a Queen bed, and two tables.",
+    "Add two tables for the display beside the bed.",
+    "Use two tables to display lamps near the window.",
   ])("keeps physical table requests fail-closed: %s", (prompt) => {
     const state = stateWithQueenDesk();
     expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
     const analysis = analyzeLayoutPrompt(state, prompt);
     expect(analysis.clarification).toBe("required");
     expect(analysis.unknowns).toContain("Missing verified catalog dimensions for table.");
+  });
+
+  it.each([
+    "Do not add two tables beside the bed.",
+    "Do not put tables near the window.",
+    "Use a Queen bed without any tables.",
+  ])("ignores negated physical plural table requests: %s", (prompt) => {
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
   });
 });
