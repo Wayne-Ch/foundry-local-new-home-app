@@ -3,10 +3,18 @@ export interface TextSpan {
   readonly end: number;
 }
 
+export interface TableActionContext {
+  readonly source: "local" | "inherited";
+  readonly action: TextSpan;
+}
+
 export interface TableClauseOccurrence {
   readonly index: number;
   readonly table: TextSpan;
   readonly clause: TextSpan;
+  readonly scope: TextSpan;
+  readonly coordinator: TextSpan | null;
+  readonly actionContext: TableActionContext | null;
 }
 
 export interface CoordinatedPhraseParse {
@@ -24,6 +32,7 @@ interface ClauseToken extends TextSpan {
 interface ClauseSplit {
   readonly leftEnd: number;
   readonly rightStart: number;
+  readonly coordinator: TextSpan | null;
 }
 
 function wordSet(value: string): ReadonlySet<string> {
@@ -35,6 +44,8 @@ const phraseCoordinators = new Set(["and", "nor", "or", "plus", "with"]);
 const tableClauseActions = wordSet(
   "add bring carry change choose compare display drop fit format get go hold include keep leave mount move need organize output place position prefer present provide put render remove replace retain return select set show store summarize support swap switch tabulate take try use want",
 );
+const governingTableActionPattern =
+  /\b(?:bring\s+in|get\s+rid\s+of|swap(?:\s+out)?|take\s+out|replace|change|switch|move|go|use|choose|select|try|prefer|want|need|keep|retain|leave|add|include|place|put|fit|remove|drop|compare|display|format|organize|present|provide|render|return|show|summarize|tabulate)\b/gi;
 const tableBindingPrepositions = wordSet(
   "against along alongside as beneath beside between behind by front in into near next on onto under upon",
 );
@@ -113,17 +124,29 @@ function splitBetweenTables(
         tableClauseCoordinators.has(next.value) &&
         value.slice(token.end, next.start).trim().length === 0
       ) {
-        candidates.push({ leftEnd: token.start, rightStart: next.end });
+        candidates.push({
+          leftEnd: token.start,
+          rightStart: next.end,
+          coordinator: { start: token.start, end: next.end },
+        });
         index += 1;
       } else {
-        candidates.push({ leftEnd: token.start, rightStart: token.end });
+        candidates.push({
+          leftEnd: token.start,
+          rightStart: token.end,
+          coordinator: { start: token.start, end: token.end },
+        });
       }
     } else if (token.kind === "word" && tableClauseCoordinators.has(token.value)) {
-      candidates.push({ leftEnd: token.start, rightStart: token.end });
+      candidates.push({
+        leftEnd: token.start,
+        rightStart: token.end,
+        coordinator: { start: token.start, end: token.end },
+      });
     }
   }
   if (candidates.length === 0) {
-    return { leftEnd: left.end, rightStart: left.end };
+    return { leftEnd: left.end, rightStart: left.end, coordinator: null };
   }
 
   for (const candidate of candidates) {
@@ -138,7 +161,20 @@ function splitBetweenTables(
       return candidate;
     }
   }
-  return candidates.at(-1) ?? { leftEnd: right.start, rightStart: right.start };
+  return (
+    candidates.at(-1) ?? {
+      leftEnd: right.start,
+      rightStart: right.start,
+      coordinator: null,
+    }
+  );
+}
+
+function governingTableActions(value: string, scope: TextSpan): readonly TextSpan[] {
+  return [...value.slice(scope.start, scope.end).matchAll(governingTableActionPattern)].map((match) => ({
+    start: scope.start + match.index,
+    end: scope.start + match.index + match[0].length,
+  }));
 }
 
 export function parseTableClauseOccurrences(value: string): readonly TableClauseOccurrence[] {
@@ -161,23 +197,45 @@ export function parseTableClauseOccurrences(value: string): readonly TableClause
     const splits = tables.slice(0, -1).map((table, index) => {
       const next = tables[index + 1];
       return next === undefined
-        ? { leftEnd: hardClause.end, rightStart: hardClause.end }
+        ? { leftEnd: hardClause.end, rightStart: hardClause.end, coordinator: null }
         : splitBetweenTables(value, tokens, table, next);
     });
+    const actions = governingTableActions(value, hardClause);
+    let governingAction: TextSpan | null = null;
 
     for (let index = 0; index < tables.length; index += 1) {
       const table = tables[index];
       if (table === undefined) {
         continue;
       }
+      const precedingSplit = index === 0 ? undefined : splits[index - 1];
       const clause = trimSpan(value, {
-        start: index === 0 ? hardClause.start : (splits[index - 1]?.rightStart ?? hardClause.start),
+        start: index === 0 ? hardClause.start : (precedingSplit?.rightStart ?? hardClause.start),
         end: index === tables.length - 1 ? hardClause.end : (splits[index]?.leftEnd ?? hardClause.end),
       });
+      const localAction =
+        actions.filter((action) => action.start >= clause.start && action.end <= table.start).at(-1) ?? null;
+      const inheritedAction =
+        localAction === null && precedingSplit?.coordinator != null ? governingAction : null;
+      const action = localAction ?? inheritedAction;
+      if (localAction !== null) {
+        governingAction = localAction;
+      } else if (precedingSplit?.coordinator === null) {
+        governingAction = null;
+      }
       occurrences.push({
         index: occurrences.length,
         table,
         clause,
+        scope: hardClause,
+        coordinator: precedingSplit?.coordinator ?? null,
+        actionContext:
+          action === null
+            ? null
+            : {
+                source: localAction === null ? "inherited" : "local",
+                action,
+              },
       });
     }
   }

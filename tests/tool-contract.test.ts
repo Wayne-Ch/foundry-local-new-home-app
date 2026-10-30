@@ -1251,7 +1251,9 @@ describe("table reference intent classifier", () => {
   it.each([
     "Show results in one table and findings in another table.",
     "Show results in one table, and findings in another table.",
+    "Show results in one table, findings in another table.",
     "Show results in one table, findings in another table, and recommendations in a third table.",
+    "Show results in one table, findings in another table, recommendations in a third table.",
     "Show results in one table and findings, recommendations, and data in another table.",
     "Put results into one table, findings into another table, and recommendations into a third table.",
     "Format results as one table and findings as another table.",
@@ -1267,6 +1269,53 @@ describe("table reference intent classifier", () => {
     expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
       clarification: "none",
       unknowns: [],
+    });
+  });
+
+  it.each([
+    ["Show results in one table and lamps on another table near the wall.", ["presentation", "physical"]],
+    ["Show results in one table and boxes in another table.", ["presentation", "ambiguous"]],
+    ["Show results in one table, and lamps on another table near the wall.", ["presentation", "physical"]],
+    ["Show results in one table, boxes in another table.", ["presentation", "ambiguous"]],
+    [
+      "Show results in one table, lamps on another table near the wall, and findings in a third table.",
+      ["presentation", "physical", "presentation"],
+    ],
+    [
+      "Show results in one table, findings in another table, and lamps on a third table near the wall.",
+      ["presentation", "presentation", "physical"],
+    ],
+    [
+      "Show results in one table, findings in another table, lamps on a third table near the wall.",
+      ["presentation", "presentation", "physical"],
+    ],
+    [
+      "Show results in one table, findings in another table, and boxes in a third table.",
+      ["presentation", "presentation", "ambiguous"],
+    ],
+    [
+      "Show results in one table, boxes in another table, and findings in a third table.",
+      ["presentation", "ambiguous", "presentation"],
+    ],
+    ["Show lamps on one table near the wall and results in another table.", ["physical", "presentation"]],
+    ["Show results in one table and another table.", ["presentation", "ambiguous"]],
+    ["Show results in one table and in another table.", ["presentation", "ambiguous"]],
+    [
+      "Show results in one table, another table, and findings in a third table.",
+      ["presentation", "ambiguous", "presentation"],
+    ],
+    [
+      "Show results in one table, findings in another table, and another table.",
+      ["presentation", "presentation", "ambiguous"],
+    ],
+  ] as const)("uses inherited actions for canonical mixed table evidence: %s", (prompt, expectedIntents) => {
+    expect(expectedIntents.map((_, occurrence) => classifyTableReference(prompt, occurrence))).toEqual(
+      expectedIntents,
+    );
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual(["table"]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "required",
+      unknowns: ["Missing verified catalog dimensions for table."],
     });
   });
 
@@ -1296,6 +1345,21 @@ describe("table reference intent classifier", () => {
     ).toEqual(["Missing verified catalog dimensions for table."]);
   });
 
+  it.each([
+    ["Place lamps on one table and chairs on another table.", ["physical", "physical"]],
+    [
+      "Place lamps on one table, chairs on another table, and boxes on a third table.",
+      ["physical", "physical", "physical"],
+    ],
+    ["Use a Queen bed with a desk and two tables.", ["physical"]],
+  ] as const)("keeps local and inherited physical table requests fail-closed: %s", (prompt, intents) => {
+    expect(intents.map((_, occurrence) => classifyTableReference(prompt, occurrence))).toEqual(intents);
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
+    const analysis = analyzeLayoutPrompt(stateWithQueenDesk(), prompt);
+    expect(analysis.clarification).toBe("required");
+    expect(analysis.unknowns).toContain("Missing verified catalog dimensions for table.");
+  });
+
   it("preserves negation for a physical occurrence beside a presentation occurrence", () => {
     const prompt = "Show results in one table and do not place lamps on another table near the wall.";
     expect(classifyTableReference(prompt, 0)).toBe("presentation");
@@ -1304,6 +1368,47 @@ describe("table reference intent classifier", () => {
     expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
       clarification: "none",
       unknowns: [],
+    });
+  });
+
+  it.each([
+    [
+      "Do not show results in one table and lamps on another table near the wall.",
+      ["presentation", "physical"],
+    ],
+    ["Do not show results in one table and boxes in another table.", ["presentation", "ambiguous"]],
+    ["Do not place lamps on one table and chairs on another table.", ["physical", "physical"]],
+  ] as const)("preserves negation through inherited table actions: %s", (prompt, intents) => {
+    expect(intents.map((_, occurrence) => classifyTableReference(prompt, occurrence))).toEqual(intents);
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "none",
+      unknowns: [],
+    });
+  });
+
+  it("does not propagate a presentation action across a sentence boundary", () => {
+    const prompt = "Show results in one table. Lamps on another table near the wall.";
+    expect([classifyTableReference(prompt, 0), classifyTableReference(prompt, 1)]).toEqual([
+      "presentation",
+      "physical",
+    ]);
+    expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "none",
+      unknowns: [],
+    });
+  });
+
+  it("uses a new local action after a sentence boundary", () => {
+    const prompt = "Show results in one table. Place lamps on another table near the wall.";
+    expect([classifyTableReference(prompt, 0), classifyTableReference(prompt, 1)]).toEqual([
+      "presentation",
+      "physical",
+    ]);
+    expect(detectUnsupportedCatalogTerms(prompt)).toContain("table");
+    expect(analyzeLayoutPrompt(stateWithQueenDesk(), prompt)).toMatchObject({
+      clarification: "required",
     });
   });
 

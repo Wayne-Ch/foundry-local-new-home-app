@@ -7,6 +7,17 @@ function occurrenceSlices(value: string) {
     table: value.slice(occurrence.table.start, occurrence.table.end),
     tableStart: occurrence.table.start,
     clause: value.slice(occurrence.clause.start, occurrence.clause.end),
+    coordinator:
+      occurrence.coordinator === null
+        ? null
+        : value.slice(occurrence.coordinator.start, occurrence.coordinator.end),
+    action:
+      occurrence.actionContext === null
+        ? null
+        : value.slice(occurrence.actionContext.action.start, occurrence.actionContext.action.end),
+    actionStart: occurrence.actionContext?.action.start ?? null,
+    actionSource: occurrence.actionContext?.source ?? null,
+    scope: value.slice(occurrence.scope.start, occurrence.scope.end),
   }));
 }
 
@@ -50,6 +61,102 @@ describe("table clause parser", () => {
     expect(occurrences.map((occurrence) => occurrence.tableStart)).toEqual(
       [...value.matchAll(/\btable\b/g)].map((match) => match.index),
     );
+  });
+
+  it("assigns the leading action to coordinated occurrences without rewriting their spans", () => {
+    const value = "Show results in one table and lamps on another table near the wall.";
+    const occurrences = occurrenceSlices(value);
+    expect(occurrences).toMatchObject([
+      {
+        clause: "Show results in one table",
+        coordinator: null,
+        action: "Show",
+        actionSource: "local",
+        scope: "Show results in one table and lamps on another table near the wall",
+      },
+      {
+        clause: "lamps on another table near the wall",
+        coordinator: "and",
+        action: "Show",
+        actionSource: "inherited",
+        scope: "Show results in one table and lamps on another table near the wall",
+      },
+    ]);
+    expect(occurrences[1]?.actionStart).toBe(occurrences[0]?.actionStart);
+  });
+
+  it("preserves comma coordination and updates the inherited action after a local override", () => {
+    const value = "Show results in one table, place lamps on another table, and chairs on a third table.";
+    expect(
+      occurrenceSlices(value).map(({ clause, coordinator, action, actionSource }) => ({
+        clause,
+        coordinator,
+        action,
+        actionSource,
+      })),
+    ).toEqual([
+      {
+        clause: "Show results in one table",
+        coordinator: null,
+        action: "Show",
+        actionSource: "local",
+      },
+      {
+        clause: "place lamps on another table",
+        coordinator: ",",
+        action: "place",
+        actionSource: "local",
+      },
+      {
+        clause: "chairs on a third table",
+        coordinator: ", and",
+        action: "place",
+        actionSource: "inherited",
+      },
+    ]);
+  });
+
+  it("does not inherit actions across sentence boundaries", () => {
+    const value = "Show results in one table. Lamps on another table near the wall.";
+    expect(
+      occurrenceSlices(value).map(({ clause, coordinator, action, actionSource, scope }) => ({
+        clause,
+        coordinator,
+        action,
+        actionSource,
+        scope,
+      })),
+    ).toEqual([
+      {
+        clause: "Show results in one table",
+        coordinator: null,
+        action: "Show",
+        actionSource: "local",
+        scope: "Show results in one table",
+      },
+      {
+        clause: "Lamps on another table near the wall",
+        coordinator: null,
+        action: null,
+        actionSource: null,
+        scope: "Lamps on another table near the wall",
+      },
+    ]);
+  });
+
+  it("inherits the negated governing action span without treating it as a new local verb", () => {
+    const value = "Do not place lamps on one table and chairs on another table.";
+    const occurrences = occurrenceSlices(value);
+    expect(
+      occurrences.map(({ action, actionSource }) => ({
+        action,
+        actionSource,
+      })),
+    ).toEqual([
+      { action: "place", actionSource: "local" },
+      { action: "place", actionSource: "inherited" },
+    ]);
+    expect(occurrences[1]?.actionStart).toBe(occurrences[0]?.actionStart);
   });
 
   it("preserves original spans while matching table tokens case-insensitively", () => {

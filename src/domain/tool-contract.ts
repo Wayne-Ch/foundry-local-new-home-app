@@ -8,7 +8,11 @@ import {
   ROOM_PLAN_ID,
   ROOM_PLAN_VERSION,
 } from "./fixture";
-import { parseCoordinatedPhrase, parseTableClauseOccurrences } from "./table-clause-parser";
+import {
+  parseCoordinatedPhrase,
+  parseTableClauseOccurrences,
+  type TableClauseOccurrence,
+} from "./table-clause-parser";
 import { type DemoStateSnapshot, type FurnitureId, furnitureIds } from "./types";
 
 const bedIds = ["bed-queen", "bed-king"] as const;
@@ -512,6 +516,7 @@ function normalizePromptText(value: string): string {
 }
 
 interface TableReferenceContext {
+  readonly occurrence: TableClauseOccurrence;
   readonly clause: string;
   readonly localStart: number;
   readonly tableEnd: number;
@@ -583,6 +588,7 @@ function tableReferenceContext(normalized: string, tableStart: number): TableRef
   const localStart = occurrence.table.start - occurrence.clause.start;
   const tableEnd = occurrence.table.end - occurrence.clause.start;
   return {
+    occurrence,
     clause,
     localStart,
     tableEnd,
@@ -1022,6 +1028,10 @@ function requestObjectContainsTerm(clause: string, action: RegExpMatchArray, ter
     return false;
   }
   const between = clause.slice(action.index + action[0].length, termStart);
+  return requestObjectTextContainsTerm(action[0], between);
+}
+
+function requestObjectTextContainsTerm(action: string, between: string): boolean {
   if (
     /\b(?:about|as|beside|near|against|by|while|without|where|because|into|onto|in|on|under|between|instead|here|there)\b/.test(
       between,
@@ -1029,7 +1039,7 @@ function requestObjectContainsTerm(clause: string, action: RegExpMatchArray, ter
   ) {
     return false;
   }
-  if (action[0] !== "replace" && /\b(?:for|from|of|to)\b/.test(between)) {
+  if (action !== "replace" && /\b(?:for|from|of|to)\b/.test(between)) {
     return false;
   }
   return !between
@@ -1072,6 +1082,15 @@ function lexiconMatchIsRequested(normalized: string, matchStart: number): boolea
   );
 }
 
+function tableActionContextIsRequested(normalized: string, context: TableReferenceContext): boolean {
+  const actionContext = context.occurrence.actionContext;
+  if (actionContext === null) {
+    return false;
+  }
+  const scope = normalized.slice(context.occurrence.scope.start, context.occurrence.scope.end);
+  return actionNegationScope(scope, actionContext.action.start - context.occurrence.scope.start) === "none";
+}
+
 function tableComplementIsRequested(normalized: string, tableStart: number): boolean {
   const context = tableReferenceContext(normalized, tableStart);
   if (
@@ -1081,9 +1100,29 @@ function tableComplementIsRequested(normalized: string, tableStart: number): boo
   ) {
     return false;
   }
-  const nearestAction = tableContextActions(context.before).at(-1);
+  return tableActionContextIsRequested(normalized, context);
+}
+
+const inheritedTableRequestActionPattern = new RegExp(
+  `^(?:add|use|include|bring\\s+in|place|put|fit|choose|select|try|need|want|replace|${tableAdditionalActionSource})$`,
+);
+
+function inheritedTableActionObjectIsRequested(normalized: string, tableStart: number): boolean {
+  const context = tableReferenceContext(normalized, tableStart);
+  if (context === null) {
+    return false;
+  }
+  const actionContext = context.occurrence.actionContext;
+  if (
+    actionContext === null ||
+    actionContext.source !== "inherited" ||
+    !tableActionContextIsRequested(normalized, context)
+  ) {
+    return false;
+  }
+  const action = normalized.slice(actionContext.action.start, actionContext.action.end);
   return (
-    nearestAction?.index !== undefined && actionNegationScope(context.clause, nearestAction.index) === "none"
+    inheritedTableRequestActionPattern.test(action) && requestObjectTextContainsTerm(action, context.before)
   );
 }
 
@@ -1184,6 +1223,7 @@ function findUnsupportedCatalogTerms(normalized: string): string[] {
         classifyNormalizedTableReference(normalized, match.start) !== "presentation" &&
         (lexiconMatchIsRequested(normalized, match.start) ||
           tableComplementIsRequested(normalized, match.start) ||
+          inheritedTableActionObjectIsRequested(normalized, match.start) ||
           candidateTableStarts.has(match.start)),
     );
   if (requestedNonPresentationTable !== undefined) {
