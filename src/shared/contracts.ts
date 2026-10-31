@@ -73,6 +73,7 @@ export interface ConversationMessage {
 }
 
 export interface BootstrapPayload {
+  readonly conversationGeneration: number;
   readonly roomPlan: RoomPlan;
   readonly state: DemoStateSnapshot;
   readonly readiness: RuntimeReadiness;
@@ -92,6 +93,7 @@ export interface RunTurnRequest {
 }
 
 export interface RunTurnResponse {
+  readonly conversationGeneration: number;
   readonly state: DemoStateSnapshot;
   readonly toolResult: LayoutToolResult | null;
   readonly selectedLayout: EvaluatedLayoutOption | null;
@@ -104,6 +106,7 @@ export interface RunTurnResponse {
 }
 
 export interface ManualPlacementResponse {
+  readonly conversationGeneration: number;
   readonly outcome: ManualPlacementOutcome;
   readonly completedStageTurnIds: readonly StageTurnId[];
   readonly lastInteraction: "turn" | "manual" | null;
@@ -134,6 +137,7 @@ export interface PrepareAudioResponse {
 }
 
 export interface AudioTranscriptionResponse {
+  readonly conversationGeneration: number;
   readonly result: AudioTranscriptionResult;
   readonly audioReadiness: AudioReadiness;
   readonly trace: readonly TraceEntry[];

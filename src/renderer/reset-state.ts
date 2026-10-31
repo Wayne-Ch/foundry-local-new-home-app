@@ -1,7 +1,10 @@
 import type { AudioRecorderState, LiveTranscriptDraft } from "../audio/audio-types";
-import type { TraceEntry } from "../shared/contracts";
+import { createInitialDemoState } from "../domain/demo-state";
+import type { BootstrapPayload, TraceEntry } from "../shared/contracts";
 
 export const DEFAULT_AUDIO_NOTICE = "Editable draft only; click Send to submit.";
+export const RESET_SYSTEM_MESSAGE =
+  "Conversation reset. Verified dimensions and locked room constraints remain loaded.";
 
 export interface RendererTransientState<
   SpeechCorrection = unknown,
@@ -63,4 +66,61 @@ export function resetRendererTransientState<
     manualPreviewOrigin: null,
     placementDrag: null,
   };
+}
+
+export function createAuthoritativeResetBootstrap(
+  current: BootstrapPayload,
+  conversationGeneration: number,
+): BootstrapPayload {
+  if (
+    !Number.isSafeInteger(conversationGeneration) ||
+    conversationGeneration <= current.conversationGeneration
+  ) {
+    throw new Error("Reset conversation generation must advance monotonically.");
+  }
+  return {
+    ...current,
+    conversationGeneration,
+    state: createInitialDemoState(),
+    completedStageTurnIds: [],
+    lastInteraction: null,
+    selectedLayout: null,
+    lastToolResult: null,
+    messages: [
+      {
+        id: `renderer-reset-${conversationGeneration}`,
+        role: "system",
+        text: RESET_SYSTEM_MESSAGE,
+      },
+    ],
+    trace: [],
+  };
+}
+
+export function isAuthoritativeResetBootstrap(
+  bootstrap: BootstrapPayload,
+  conversationGeneration: number,
+): boolean {
+  return (
+    bootstrap.conversationGeneration === conversationGeneration &&
+    bootstrap.state.version === 0 &&
+    bootstrap.state.stateRef === "layout-state-v0" &&
+    bootstrap.state.currentLayoutId === null &&
+    bootstrap.state.currentLayoutSource === null &&
+    bootstrap.state.activeFurnitureIds.length === 0 &&
+    bootstrap.state.lastChangedPreference === null &&
+    bootstrap.state.lastResultStatus === null &&
+    bootstrap.completedStageTurnIds.length === 0 &&
+    bootstrap.lastInteraction === null &&
+    bootstrap.selectedLayout === null &&
+    bootstrap.lastToolResult === null &&
+    bootstrap.trace.length === 0
+  );
+}
+
+export function isCurrentConversationResult(
+  result: { readonly conversationGeneration: number },
+  conversationGeneration: number,
+): boolean {
+  return result.conversationGeneration === conversationGeneration;
 }

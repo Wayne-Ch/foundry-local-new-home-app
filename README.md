@@ -24,9 +24,11 @@ room plan.
 - **Main-owned stream lifecycle:** main captures the initiating `webContents`, frame, ownership
   session, and stream ID. Navigation, reload, renderer loss, frame/webContents destruction, or
   window close revokes that owner and cancels the stream; partials can only return to the captured
-  frame and never a replacement renderer. Reset disables renderer input and releases microphone
-  tracks, then main revokes the whole `webContents` lease, awaits bounded cancellation, resets the
-  controller, and returns one state-v0 payload. Repeated Reset/reload/close cleanup is idempotent.
+  frame and never a replacement renderer. Reset immediately advances renderer and controller state
+  to a generation-tagged v0, clears accepted/transient evidence, and releases microphone tracks.
+  Main revokes the whole `webContents` lease while the authoritative controller reset starts, then
+  awaits bounded native cancellation. A timeout stays v0 and quarantined; automatic readiness
+  recovery can re-enable controls only for that same v0 generation. Repeated cleanup is idempotent.
 - **Explicit fallback:** exact `openai-whisper-tiny-generic-cpu:4` is available only through the
   visibly labeled **Whisper Tiny fallback (record then transcribe)** action. The stage default
   remains Nemotron; the fallback loads only after that explicit user choice and never activates
@@ -37,10 +39,11 @@ room plan.
   transcript remains in Developer trace. A narrow, visible suggestion layer can correct
   `queen size bag` -> `queen-size bed` only inside a local bed/layout clause and `creep` ->
   `baby bed` only with local baby-bed/crib evidence. Each exact replacement is listed; quoted,
-  negated, travel/luggage, or cross-clause wording remains literal. The editable prompt initially
+  negated, travel/luggage, or cross-clause wording remains literal. Coordination or a comma followed
+  by an explicit new subject starts a candidate-local action window regardless of the following
+  verb, so an earlier layout action cannot leak into ordinary speech. The editable prompt initially
   preserves the exact raw transcript. **Apply suggested furniture corrections** is the only action
-  that changes it; **Dismiss** leaves it raw, and an applied suggestion remains undoable. Nothing is
-  silently rewritten or submitted.
+  that changes it; **Dismiss** leaves it raw, and an applied suggestion remains undoable.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
   semantic intent delta (`bed`, `desk`, internal `crib`, and clarification). Audience prompts use
   **baby bed**; `baby bed`, `baby-bed`, `baby cot`, and `crib` map to the stable
@@ -81,20 +84,20 @@ The corrected compact contract keeps all semantic enums available and emits acce
 retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
 invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 18 fixed-gate scenarios,
 including negated bed/desk transitions and unsupported California King, twin-bed, and moon-pod
-requests plus `baby-bed` and `baby cot` aliases. It loaded in 3.355 seconds and measured 5.597 seconds
-warm median / 9.834 seconds warm
-maximum. Other candidates were not rerun for this final semantic gate.
+requests plus `baby-bed` and `baby cot` aliases. It loaded in 4.505 seconds and measured 5.357 seconds
+warm median / 10.216 seconds warm maximum. Other candidates were not rerun for this final semantic
+gate.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.248 s**, and the final aggregate transcript **205 ms**
-after input ended. Cached model preparation took **5.482 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.288 s**, and the final aggregate transcript **231 ms**
+after input ended. Cached model preparation took **1.975 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **4.035 s** cached preparation,
-and **221 ms** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **2.901 s** cached preparation,
+and **1.203 s** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
 emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
@@ -204,7 +207,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
-npm run probe:stream-owner
+npm run probe:reset
 npm run probe:microphone-permission
 npm run capture:ui
 ```
@@ -239,7 +242,7 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 The October 30 selected-default integration completed 13 real Qwen turns—including explicit
 recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants—in
-**2.532–9.300 s**. The unrestricted-schema benchmark measured **5.597 s median / 9.834 s max** for
+**2.332–8.362 s**. The unrestricted-schema benchmark measured **5.357 s median / 10.216 s max** for
 exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed. The legacy full-input
 Qwen2.5 path measured **23.955–38.893 s**.
 
@@ -247,9 +250,11 @@ Evidence is written to ignored local files under `artifacts/`. The committed val
 in [VALIDATION.md](VALIDATION.md).
 
 `smoke:electron` launches the actual Electron app and exits after SDK/catalog initialization.
-`probe:stream-owner` reloads and closes a real Electron renderer while a bounded probe stream is
-owned, requires both cancellations, rejects stale partial routing, and fails on uncaught exceptions
-or unhandled rejections.
+`probe:reset` uses Chromium's controlled WAV-backed microphone device, clicks the real renderer
+**Start recording** and **Reset** controls, requires real Nemotron PCM chunks, verifies renderer
+tracks stop, production IPC/controller/ownership cancellation completes, UI/controller state is v0,
+and a fresh recording lease succeeds. It fails nonzero on any missed stage, uncaught exception, or
+unhandled rejection.
 `capture:ui` captures an explicitly labeled browser-only visual preview because Electron
 `webContents.capturePage()` returns `UnknownVizError` in this execution environment.
 
@@ -319,7 +324,7 @@ did not globally disable the machine network.
 | `src/renderer/placement-interaction.ts` | SVG coordinate conversion, snapping, bounds, and keyboard movement |
 | `src/renderer/speech-correction.ts` | clause-local ASR furniture suggestion detection |
 | `src/renderer/speech-suggestion-state.ts` | raw-first Apply/Dismiss/Undo state and provenance |
-| `src/main/reset-handshake.ts` | trusted renderer ownership revocation followed by controller reset |
+| `src/main/reset-handshake.ts` | concurrent trusted-owner revocation and authoritative controller reset |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |
 | `scripts/run-layout-model-benchmarks.mjs` | isolated exact-candidate latency and quality suite |
 | `scripts/run-nemotron-integration.ts` | real Nemotron partial/final streaming and timing acceptance |

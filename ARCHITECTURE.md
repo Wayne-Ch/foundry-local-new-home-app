@@ -106,9 +106,12 @@ the captured `webContents`, frame identity, ownership-session ID, and stream ID.
 navigation/reload, renderer loss, webContents destruction, or window close revokes the lease,
 cancels native streaming, and prevents old partials from being delivered to a replacement renderer.
 Reset uses the same ownership authority: the renderer blocks input and releases local tracks first;
-main revokes any lease for that `webContents`, awaits the bounded native cancellation path, then
-resets controller/runtime state. Ownership release is immediate and repeated revoke/reset calls are
-safe, while a late stream activation is canceled against its revoked lease.
+renderer and controller accepted state advance synchronously to a persisted reset generation and v0.
+Main revokes any lease for that `webContents` while controller/native reset starts, then awaits the
+bounded cancellation path. Ownership release is immediate and repeated revoke/reset calls are safe,
+while a late stream activation is canceled against its revoked lease. A timeout never restores the
+prior accepted layout or trace: v0 remains quarantined, and automatic readiness recovery is accepted
+only when it reports the same reset generation.
 
 Pinned v2.2.1 accepts Whisper fallback transcription by URI. A measured inline
 `Item.audioFromData("wav", bytes)` request failed with:
@@ -142,11 +145,14 @@ Nemotron is selected because the stage UI now renders its revising partials. Whi
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers worklet startup cleanup, atomic renderer/main state-v0 reset, renderer
-reset concurrency, active-stream ownership revocation, cancellation failure/timeout recovery,
-atomic failed-mode switching, renderer-owner reload/close cancellation, submitted-transcript state,
-bounded cancellation/reset recovery, stale chunk/partial rejection, clause-local intent-safe speech
-suggestions, manual placement/retention, and the complete-Qwen-response execution gate.
+Current validation covers worklet startup cleanup, generation-tagged renderer/main state-v0 reset,
+renderer reset concurrency, active-stream ownership revocation, cancellation failure/timeout
+recovery, stale bootstrap/result rejection, atomic failed-mode switching, submitted-transcript
+state, bounded cancellation/reset recovery, stale chunk/partial rejection, candidate-local
+intent-safe speech suggestions across arbitrary new-subject predicates, manual placement/retention,
+and the complete-Qwen-response execution gate. The Electron Reset probe uses the real renderer
+buttons, a controlled WAV-backed MediaStream, production IPC/controller/owner code, and a real
+Nemotron `AudioSession`.
 
 ## One turn
 

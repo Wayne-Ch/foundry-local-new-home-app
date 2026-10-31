@@ -65,7 +65,13 @@ import {
   SingleFlightOperation,
   submitTranscriptDraft,
 } from "./renderer-lifecycle";
-import { DEFAULT_AUDIO_NOTICE, resetRendererTransientState } from "./reset-state";
+import {
+  createAuthoritativeResetBootstrap,
+  DEFAULT_AUDIO_NOTICE,
+  isAuthoritativeResetBootstrap,
+  isCurrentConversationResult,
+  resetRendererTransientState,
+} from "./reset-state";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import { applySpeechCorrectionSuggestions } from "./speech-correction";
 import {
@@ -100,7 +106,10 @@ let liveTranscriptPhase: "draft" | "submitted" = "draft";
 const operationBarrier = new RendererOperationBarrier();
 const audioPreparation = new SingleFlightOperation();
 let audioOperationId = 0;
-let resetRecoveryMonitor: Promise<void> | null = null;
+let resetRecoveryMonitor: {
+  readonly conversationGeneration: number;
+  readonly promise: Promise<void>;
+} | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
 let speechCorrection: SpeechSuggestionState | null = null;
@@ -175,6 +184,7 @@ const previewBanner = requiredElement("previewBanner");
 interface VoiceCaptureOperation {
   readonly operationId: number;
   readonly lifecycleGeneration: number;
+  readonly conversationGeneration: number;
   readonly mode: AudioMode;
   readonly stream: MediaStream;
   readonly startedAt: number;
@@ -330,7 +340,12 @@ resetButton.addEventListener("click", async () => {
     return;
   }
   const resetGeneration = operationBarrier.beginReset();
+  const conversationGeneration = viewState.conversationGeneration + 1;
+  resetRecoveryMonitor = null;
+  viewState = createAuthoritativeResetBootstrap(viewState, conversationGeneration);
+  latestToolResult = null;
   resetRendererTransientUi();
+  renderAll();
   setBusy(true);
   try {
     const bootstrap = await resetAfterStartingCleanup(
@@ -339,6 +354,9 @@ resetButton.addEventListener("click", async () => {
     );
     if (!operationBarrier.isCurrentReset(resetGeneration)) {
       return;
+    }
+    if (!isAuthoritativeResetBootstrap(bootstrap, conversationGeneration)) {
+      throw new Error("Reset returned a stale or non-v0 conversation generation.");
     }
     viewState = bootstrap;
     latestToolResult = bootstrap.lastToolResult;
@@ -349,8 +367,11 @@ resetButton.addEventListener("click", async () => {
       return;
     }
     try {
-      const bootstrap = await demoApi.getBootstrap();
-      if (operationBarrier.isCurrentReset(resetGeneration)) {
+      const bootstrap = await api.getBootstrap();
+      if (
+        operationBarrier.isCurrentReset(resetGeneration) &&
+        isAuthoritativeResetBootstrap(bootstrap, conversationGeneration)
+      ) {
         viewState = bootstrap;
         latestToolResult = bootstrap.lastToolResult;
         renderAll();
@@ -362,11 +383,12 @@ resetButton.addEventListener("click", async () => {
       runtimeStartupPending = false;
       setBusy(false);
       showResetError(error);
-      startResetRecoveryMonitor();
+      startResetRecoveryMonitor(conversationGeneration);
     }
     return;
   }
   if (operationBarrier.finishReset(resetGeneration)) {
+    resetRecoveryMonitor = null;
     runtimeStartupPending = false;
     setBusy(false);
     resetButton.focus({ preventScroll: true });
@@ -503,6 +525,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     return;
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
+  const conversationGeneration = viewState.conversationGeneration;
   manualPreview = null;
   manualPreviewOrigin = null;
   setBusy(true);
@@ -517,6 +540,9 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
+    if (!isCurrentConversationResult(response, conversationGeneration)) {
+      throw new Error("Discarded a stale turn result from an earlier conversation generation.");
+    }
     applyTurnResponse(response);
   } catch (error) {
     if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
@@ -524,8 +550,15 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     }
     progressBar.hidden = true;
     showRuntimeError(error);
-    viewState = await demoApi.getBootstrap();
-    renderAll();
+    const bootstrap = await demoApi.getBootstrap();
+    if (
+      operationBarrier.isCurrentOperation(lifecycleGeneration) &&
+      bootstrap.conversationGeneration === conversationGeneration
+    ) {
+      viewState = bootstrap;
+      latestToolResult = bootstrap.lastToolResult;
+      renderAll();
+    }
   } finally {
     if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       setBusy(false);
@@ -704,7 +737,11 @@ function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
       button.classList.add("is-current");
     }
     button.innerHTML = `<span>${index + 1}</span><strong>${escapeHtml(turn.label)}</strong>`;
-    button.disabled = isBusy || isAudioBusy() || !viewState.readiness.localInferenceReady;
+    button.disabled =
+      isBusy ||
+      isAudioBusy() ||
+      operationBarrier.operationsBlocked ||
+      !viewState.readiness.localInferenceReady;
     button.addEventListener("click", () => void runTurn(turn.prompt, turn.id));
     stageSteps.append(button);
   });
@@ -1348,11 +1385,15 @@ async function applyManualPreview(): Promise<void> {
     return;
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
+  const conversationGeneration = viewState.conversationGeneration;
   setBusy(true);
   try {
     const response = await demoApi.applyManualPlacement(manualPreview.request);
     if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
+    }
+    if (!isCurrentConversationResult(response, conversationGeneration)) {
+      throw new Error("Discarded a stale manual placement result from an earlier conversation generation.");
     }
     manualPreview = response.outcome.accepted ? null : response.outcome;
     manualPreviewOrigin = response.outcome.accepted ? null : manualPreviewOrigin;
@@ -1595,6 +1636,7 @@ async function startRecording(): Promise<void> {
     const operation: VoiceCaptureOperation = {
       operationId,
       lifecycleGeneration,
+      conversationGeneration: viewState.conversationGeneration,
       mode,
       stream: pendingStream,
       capture: null,
@@ -1738,6 +1780,9 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
       !operationBarrier.isCurrentOperation(operation.lifecycleGeneration)
     ) {
       return;
+    }
+    if (!isCurrentConversationResult(response, operation.conversationGeneration)) {
+      throw new Error("Discarded a stale audio result from an earlier conversation generation.");
     }
     viewState = {
       ...viewState,
@@ -1904,27 +1949,45 @@ function showResetError(error: unknown): void {
   });
 }
 
-function startResetRecoveryMonitor(): void {
-  if (resetRecoveryMonitor !== null) {
+function startResetRecoveryMonitor(conversationGeneration: number): void {
+  if (resetRecoveryMonitor?.conversationGeneration === conversationGeneration) {
     return;
   }
   let trackedPromise: Promise<void>;
-  trackedPromise = monitorResetRecovery().finally(() => {
-    if (resetRecoveryMonitor === trackedPromise) {
+  trackedPromise = monitorResetRecovery(conversationGeneration).finally(() => {
+    if (resetRecoveryMonitor?.promise === trackedPromise) {
       resetRecoveryMonitor = null;
     }
   });
-  resetRecoveryMonitor = trackedPromise;
+  resetRecoveryMonitor = {
+    conversationGeneration,
+    promise: trackedPromise,
+  };
 }
 
-async function monitorResetRecovery(): Promise<void> {
-  while (operationBarrier.resetQuarantined) {
+async function monitorResetRecovery(conversationGeneration: number): Promise<void> {
+  await Promise.resolve();
+  while (
+    operationBarrier.resetQuarantined &&
+    resetRecoveryMonitor?.conversationGeneration === conversationGeneration
+  ) {
     await new Promise((resolve) => setTimeout(resolve, 250));
-    if (demoApi === null || !operationBarrier.resetQuarantined) {
+    if (
+      demoApi === null ||
+      !operationBarrier.resetQuarantined ||
+      resetRecoveryMonitor?.conversationGeneration !== conversationGeneration
+    ) {
       return;
     }
     try {
       const bootstrap = await demoApi.getBootstrap();
+      if (
+        resetRecoveryMonitor?.conversationGeneration !== conversationGeneration ||
+        !operationBarrier.resetQuarantined ||
+        !isAuthoritativeResetBootstrap(bootstrap, conversationGeneration)
+      ) {
+        continue;
+      }
       viewState = bootstrap;
       latestToolResult = bootstrap.lastToolResult;
       renderAll();
@@ -1950,6 +2013,9 @@ async function refreshRuntimeState(): Promise<void> {
   }
   try {
     const bootstrap = await demoApi.getBootstrap();
+    if (bootstrap.conversationGeneration !== viewState.conversationGeneration) {
+      return;
+    }
     viewState = {
       ...viewState,
       readiness: bootstrap.readiness,

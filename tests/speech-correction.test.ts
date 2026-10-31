@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applySpeechCorrectionSuggestions } from "../src/renderer/speech-correction";
 
-describe("visible clause-local speech correction suggestions", () => {
+describe("visible candidate-local speech correction suggestions", () => {
   it("suggests a Queen bed only inside a bounded furniture clause", () => {
     const raw = "Fit the queen size bag beside the desk.";
     const result = applySpeechCorrectionSuggestions(raw);
@@ -81,6 +81,73 @@ describe("visible clause-local speech correction suggestions", () => {
     expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
       correctedTranscript: raw,
       corrections: [],
+    });
+  });
+
+  it.each([
+    "Keep the crib and that guy seems like a creep.",
+    "Keep the crib and he acts like a creep.",
+    "Keep the crib, she called him a creep.",
+    "Keep the crib but the buyer said that man was a creep.",
+    "Keep the crib, and our neighbor looks like a creep.",
+    "Keep the crib and somebody described the visitor as a creep.",
+    "Keep the crib and people said the visitor was a creep.",
+    "Move the desk and she carried a queen size bag to the car.",
+    "Move the desk and they bought a queen size bag for the drive.",
+    "Move the desk, the shopper called it a queen size bag.",
+    "Move the desk but that mover loaded a queen size bag into the car.",
+    "Move the desk, and my friend said the queen size bag was in the trunk.",
+    "Move the desk and movers bought a queen size bag for the car.",
+    "Move the desk and Wayne brought a queen size bag to the car.",
+  ])("does not inherit a layout action across an explicit new subject clause: %s", (raw) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it.each([
+    [
+      "Keep the crib and add a creep for the baby.",
+      "Keep the crib and add a baby bed for the baby.",
+      "baby-bed",
+    ],
+    [
+      "Move the desk, then fit the queen size bag as the bed in this layout.",
+      "Move the desk, then fit the queen-size bed as the bed in this layout.",
+      "queen-bed",
+    ],
+  ] as const)(
+    "keeps a later independent positive layout clause suggestible: %s",
+    (raw, correctedTranscript, id) => {
+      expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
+        correctedTranscript,
+        corrections: [expect.objectContaining({ id })],
+      });
+    },
+  );
+
+  it("binds each candidate to its own subject or action window across quotes and newlines", () => {
+    const raw = [
+      'Keep the crib and she said "add a creep for the baby."',
+      "That buyer called the visitor a creep, but replace the crib with a creep.",
+      "Move the desk and he said the queen size bag belongs in the car.",
+      "Then fit the queen size bag beside the desk.",
+    ].join("\n");
+
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: [
+        'Keep the crib and she said "add a creep for the baby."',
+        "That buyer called the visitor a creep, but replace the crib with a baby bed.",
+        "Move the desk and he said the queen size bag belongs in the car.",
+        "Then fit the queen-size bed beside the desk.",
+      ].join("\n"),
+      corrections: [
+        { id: "baby-bed", original: "creep", replacement: "baby bed" },
+        { id: "queen-bed", original: "queen size bag", replacement: "queen-size bed" },
+      ],
     });
   });
 

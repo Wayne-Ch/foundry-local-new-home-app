@@ -20,7 +20,7 @@ function v0() {
 }
 
 describe("main reset IPC ownership handshake", () => {
-  it("awaits active stream cancellation before resetting and returns v0", async () => {
+  it("starts the authoritative controller reset immediately and still awaits active cancellation", async () => {
     const calls: string[] = [];
     let finishCancellation!: () => void;
     const cancellationGate = new Promise<void>((resolve) => {
@@ -34,7 +34,7 @@ describe("main reset IPC ownership handshake", () => {
     const lease = ownership.begin(owner);
     await ownership.activate(lease, "stream-a");
     const resetController = vi.fn(async () => {
-      calls.push("controller-reset");
+      calls.push("controller-reset-started");
       return v0();
     });
 
@@ -50,12 +50,12 @@ describe("main reset IPC ownership handshake", () => {
     await Promise.resolve();
 
     expect(assertTrustedRenderer).toHaveBeenCalledWith(event);
-    expect(calls).toEqual(["cancel-started"]);
-    expect(resetController).not.toHaveBeenCalled();
+    expect(calls).toEqual(["cancel-started", "controller-reset-started"]);
+    expect(resetController).toHaveBeenCalledOnce();
 
     finishCancellation();
     await expect(reset).resolves.toEqual(v0());
-    expect(calls).toEqual(["cancel-started", "cancel-finished", "controller-reset"]);
+    expect(calls).toEqual(["cancel-started", "controller-reset-started", "cancel-finished"]);
   });
 
   it.each(["cancellation failed", "audio cancellation timed out"])(

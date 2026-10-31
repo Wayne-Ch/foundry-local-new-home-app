@@ -72,7 +72,7 @@ const audioReadiness: AudioReadiness = {
   lastTranscriptionMs: 6183,
 };
 
-function buildPreview(): BootstrapPayload {
+function buildPreview(conversationGeneration: number): BootstrapPayload {
   const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
   let state: DemoState = createInitialDemoState();
   const turnAInput = createToolInputForTests({
@@ -116,6 +116,7 @@ function buildPreview(): BootstrapPayload {
   const evidencePrompt = stageTurns[recoveryOnly ? 2 : 3]?.prompt ?? "";
 
   return {
+    conversationGeneration,
     roomPlan,
     state: recoveryOnly ? recoveryState : failureState,
     readiness,
@@ -209,8 +210,9 @@ function buildPreview(): BootstrapPayload {
   };
 }
 
-function buildResetPreview(): BootstrapPayload {
+function buildResetPreview(conversationGeneration: number): BootstrapPayload {
   return {
+    conversationGeneration,
     roomPlan,
     state: createInitialDemoState(),
     readiness,
@@ -232,7 +234,7 @@ function buildResetPreview(): BootstrapPayload {
 }
 
 export function createPreviewApi(): DemoApi {
-  let bootstrap = buildPreview();
+  let bootstrap = buildPreview(0);
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
@@ -258,6 +260,7 @@ export function createPreviewApi(): DemoApi {
     },
     cancelAudioStream: async () => {},
     runTurn: async (): Promise<RunTurnResponse> => ({
+      conversationGeneration: bootstrap.conversationGeneration,
       state: bootstrap.state,
       toolResult: bootstrap.lastToolResult,
       selectedLayout: bootstrap.selectedLayout,
@@ -301,6 +304,7 @@ export function createPreviewApi(): DemoApi {
         };
       }
       return {
+        conversationGeneration: bootstrap.conversationGeneration,
         outcome,
         completedStageTurnIds: bootstrap.completedStageTurnIds,
         lastInteraction: bootstrap.lastInteraction,
@@ -309,7 +313,7 @@ export function createPreviewApi(): DemoApi {
       };
     },
     resetConversation: async () => {
-      bootstrap = buildResetPreview();
+      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1);
       return bootstrap;
     },
     onProgress: () => () => {},

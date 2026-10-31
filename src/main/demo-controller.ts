@@ -86,6 +86,7 @@ export class DemoController {
   #completedStageTurnIds: StageTurnId[] = [];
   #lastInteraction: BootstrapPayload["lastInteraction"] = null;
   #operationGeneration = 0;
+  #conversationGeneration = 0;
   #resetPromise: Promise<BootstrapPayload> | null = null;
 
   constructor(options: DemoControllerOptions = {}) {
@@ -94,6 +95,7 @@ export class DemoController {
 
   bootstrap(): BootstrapPayload {
     return {
+      conversationGeneration: this.#conversationGeneration,
       roomPlan,
       state: this.#state,
       readiness: this.#foundry.readiness,
@@ -187,6 +189,7 @@ export class DemoController {
     });
     onProgress?.({ phase: "complete", detail: "Final transcript is ready for review." });
     return {
+      conversationGeneration: this.#conversationGeneration,
       result,
       audioReadiness: this.#foundry.audioReadiness,
       trace: this.#trace,
@@ -229,6 +232,7 @@ export class DemoController {
       });
       onProgress?.({ phase: "complete", detail: "Transcript is ready for review." });
       return {
+        conversationGeneration: this.#conversationGeneration,
         result,
         audioReadiness: this.#foundry.audioReadiness,
         trace: this.#trace,
@@ -361,6 +365,7 @@ export class DemoController {
       );
     }
     return {
+      conversationGeneration: this.#conversationGeneration,
       outcome: {
         ...outcome,
         state: this.#state,
@@ -378,8 +383,11 @@ export class DemoController {
       return this.#resetPromise;
     }
     this.#operationGeneration += 1;
+    this.#conversationGeneration += 1;
+    this.#resetConversationState();
+    const resetGeneration = this.#conversationGeneration;
     let trackedPromise: Promise<BootstrapPayload>;
-    trackedPromise = this.#reset().finally(() => {
+    trackedPromise = this.#reset(resetGeneration).finally(() => {
       if (this.#resetPromise === trackedPromise) {
         this.#resetPromise = null;
       }
@@ -388,8 +396,15 @@ export class DemoController {
     return trackedPromise;
   }
 
-  async #reset(): Promise<BootstrapPayload> {
+  async #reset(resetGeneration: number): Promise<BootstrapPayload> {
     await this.#foundry.reset();
+    if (resetGeneration !== this.#conversationGeneration) {
+      throw new Error("Conversation reset was superseded by a newer reset generation.");
+    }
+    return this.bootstrap();
+  }
+
+  #resetConversationState(): void {
     this.#state = createInitialDemoState();
     this.#selectedLayout = null;
     this.#messages = [
@@ -398,7 +413,6 @@ export class DemoController {
     this.#trace = [];
     this.#completedStageTurnIds = [];
     this.#lastInteraction = null;
-    return this.bootstrap();
   }
 
   async shutdown(): Promise<void> {
@@ -425,6 +439,7 @@ export class DemoController {
 
   #response(toolResult: RunTurnResponse["toolResult"], assistantText: string): RunTurnResponse {
     return {
+      conversationGeneration: this.#conversationGeneration,
       state: this.#state,
       toolResult,
       selectedLayout: this.#selectedLayout,

@@ -25,23 +25,26 @@ export async function resetConversationForRenderer<T>(
   resetController: () => Promise<T>,
   reportCancellationFailure: (error: unknown) => void,
 ): Promise<T> {
-  let cancellationFailure: unknown;
+  const cancellation = ownership.revokeOwner(owner.webContentsId);
+  let reset: Promise<T>;
   try {
-    await ownership.revokeOwner(owner.webContentsId);
+    reset = resetController();
   } catch (error) {
-    cancellationFailure = error;
-    reportCancellationFailure(error);
+    reset = Promise.reject(error);
   }
 
-  try {
-    return await resetController();
-  } catch (resetFailure) {
-    if (cancellationFailure !== undefined) {
-      throw new AggregateError(
-        [cancellationFailure, resetFailure],
-        "Conversation reset failed after active audio cancellation also failed.",
-      );
-    }
-    throw resetFailure;
+  const [cancellationOutcome, resetOutcome] = await Promise.allSettled([cancellation, reset]);
+  if (cancellationOutcome.status === "rejected") {
+    reportCancellationFailure(cancellationOutcome.reason);
   }
+  if (resetOutcome.status === "fulfilled") {
+    return resetOutcome.value;
+  }
+  if (cancellationOutcome.status === "rejected") {
+    throw new AggregateError(
+      [cancellationOutcome.reason, resetOutcome.reason],
+      "Conversation reset failed after active audio cancellation also failed.",
+    );
+  }
+  throw resetOutcome.reason;
 }

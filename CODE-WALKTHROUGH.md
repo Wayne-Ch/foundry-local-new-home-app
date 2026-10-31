@@ -51,12 +51,14 @@ Put on screen:
   `markFinished`;
 - main-owned renderer/frame/session/stream identity, with cancellation on reload, renderer loss,
   destruction, or window close and no partial forwarding to a replacement renderer;
-- Reset ownership handshake: renderer input/tracks stop first, main revokes and awaits bounded stream
-  cleanup, then controller state returns to v0; repeated cleanup is idempotent;
+- Reset ownership handshake: renderer/controller state advances immediately to a persisted v0
+  generation, renderer tracks stop, and main revokes ownership while bounded native cleanup runs;
+  timeout recovery can release quarantine only for the same v0 generation;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
-- raw ASR retention in Developer trace plus a clause-local, visible exact-replacement layer for
-  plausible `queen size bag` and `creep` furniture phrases before Send;
+- raw ASR retention in Developer trace plus a candidate-local, visible exact-replacement layer for
+  plausible `queen size bag` and `creep` furniture phrases; explicit new-subject clauses break action
+  inheritance regardless of their following verb;
 - exact raw text first, with explicit **Apply suggested furniture corrections**, **Dismiss**, and
   post-Apply **Undo suggestions** controls;
 - Send transition to the exact edited submitted prompt and submitted/processing label;

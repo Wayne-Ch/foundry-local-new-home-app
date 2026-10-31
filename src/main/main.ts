@@ -20,7 +20,11 @@ import type {
 } from "../audio/audio-types";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
-import { type AudioStreamOwnerIdentity, AudioStreamOwnership } from "./audio-stream-owner";
+import {
+  type AudioStreamLease,
+  type AudioStreamOwnerIdentity,
+  AudioStreamOwnership,
+} from "./audio-stream-owner";
 import { DemoController } from "./demo-controller";
 import {
   isAllowedAppNavigation,
@@ -34,24 +38,50 @@ let mainWebContents: WebContents | null = null;
 let microphonePermissionGate: MicrophonePermissionGate | null = null;
 let shutdownStarted = false;
 const microphonePermissionProbeEnabled = process.env.DEMO_MIC_PERMISSION_PROBE === "1";
-const streamOwnerProbeEnabled = process.env.DEMO_STREAM_OWNER_PROBE === "1";
-const streamOwnerResetProbeId = "00000000-0000-4000-8000-000000000003";
-const streamOwnerReloadProbeId = "00000000-0000-4000-8000-000000000001";
-const streamOwnerCloseProbeId = "00000000-0000-4000-8000-000000000002";
-const streamOwnerProbeIds = new Set([
-  streamOwnerResetProbeId,
-  streamOwnerReloadProbeId,
-  streamOwnerCloseProbeId,
-]);
-const streamOwnerProbeCancellations = new Set<string>();
-let streamOwnerProbeTerminating = false;
+const rendererResetProbeEnabled = process.env.DEMO_RENDERER_RESET_PROBE === "1";
+let rendererResetProbeTerminating = false;
+
+interface RendererResetProbeLease {
+  readonly lease: AudioStreamLease;
+  streamId: string | null;
+  activated: boolean;
+  chunkCount: number;
+  totalBytes: number;
+}
+
+interface RendererResetProbeCancellation {
+  readonly streamId: string;
+  readonly startedAt: number;
+  completedAt: number | null;
+  failure: string | null;
+}
+
+const rendererResetProbeLeases: RendererResetProbeLease[] = [];
+const rendererResetProbeCancellations: RendererResetProbeCancellation[] = [];
 const controller = new DemoController();
 const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
-  if (streamOwnerProbeEnabled && streamOwnerProbeIds.has(streamId)) {
-    streamOwnerProbeCancellations.add(streamId);
-    return;
+  const probeCancellation: RendererResetProbeCancellation | null = rendererResetProbeEnabled
+    ? {
+        streamId,
+        startedAt: performance.now(),
+        completedAt: null,
+        failure: null,
+      }
+    : null;
+  if (probeCancellation !== null) {
+    rendererResetProbeCancellations.push(probeCancellation);
   }
-  await controller.cancelAudioStream({ streamId });
+  try {
+    await controller.cancelAudioStream({ streamId });
+    if (probeCancellation !== null) {
+      probeCancellation.completedAt = performance.now();
+    }
+  } catch (error) {
+    if (probeCancellation !== null) {
+      probeCancellation.failure = error instanceof Error ? error.message : String(error);
+    }
+    throw error;
+  }
 });
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererFilePath = path.join(currentDirectory, "..", "renderer", "index.html");
@@ -81,9 +111,14 @@ if (process.env.DEMO_CAPTURE_PATH?.trim()) {
 if (microphonePermissionProbeEnabled) {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 }
-if (streamOwnerProbeEnabled) {
-  process.on("uncaughtException", (error) => failStreamOwnerProbe("UNCAUGHT_EXCEPTION", error));
-  process.on("unhandledRejection", (error) => failStreamOwnerProbe("UNHANDLED_REJECTION", error));
+if (rendererResetProbeEnabled) {
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+  app.commandLine.appendSwitch(
+    "use-file-for-fake-audio-capture",
+    path.resolve("tests", "fixtures", "queen-desk.wav"),
+  );
+  process.on("uncaughtException", (error) => failRendererResetProbe("UNCAUGHT_EXCEPTION", error));
+  process.on("unhandledRejection", (error) => failRendererResetProbe("UNHANDLED_REJECTION", error));
 }
 
 function createWindow(): BrowserWindow {
@@ -178,9 +213,9 @@ function createWindow(): BrowserWindow {
       void runMicrophonePermissionProbe(webContents);
     });
   }
-  if (streamOwnerProbeEnabled) {
+  if (rendererResetProbeEnabled) {
     webContents.once("did-finish-load", () => {
-      void runStreamOwnerProbe(window, webContents, webContentsId);
+      void runRendererResetProbe(window, webContents);
     });
   }
   if (process.env.DEMO_OPEN_DEVTOOLS === "1") {
@@ -214,9 +249,7 @@ function createWindow(): BrowserWindow {
 function registerIpc(): void {
   ipcMain.handle(ipcChannels.getBootstrap, () => controller.bootstrap());
   ipcMain.handle(ipcChannels.initializeRuntime, () =>
-    microphonePermissionProbeEnabled || streamOwnerProbeEnabled
-      ? controller.bootstrap().readiness
-      : controller.initializeRuntime(),
+    microphonePermissionProbeEnabled ? controller.bootstrap().readiness : controller.initializeRuntime(),
   );
   ipcMain.handle(ipcChannels.prepareOffline, (event) => {
     const renderer = assertTrustedRendererIpc(event);
@@ -233,6 +266,18 @@ function registerIpc(): void {
   ipcMain.handle(ipcChannels.startAudioStream, async (event, request: AudioStreamStartRequest) => {
     const renderer = assertTrustedRendererIpc(event);
     const lease = audioStreamOwnership.begin(renderer.owner);
+    const probeLease: RendererResetProbeLease | null = rendererResetProbeEnabled
+      ? {
+          lease,
+          streamId: null,
+          activated: false,
+          chunkCount: 0,
+          totalBytes: 0,
+        }
+      : null;
+    if (probeLease !== null) {
+      rendererResetProbeLeases.push(probeLease);
+    }
     try {
       const response = await controller.startAudioStream(request, (partial) => {
         if (!audioStreamOwnership.canRoute(lease, partial.streamId)) {
@@ -245,6 +290,10 @@ function registerIpc(): void {
       if (!(await audioStreamOwnership.activate(lease, response.streamId))) {
         throw new Error("The renderer frame was replaced before the audio stream became active.");
       }
+      if (probeLease !== null) {
+        probeLease.streamId = response.streamId;
+        probeLease.activated = true;
+      }
       return response;
     } catch (error) {
       audioStreamOwnership.release(lease);
@@ -254,7 +303,17 @@ function registerIpc(): void {
   ipcMain.handle(ipcChannels.appendAudioChunk, (event, request: AudioStreamChunkRequest) => {
     const renderer = assertTrustedRendererIpc(event);
     audioStreamOwnership.assertOwned(renderer.owner, request.streamId);
-    return controller.appendAudioStreamChunk(request);
+    const response = controller.appendAudioStreamChunk(request);
+    if (rendererResetProbeEnabled) {
+      const probeLease = rendererResetProbeLeases.find(
+        (candidate) => candidate.streamId === request.streamId,
+      );
+      if (probeLease !== undefined) {
+        probeLease.chunkCount += 1;
+        probeLease.totalBytes = response.totalBytes;
+      }
+    }
+    return response;
   });
   ipcMain.handle(ipcChannels.finishAudioStream, async (event, request: AudioStreamFinishRequest) => {
     const renderer = assertTrustedRendererIpc(event);
@@ -533,149 +592,413 @@ async function runMicrophonePermissionProbe(webContents: WebContents): Promise<v
   }
 }
 
-async function runStreamOwnerProbe(
-  window: BrowserWindow,
-  webContents: WebContents,
-  webContentsId: number,
-): Promise<void> {
+interface RendererMediaProbeSnapshot {
+  readonly captureCount: number;
+  readonly captures: readonly {
+    readonly stopCalls: number;
+    readonly trackCount: number;
+    readonly readyStates: readonly string[];
+  }[];
+}
+
+interface RendererResetUiSnapshot {
+  readonly stateText: string;
+  readonly promptValue: string;
+  readonly suggestionHidden: boolean;
+  readonly liveTranscriptHidden: boolean;
+  readonly resetDisabled: boolean;
+}
+
+async function runRendererResetProbe(window: BrowserWindow, webContents: WebContents): Promise<void> {
   try {
-    const frame = webContents.mainFrame;
-    const previousFrameToken = frame.frameToken;
-    const resetLease = audioStreamOwnership.begin({
-      webContentsId,
-      processId: frame.processId,
-      frameId: frame.routingId,
-      frameTreeNodeId: frame.frameTreeNodeId,
-      frameToken: frame.frameToken,
-    });
-    if (!(await audioStreamOwnership.activate(resetLease, streamOwnerResetProbeId))) {
-      throw new Error("The initial renderer frame could not acquire the Reset probe stream.");
-    }
-    const resetResult = (await webContents.executeJavaScript(
-      `window.demoApi.resetConversation().then((bootstrap) => ({
-        version: bootstrap.state.version,
-        stateRef: bootstrap.state.stateRef,
-        traceLength: bootstrap.trace.length
-      }))`,
-      true,
-    )) as { readonly version: number; readonly stateRef: string; readonly traceLength: number };
-    if (
-      resetResult.version !== 0 ||
-      resetResult.stateRef !== "layout-state-v0" ||
-      resetResult.traceLength !== 0 ||
-      !streamOwnerProbeCancellations.has(streamOwnerResetProbeId) ||
-      audioStreamOwnership.canRoute(resetLease, streamOwnerResetProbeId)
-    ) {
-      throw new Error(
-        `Active Reset did not revoke ownership and return state v0: ${JSON.stringify(resetResult)}`,
-      );
-    }
+    window.show();
+    window.focus();
+    await waitForProbeState(
+      async () =>
+        (await webContents.executeJavaScript(
+          `document.readyState === "complete" && document.querySelector("#resetButton") !== null`,
+          true,
+        )) === true,
+      "renderer controls to load",
+    );
+    await installRendererMediaProbe(webContents);
+    await prepareRendererRecordingPipeline(webContents);
 
-    const reloadLease = audioStreamOwnership.begin({
-      webContentsId,
-      processId: frame.processId,
-      frameId: frame.routingId,
-      frameTreeNodeId: frame.frameTreeNodeId,
-      frameToken: frame.frameToken,
-    });
-    if (!(await audioStreamOwnership.activate(reloadLease, streamOwnerReloadProbeId))) {
-      throw new Error("The renderer could not acquire a fresh stream after Reset.");
-    }
+    const firstLease = await startRendererRecording(webContents, 0);
+    const firstMedia = await readRendererMediaProbe(webContents);
+    assertActiveMediaCapture(firstMedia, 0);
+    const firstGeneration = controller.bootstrap().conversationGeneration + 1;
 
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Timed out waiting for the renderer reload.")),
-        10_000,
-      );
-      webContents.once("did-finish-load", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      webContents.reload();
-    });
+    await clickRendererButton(webContents, "#resetButton");
+    const firstReset = await waitForRendererReset(webContents, firstLease, 0, firstGeneration);
 
-    if (
-      !streamOwnerProbeCancellations.has(streamOwnerReloadProbeId) ||
-      audioStreamOwnership.canRoute(reloadLease, streamOwnerReloadProbeId)
-    ) {
-      throw new Error("Renderer reload did not cancel and revoke the original audio stream owner.");
+    await prepareRendererRecordingPipeline(webContents);
+    const secondLease = await startRendererRecording(webContents, 1);
+    if (secondLease.lease.sessionId === firstLease.lease.sessionId) {
+      throw new Error("The post-reset recording reused the revoked audio ownership lease.");
     }
-    const currentFrame = webContents.mainFrame;
-    const currentFrameToken = currentFrame.frameToken;
-    const closeLease = audioStreamOwnership.begin({
-      webContentsId,
-      processId: currentFrame.processId,
-      frameId: currentFrame.routingId,
-      frameTreeNodeId: currentFrame.frameTreeNodeId,
-      frameToken: currentFrame.frameToken,
-    });
-    if (reloadLease.sessionId === resetLease.sessionId || closeLease.sessionId === reloadLease.sessionId) {
-      throw new Error("Renderer reload reused the revoked audio ownership session.");
-    }
-    if (!(await audioStreamOwnership.activate(closeLease, streamOwnerCloseProbeId))) {
-      throw new Error("The reloaded renderer frame could not acquire the close probe stream.");
-    }
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Timed out waiting for the renderer window to close.")),
-        10_000,
-      );
-      window.once("closed", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-      window.close();
-    });
-    await waitForProbeCancellation(streamOwnerCloseProbeId);
-    if (audioStreamOwnership.canRoute(closeLease, streamOwnerCloseProbeId)) {
-      throw new Error("Window close left the renderer audio stream owner routable.");
-    }
+    const secondMedia = await readRendererMediaProbe(webContents);
+    assertActiveMediaCapture(secondMedia, 1);
+
+    const secondGeneration = controller.bootstrap().conversationGeneration + 1;
+    await clickRendererButton(webContents, "#resetButton");
+    const secondReset = await waitForRendererReset(webContents, secondLease, 1, secondGeneration);
+
     console.log(
-      `STREAM_OWNER_PROBE_OK ${JSON.stringify({
-        previousFrameToken,
-        currentFrameToken,
-        resetSessionId: resetLease.sessionId,
-        reloadSessionId: reloadLease.sessionId,
-        closeSessionId: closeLease.sessionId,
-        activeResetCancelled: true,
-        activeResetVersion: resetResult.version,
-        nextRecordAcquired: true,
-        reloadCancelled: true,
-        closeCancelled: true,
-        stalePartialRoutable: false,
+      `ELECTRON_RENDERER_RESET_PROBE_OK ${JSON.stringify({
+        path: "real renderer Start recording -> production IPC/controller/owner -> real Nemotron AudioSession",
+        fakeCapture: "tests/fixtures/queen-desk.wav through Chromium fake MediaStream device",
+        firstSessionId: firstLease.lease.sessionId,
+        secondSessionId: secondLease.lease.sessionId,
+        firstStreamChunks: firstLease.chunkCount,
+        secondStreamChunks: secondLease.chunkCount,
+        firstCancellationMs: firstReset.cancellationMs,
+        secondCancellationMs: secondReset.cancellationMs,
+        mediaTracksStopped: true,
+        ownershipReleased: true,
+        uiStateVersion: secondReset.version,
+        freshRecordingLeaseSucceeded: true,
       })}`,
     );
   } catch (error) {
     process.exitCode = 1;
-    console.error("STREAM_OWNER_PROBE_FAILED", error);
+    console.error("ELECTRON_RENDERER_RESET_PROBE_FAILED", error);
   } finally {
-    streamOwnerProbeTerminating = true;
+    rendererResetProbeTerminating = true;
+    try {
+      await controller.shutdown();
+    } catch (error) {
+      process.exitCode = 1;
+      console.error("ELECTRON_RENDERER_RESET_PROBE_SHUTDOWN_FAILED", error);
+    }
     app.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
   }
 }
 
-async function waitForProbeCancellation(streamId: string): Promise<void> {
-  const deadline = Date.now() + 1_000;
-  while (!streamOwnerProbeCancellations.has(streamId)) {
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for cancellation of probe stream ${streamId}.`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+async function installRendererMediaProbe(webContents: WebContents): Promise<void> {
+  const installed = (await webContents.executeJavaScript(
+    `(() => {
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices || typeof mediaDevices.getUserMedia !== "function") {
+        return false;
+      }
+      if (window.__rendererResetProbeMedia) {
+        return true;
+      }
+      const state = { captures: [] };
+      const originalGetUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
+      Object.defineProperty(mediaDevices, "getUserMedia", {
+        configurable: true,
+        value: async (...args) => {
+          const stream = await originalGetUserMedia(...args);
+          const capture = { stream, tracks: stream.getTracks(), stopCalls: 0 };
+          for (const track of capture.tracks) {
+            const originalStop = track.stop.bind(track);
+            Object.defineProperty(track, "stop", {
+              configurable: true,
+              value: () => {
+                capture.stopCalls += 1;
+                originalStop();
+              }
+            });
+          }
+          state.captures.push(capture);
+          return stream;
+        }
+      });
+      window.__rendererResetProbeMedia = state;
+      return true;
+    })()`,
+    true,
+  )) as boolean;
+  if (!installed) {
+    throw new Error("The renderer MediaStream observer could not be installed.");
   }
 }
 
-function failStreamOwnerProbe(kind: string, error: unknown): void {
-  if (streamOwnerProbeTerminating) {
+async function prepareRendererRecordingPipeline(webContents: WebContents): Promise<void> {
+  if (!controller.bootstrap().readiness.localInferenceReady) {
+    await waitForRendererButton(webContents, "#prepareButton");
+    await clickRendererButton(webContents, "#prepareButton");
+    await waitForProbeState(
+      () => controller.bootstrap().readiness.localInferenceReady,
+      "the real layout model to become ready",
+      180_000,
+    );
+  }
+  if (!controller.bootstrap().audioReadiness.localAudioReady) {
+    await waitForRendererButton(webContents, "#audioPrepareButton");
+    await clickRendererButton(webContents, "#audioPrepareButton");
+    await waitForProbeState(
+      () => controller.bootstrap().audioReadiness.localAudioReady,
+      "the real Nemotron audio model to become ready",
+      180_000,
+    );
+  }
+  await waitForRendererButton(webContents, "#recordButton");
+}
+
+async function startRendererRecording(
+  webContents: WebContents,
+  leaseIndex: number,
+): Promise<RendererResetProbeLease> {
+  await clickRendererButton(webContents, "#recordButton");
+  await waitForProbeState(
+    async () =>
+      (await webContents.executeJavaScript(
+        `document.querySelector("#recordButton")?.textContent === "Stop"`,
+        true,
+      )) === true,
+    `renderer recording ${leaseIndex + 1} to enter the active UI state`,
+  );
+  await waitForProbeState(
+    () => {
+      const lease = rendererResetProbeLeases[leaseIndex];
+      return lease?.activated === true && lease.streamId !== null && lease.chunkCount > 0;
+    },
+    `renderer recording ${leaseIndex + 1} to create a native owned stream and PCM chunk`,
+  );
+  const lease = rendererResetProbeLeases[leaseIndex];
+  if (lease === undefined || lease.streamId === null) {
+    throw new Error(`Renderer recording ${leaseIndex + 1} did not create an owned stream.`);
+  }
+  return lease;
+}
+
+async function waitForRendererReset(
+  webContents: WebContents,
+  lease: RendererResetProbeLease,
+  mediaCaptureIndex: number,
+  conversationGeneration: number,
+): Promise<{
+  readonly cancellationMs: number;
+  readonly version: number;
+}> {
+  if (lease.streamId === null) {
+    throw new Error("Cannot verify reset without an activated native stream.");
+  }
+  const cancellation = await waitForProbeValue(
+    () =>
+      rendererResetProbeCancellations.find(
+        (candidate) => candidate.streamId === lease.streamId && candidate.completedAt !== null,
+      ),
+    (value): value is RendererResetProbeCancellation => value !== undefined,
+    "controller.cancelAudioStream to finish bounded native cancellation",
+  );
+  if (cancellation.failure !== null || cancellation.completedAt === null) {
+    throw new Error(`Native audio cancellation failed: ${cancellation.failure ?? "unknown failure"}.`);
+  }
+
+  const media = await waitForProbeValue(
+    () => readRendererMediaProbe(webContents),
+    (value) => {
+      const capture = value.captures[mediaCaptureIndex];
+      return (
+        capture !== undefined &&
+        capture.stopCalls >= capture.trackCount &&
+        capture.readyStates.every((state) => state === "ended")
+      );
+    },
+    "renderer MediaStream tracks to stop",
+  );
+  const capture = media.captures[mediaCaptureIndex];
+  if (capture === undefined || capture.trackCount < 1) {
+    throw new Error("The renderer reset probe did not observe an audio MediaStream track.");
+  }
+
+  const ui = await waitForProbeValue(
+    () => readRendererResetUi(webContents),
+    (value) =>
+      value.stateText === "State v0" &&
+      value.promptValue === "" &&
+      value.suggestionHidden &&
+      value.liveTranscriptHidden &&
+      !value.resetDisabled,
+    "renderer UI to settle at state v0",
+  );
+  const bootstrap = await waitForProbeValue(
+    () => controller.bootstrap(),
+    (value) =>
+      value.conversationGeneration === conversationGeneration &&
+      value.state.version === 0 &&
+      value.state.stateRef === "layout-state-v0" &&
+      value.selectedLayout === null &&
+      value.lastToolResult === null &&
+      value.trace.length === 0 &&
+      value.readiness.status !== "recovering" &&
+      value.readiness.status !== "recovery_required",
+    "controller reset and any bounded native recovery to settle at the same v0 generation",
+  );
+  if (audioStreamOwnership.canRoute(lease.lease, lease.streamId)) {
+    throw new Error(
+      `Reset did not preserve authoritative v0 or release ownership: ${JSON.stringify({
+        conversationGeneration: bootstrap.conversationGeneration,
+        expectedConversationGeneration: conversationGeneration,
+        version: bootstrap.state.version,
+        stateRef: bootstrap.state.stateRef,
+        selectedLayout: bootstrap.selectedLayout?.id ?? null,
+        lastToolResult: bootstrap.lastToolResult?.status ?? null,
+        traceLength: bootstrap.trace.length,
+        ui,
+      })}`,
+    );
+  }
+
+  return {
+    cancellationMs: Math.round(cancellation.completedAt - cancellation.startedAt),
+    version: bootstrap.state.version,
+  };
+}
+
+function assertActiveMediaCapture(snapshot: RendererMediaProbeSnapshot, index: number): void {
+  const capture = snapshot.captures[index];
+  if (
+    capture === undefined ||
+    capture.trackCount < 1 ||
+    capture.stopCalls !== 0 ||
+    capture.readyStates.some((state) => state !== "live")
+  ) {
+    throw new Error(
+      `Renderer recording ${index + 1} did not retain a live controlled MediaStream: ${JSON.stringify(
+        snapshot,
+      )}`,
+    );
+  }
+}
+
+async function readRendererMediaProbe(webContents: WebContents): Promise<RendererMediaProbeSnapshot> {
+  return (await webContents.executeJavaScript(
+    `(() => {
+      const state = window.__rendererResetProbeMedia;
+      return {
+        captureCount: state?.captures.length ?? 0,
+        captures: (state?.captures ?? []).map((capture) => ({
+          stopCalls: capture.stopCalls,
+          trackCount: capture.tracks.length,
+          readyStates: capture.tracks.map((track) => track.readyState)
+        }))
+      };
+    })()`,
+    true,
+  )) as RendererMediaProbeSnapshot;
+}
+
+async function readRendererResetUi(webContents: WebContents): Promise<RendererResetUiSnapshot> {
+  return (await webContents.executeJavaScript(
+    `(() => ({
+      stateText: document.querySelector("#turnCounter")?.textContent ?? "",
+      promptValue: document.querySelector("#promptInput")?.value ?? "",
+      suggestionHidden: document.querySelector("#speechSuggestionPanel")?.hidden === true,
+      liveTranscriptHidden: document.querySelector("#liveTranscriptPanel")?.hidden === true,
+      resetDisabled: document.querySelector("#resetButton")?.disabled === true
+    }))()`,
+    true,
+  )) as RendererResetUiSnapshot;
+}
+
+async function waitForRendererButton(webContents: WebContents, selector: string): Promise<void> {
+  await waitForProbeState(
+    async () =>
+      (await webContents.executeJavaScript(
+        `(() => {
+          const element = document.querySelector(${JSON.stringify(selector)});
+          return element instanceof HTMLButtonElement && !element.disabled && !element.hidden;
+        })()`,
+        true,
+      )) === true,
+    `${selector} to become enabled`,
+    180_000,
+  );
+}
+
+async function clickRendererButton(webContents: WebContents, selector: string): Promise<void> {
+  const point = (await webContents.executeJavaScript(
+    `(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!(element instanceof HTMLButtonElement) || element.disabled || element.hidden) {
+        return null;
+      }
+      element.scrollIntoView({ block: "center", inline: "center" });
+      const rect = element.getBoundingClientRect();
+      return {
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2)
+      };
+    })()`,
+    true,
+  )) as { readonly x: number; readonly y: number } | null;
+  if (point === null) {
+    throw new Error(`Renderer button ${selector} is not available for a real input click.`);
+  }
+  webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
+  webContents.sendInputEvent({
+    type: "mouseDown",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  webContents.sendInputEvent({
+    type: "mouseUp",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
+async function waitForProbeState(
+  check: () => boolean | Promise<boolean>,
+  description: string,
+  timeoutMs = 120_000,
+): Promise<void> {
+  await waitForProbeValue(check, (value) => value, description, timeoutMs);
+}
+
+async function waitForProbeValue<T, U extends T>(
+  read: () => T | Promise<T>,
+  accept: (value: T) => value is U,
+  description: string,
+  timeoutMs?: number,
+): Promise<U>;
+async function waitForProbeValue<T>(
+  read: () => T | Promise<T>,
+  accept: (value: T) => boolean,
+  description: string,
+  timeoutMs?: number,
+): Promise<T>;
+async function waitForProbeValue<T>(
+  read: () => T | Promise<T>,
+  accept: (value: T) => boolean,
+  description: string,
+  timeoutMs = 120_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T;
+  while (true) {
+    lastValue = await read();
+    if (accept(lastValue)) {
+      return lastValue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}. Last value: ${JSON.stringify(lastValue)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function failRendererResetProbe(kind: string, error: unknown): void {
+  if (rendererResetProbeTerminating) {
     return;
   }
-  streamOwnerProbeTerminating = true;
+  rendererResetProbeTerminating = true;
   process.exitCode = 1;
-  console.error(`STREAM_OWNER_PROBE_${kind}`, error);
+  console.error(`ELECTRON_RENDERER_RESET_PROBE_${kind}`, error);
   app.exit(1);
 }
 
 app.on("window-all-closed", () => {
-  if (streamOwnerProbeEnabled) {
+  if (rendererResetProbeEnabled) {
     return;
   }
   if (process.platform !== "darwin") {

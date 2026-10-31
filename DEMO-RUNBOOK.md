@@ -21,7 +21,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run build
 npm run smoke:electron
-npm run probe:stream-owner
+npm run probe:reset
 npm run probe:microphone-permission
 npm run capture:ui
 npm run start:built
@@ -55,11 +55,12 @@ In the app:
    produced; live revisions remain in the explicitly labeled draft panel.
 6. Select **Reset**, then load both models again. Reset clears the editable/submitted prompt,
    transcript trace, pending/applied suggestion and undo provenance, manual preview/drag state, and
-   recording timers before returning the renderer and main response to state v0. Renderer input is
-   disabled and microphone tracks are released first; main then revokes the active renderer lease,
-   settles/disposes the bounded native stream, resets the controller, and deletes tracked Whisper
-   fallback captures. If native work exceeds the reset bound, the UI stays quarantined until
-   automatic session replacement succeeds or a later explicit Reset succeeds.
+   recording timers while immediately advancing renderer and controller state to a tagged v0.
+   Renderer input is disabled and microphone tracks are released; main revokes the active renderer
+   lease while controller reset starts, settles/disposes the bounded native stream, and deletes
+   tracked Whisper fallback captures. If native work exceeds the reset bound, the same v0 generation
+   stays quarantined until automatic session replacement succeeds or a later explicit Reset starts
+   a newer v0 generation.
 7. Close the trace for the opening shot.
 8. Run one focused real-microphone recovery gate with:
 
@@ -72,14 +73,14 @@ In the app:
    same feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate
    or relabel the committed Queen + desk WAV fixture as baby-bed evidence.
 
-Observed selected-default integration timings on the validated laptop were 2.532–9.300 seconds per
+Observed selected-default integration timings on the validated laptop were 2.332–8.362 seconds per
 turn, including bounded application-validation correction when needed. The unrestricted semantic
-benchmark measured 5.597 seconds median and 9.834 seconds maximum. Do not start the first
+benchmark measured 5.357 seconds median and 10.216 seconds maximum. Do not start the first
 inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,248 ms,
-stop-to-final at 205 ms, and 5,482 ms cached preparation. The explicit Whisper fallback prepared in
-4,035 ms and transcribed the same fixture in 221 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,288 ms,
+stop-to-final at 231 ms, and 1,975 ms cached preparation. The explicit Whisper fallback prepared in
+2,901 ms and transcribed the same fixture in 1,203 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow

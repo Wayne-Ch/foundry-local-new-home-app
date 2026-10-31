@@ -71,33 +71,74 @@ function unused(): never {
   throw new Error("Not used by this reset test.");
 }
 
+type TestFoundry = NonNullable<DemoControllerOptions["foundry"]>;
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (reason: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((complete, fail) => {
+    resolve = complete;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
+  return {
+    readiness,
+    audioReadiness,
+    initialize: async () => readiness,
+    prepareOffline: async () => unused(),
+    prepareAudioOffline: async () => unused(),
+    transcribeAudio: async () => unused(),
+    startAudioStream: async () => unused(),
+    appendAudioStreamChunk: () => unused(),
+    finishAudioStream: async () => unused(),
+    cancelAudioStream: async () => unused(),
+    runTurn: async () => unused(),
+    reset: async () => {},
+    shutdown: async () => {},
+    ...overrides,
+  };
+}
+
 describe("main reset response", () => {
-  it("returns one trace-free v0 bootstrap after prior main-process evidence", async () => {
-    const reset = vi.fn(async () => {});
-    const foundry: NonNullable<DemoControllerOptions["foundry"]> = {
-      readiness,
-      audioReadiness,
-      initialize: async () => readiness,
-      prepareOffline: async () => unused(),
-      prepareAudioOffline: async () => unused(),
-      transcribeAudio: async () => unused(),
-      startAudioStream: async () => unused(),
-      appendAudioStreamChunk: () => unused(),
-      finishAudioStream: async () => unused(),
-      cancelAudioStream: async () => unused(),
-      runTurn: async () => unused(),
-      reset,
-      shutdown: async () => {},
-    };
+  it("publishes one trace-free v0 generation before native reset settles", async () => {
+    const resetGate = deferred<void>();
+    const reset = vi.fn(() => resetGate.promise);
+    const foundry = createFoundry({ reset });
     const controller = new DemoController({ foundry });
 
     await controller.initializeRuntime();
     expect(controller.bootstrap().trace).toHaveLength(1);
 
-    const response = await controller.reset();
+    const resetPromise = controller.reset();
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 1,
+      state: {
+        version: 0,
+        stateRef: "layout-state-v0",
+        currentLayoutId: null,
+        lastToolResult: null,
+      },
+      completedStageTurnIds: [],
+      lastInteraction: null,
+      selectedLayout: null,
+      lastToolResult: null,
+      trace: [],
+    });
+    expect(controller.bootstrap().messages[0]?.text).toContain("Conversation reset");
+
+    resetGate.resolve();
+    const response = await resetPromise;
 
     expect(reset).toHaveBeenCalledOnce();
     expect(response).toMatchObject({
+      conversationGeneration: 1,
       state: {
         version: 0,
         stateRef: "layout-state-v0",
@@ -112,5 +153,94 @@ describe("main reset response", () => {
     });
     expect(response.messages).toHaveLength(1);
     expect(response.messages[0]?.text).toContain("Conversation reset");
+  });
+
+  it("keeps the same v0 generation through a timeout and late readiness recovery", async () => {
+    let currentReadiness = readiness;
+    const resetGate = deferred<void>();
+    const foundry = createFoundry({
+      reset: () => resetGate.promise,
+    });
+    Object.defineProperty(foundry, "readiness", {
+      get: () => currentReadiness,
+    });
+    const controller = new DemoController({ foundry });
+
+    const reset = controller.reset();
+    currentReadiness = {
+      ...readiness,
+      localInferenceReady: false,
+      status: "recovering",
+      detail: "Native reset timed out; runtime recovery is in progress.",
+    };
+    resetGate.reject(new Error("Native reset could not safely stop active native operations."));
+
+    await expect(reset).rejects.toThrow("could not safely stop");
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 1,
+      state: { version: 0, stateRef: "layout-state-v0" },
+      readiness: { status: "recovering", localInferenceReady: false },
+      selectedLayout: null,
+      lastToolResult: null,
+      trace: [],
+    });
+
+    currentReadiness = readiness;
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 1,
+      state: { version: 0, stateRef: "layout-state-v0" },
+      readiness: { status: "ready", localInferenceReady: true },
+      selectedLayout: null,
+      lastToolResult: null,
+      trace: [],
+    });
+  });
+
+  it("single-flights repeated reset and advances only for a later reset attempt", async () => {
+    const firstGate = deferred<void>();
+    const secondGate = deferred<void>();
+    const reset = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => firstGate.promise)
+      .mockImplementationOnce(() => secondGate.promise);
+    const controller = new DemoController({ foundry: createFoundry({ reset }) });
+
+    const first = controller.reset();
+    const repeated = controller.reset();
+    expect(repeated).toBe(first);
+    expect(controller.bootstrap().conversationGeneration).toBe(1);
+
+    firstGate.resolve();
+    await first;
+
+    const second = controller.reset();
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 2,
+      state: { version: 0, stateRef: "layout-state-v0" },
+      trace: [],
+    });
+    secondGate.resolve();
+    await expect(second).resolves.toMatchObject({ conversationGeneration: 2 });
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a stale async result without restoring pre-reset trace", async () => {
+    const initializeGate = deferred<RuntimeReadiness>();
+    const controller = new DemoController({
+      foundry: createFoundry({
+        initialize: () => initializeGate.promise,
+      }),
+    });
+
+    const initialize = controller.initializeRuntime();
+    await controller.reset();
+    initializeGate.resolve(readiness);
+
+    await expect(initialize).rejects.toThrow("superseded by conversation reset");
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 1,
+      state: { version: 0, stateRef: "layout-state-v0" },
+      trace: [],
+    });
   });
 });

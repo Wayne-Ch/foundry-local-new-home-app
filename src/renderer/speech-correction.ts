@@ -15,7 +15,7 @@ interface TextRange {
   readonly end: number;
 }
 
-interface ClauseRange extends TextRange {
+interface CandidateWindow extends TextRange {
   readonly text: string;
 }
 
@@ -33,15 +33,73 @@ interface GoverningAction {
 const actionSource =
   "add|arrange|bring|fit|include|keep|move|need|place|position|put|remove|replace|require|retain|swap|use|want";
 const actionPattern = new RegExp(`\\b(?:${actionSource})\\b`, "gi");
-const clauseVerbPattern = new RegExp(`\\b(?:${actionSource}|avoid|exclude)\\b`, "i");
 const hardClauseBoundaryPattern = /[.!?;:\r\n]+/g;
 const softClauseBoundaryPattern = /,|\b(?:and|but|then)\b/gi;
 const independentActionClausePattern = new RegExp(
   `^(?:\\s|please\\s+)*(?:(?:no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not)\\s+)?(?:${actionSource}|avoid|exclude|be)\\b`,
   "i",
 );
-const independentSubjectClausePattern =
-  /^(?:\s)*(?:a|an|he|her|his|i|it|my|our|she|that|the|their|these|they|this|those|we|you|your)\b(?:\s+[\w'-]+){0,7}\s+(?:am|are|belongs?|contains?|has|have|is|means?|was|were)\b/i;
+const subjectPronouns = new Set([
+  "everybody",
+  "everyone",
+  "he",
+  "i",
+  "it",
+  "nobody",
+  "she",
+  "somebody",
+  "someone",
+  "they",
+  "we",
+  "who",
+  "you",
+]);
+const subjectDeterminers = new Set([
+  "a",
+  "an",
+  "another",
+  "any",
+  "each",
+  "either",
+  "every",
+  "her",
+  "his",
+  "its",
+  "my",
+  "neither",
+  "no",
+  "our",
+  "some",
+  "that",
+  "the",
+  "their",
+  "these",
+  "this",
+  "those",
+  "your",
+]);
+const nonSubjectOpeners = new Set([
+  "against",
+  "along",
+  "also",
+  "as",
+  "beside",
+  "for",
+  "inside",
+  "instead",
+  "just",
+  "like",
+  "near",
+  "only",
+  "outside",
+  "over",
+  "please",
+  "rather",
+  "under",
+  "with",
+  "without",
+]);
+const wordTokenPattern = /\b[A-Za-z][\w'-]*\b/g;
 const queenBagPattern = /\bqueen[\s-]+size(?:d)?[\s-]+bag\b/gi;
 const creepPattern = /\bcreep\b/gi;
 const explicitBedContextPattern = /\b(?:bed|bedroom|headboard|mattress|sleep|sleeping)\b/gi;
@@ -90,68 +148,110 @@ function maskRanges(value: string, valueStart: number, ranges: readonly TextRang
   return masked;
 }
 
-function hasAction(value: string): boolean {
-  return clauseVerbPattern.test(value);
+function startsIndependentActionClause(value: string): boolean {
+  return independentActionClausePattern.test(value);
+}
+
+function startsIndependentSubjectClause(value: string): boolean {
+  const tokens = [...value.matchAll(wordTokenPattern)];
+  const first = tokens[0]?.[0];
+  if (first === undefined) {
+    return false;
+  }
+  const normalized = first.toLowerCase();
+  if (subjectPronouns.has(normalized)) {
+    return tokens.length >= 2;
+  }
+  if (subjectDeterminers.has(normalized)) {
+    return tokens.length >= 3;
+  }
+  if (/^[A-Z]/.test(first)) {
+    return tokens.length >= 2;
+  }
+  return tokens.length >= 3 && !nonSubjectOpeners.has(normalized);
 }
 
 function startsIndependentClause(value: string): boolean {
-  return independentActionClausePattern.test(value) || independentSubjectClausePattern.test(value);
+  return startsIndependentActionClause(value) || startsIndependentSubjectClause(value);
 }
 
-function appendSoftClauseRanges(
+function boundaryIsQuoted(start: number, end: number, quotedRanges: readonly TextRange[]): boolean {
+  return quotedRanges.some((range) => overlapsRange(start, end, range));
+}
+
+function findHardCandidateWindow(
   rawTranscript: string,
-  start: number,
-  end: number,
+  candidate: TextRange,
   quotedRanges: readonly TextRange[],
-  clauses: ClauseRange[],
-): void {
-  let clauseStart = start;
-  softClauseBoundaryPattern.lastIndex = start;
-  for (
-    let match = softClauseBoundaryPattern.exec(rawTranscript);
-    match !== null;
-    match = softClauseBoundaryPattern.exec(rawTranscript)
-  ) {
-    if (match.index >= end) {
-      break;
-    }
-    const prefix = maskRanges(rawTranscript.slice(clauseStart, match.index), clauseStart, quotedRanges);
-    const nextStart = match.index + match[0].length;
-    const suffix = maskRanges(rawTranscript.slice(nextStart, end), nextStart, quotedRanges);
-    if (!hasAction(prefix) || !startsIndependentClause(suffix)) {
-      continue;
-    }
-    clauses.push({
-      start: clauseStart,
-      end: match.index,
-      text: rawTranscript.slice(clauseStart, match.index),
-    });
-    clauseStart = nextStart;
-  }
-  clauses.push({
-    start: clauseStart,
-    end,
-    text: rawTranscript.slice(clauseStart, end),
-  });
-}
-
-function collectClauseRanges(rawTranscript: string, quotedRanges: readonly TextRange[]): ClauseRange[] {
-  const clauses: ClauseRange[] = [];
-  let hardClauseStart = 0;
-  hardClauseBoundaryPattern.lastIndex = 0;
+): TextRange {
+  let start = 0;
+  let end = rawTranscript.length;
   for (const match of rawTranscript.matchAll(hardClauseBoundaryPattern)) {
     if (match.index === undefined) {
       continue;
     }
-    appendSoftClauseRanges(rawTranscript, hardClauseStart, match.index, quotedRanges, clauses);
-    hardClauseStart = match.index + match[0].length;
+    const boundaryEnd = match.index + match[0].length;
+    if (boundaryIsQuoted(match.index, boundaryEnd, quotedRanges)) {
+      continue;
+    }
+    if (boundaryEnd <= candidate.start) {
+      start = boundaryEnd;
+      continue;
+    }
+    if (match.index >= candidate.end) {
+      end = match.index;
+      break;
+    }
   }
-  appendSoftClauseRanges(rawTranscript, hardClauseStart, rawTranscript.length, quotedRanges, clauses);
-  return clauses;
+  return { start, end };
 }
 
-function findClause(clauses: readonly ClauseRange[], start: number, end: number): ClauseRange | null {
-  return clauses.find((clause) => start >= clause.start && end <= clause.end) ?? null;
+function findCandidateWindow(
+  rawTranscript: string,
+  candidate: TextRange,
+  quotedRanges: readonly TextRange[],
+): CandidateWindow {
+  const hardWindow = findHardCandidateWindow(rawTranscript, candidate, quotedRanges);
+  let start = hardWindow.start;
+  let end = hardWindow.end;
+
+  for (const match of rawTranscript.matchAll(softClauseBoundaryPattern)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    const boundaryEnd = match.index + match[0].length;
+    if (
+      match.index < hardWindow.start ||
+      match.index >= hardWindow.end ||
+      boundaryIsQuoted(match.index, boundaryEnd, quotedRanges)
+    ) {
+      continue;
+    }
+    if (boundaryEnd <= candidate.start) {
+      const candidatePrefix = maskRanges(
+        rawTranscript.slice(boundaryEnd, candidate.start),
+        boundaryEnd,
+        quotedRanges,
+      );
+      if (startsIndependentClause(candidatePrefix)) {
+        start = boundaryEnd;
+      }
+      continue;
+    }
+    if (match.index >= candidate.end) {
+      const suffix = maskRanges(rawTranscript.slice(boundaryEnd, hardWindow.end), boundaryEnd, quotedRanges);
+      if (startsIndependentClause(suffix)) {
+        end = match.index;
+        break;
+      }
+    }
+  }
+
+  return {
+    start,
+    end,
+    text: rawTranscript.slice(start, end),
+  };
 }
 
 function wordDistance(value: string, leftEnd: number, rightStart: number): number {
@@ -250,11 +350,7 @@ function hasBabyBedContext(clauseText: string, candidate: TextRange): boolean {
   return hasPositiveCue(maskCandidate(clauseText, candidate.start, candidate.end), babyBedContextPattern);
 }
 
-function collectCandidates(
-  rawTranscript: string,
-  quotedRanges: readonly TextRange[],
-  clauses: readonly ClauseRange[],
-): CorrectionCandidate[] {
+function collectCandidates(rawTranscript: string, quotedRanges: readonly TextRange[]): CorrectionCandidate[] {
   const candidates: CorrectionCandidate[] = [];
   const patterns = [
     { id: "queen-bed" as const, pattern: queenBagPattern, replacement: "queen-size bed" },
@@ -272,12 +368,9 @@ function collectCandidates(
       if (quotedRanges.some((range) => overlapsRange(start, end, range))) {
         continue;
       }
-      const clause = findClause(clauses, start, end);
-      if (clause === null) {
-        continue;
-      }
-      const maskedClause = maskRanges(clause.text, clause.start, quotedRanges);
-      const localCandidate = { start: start - clause.start, end: end - clause.start };
+      const window = findCandidateWindow(rawTranscript, { start, end }, quotedRanges);
+      const maskedClause = maskRanges(window.text, window.start, quotedRanges);
+      const localCandidate = { start: start - window.start, end: end - window.start };
       if (candidateIsNegated(maskedClause, localCandidate)) {
         continue;
       }
@@ -300,8 +393,7 @@ function collectCandidates(
 
 export function applySpeechCorrectionSuggestions(rawTranscript: string): SpeechCorrectionResult {
   const quotedRanges = collectQuotedRanges(rawTranscript);
-  const clauses = collectClauseRanges(rawTranscript, quotedRanges);
-  const candidates = collectCandidates(rawTranscript, quotedRanges, clauses);
+  const candidates = collectCandidates(rawTranscript, quotedRanges);
   const corrections: SpeechCorrection[] = [];
   let cursor = 0;
   let correctedTranscript = "";

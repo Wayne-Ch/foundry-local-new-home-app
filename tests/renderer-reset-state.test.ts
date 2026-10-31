@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AudioRecorderState, LiveTranscriptDraft } from "../src/audio/audio-types";
 import { createPreviewApi } from "../src/renderer/preview-api";
 import {
+  createAuthoritativeResetBootstrap,
   DEFAULT_AUDIO_NOTICE,
+  isAuthoritativeResetBootstrap,
+  isCurrentConversationResult,
   type RendererTransientState,
   resetRendererTransientState,
 } from "../src/renderer/reset-state";
@@ -126,11 +129,13 @@ describe("renderer reset state", () => {
   it("makes the renderer preview reset response a main-compatible v0 payload", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const api = createPreviewApi();
-    expect((await api.getBootstrap()).state.version).toBeGreaterThan(0);
+    const before = await api.getBootstrap();
+    expect(before.state.version).toBeGreaterThan(0);
 
     const reset = await api.resetConversation();
 
     expect(reset).toMatchObject({
+      conversationGeneration: before.conversationGeneration + 1,
       state: {
         version: 0,
         stateRef: "layout-state-v0",
@@ -143,5 +148,60 @@ describe("renderer reset state", () => {
       lastToolResult: null,
       trace: [],
     });
+  });
+
+  it("replaces accepted renderer state with authoritative v0 before an async reset response", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const before = await createPreviewApi().getBootstrap();
+
+    const reset = createAuthoritativeResetBootstrap(before, before.conversationGeneration + 1);
+
+    expect(reset).toMatchObject({
+      conversationGeneration: before.conversationGeneration + 1,
+      state: {
+        version: 0,
+        stateRef: "layout-state-v0",
+        currentLayoutId: null,
+        currentLayoutSource: null,
+        activeFurnitureIds: [],
+        lastChangedPreference: null,
+        lastResultStatus: null,
+      },
+      completedStageTurnIds: [],
+      lastInteraction: null,
+      selectedLayout: null,
+      lastToolResult: null,
+      trace: [],
+    });
+    expect(reset.messages).toHaveLength(1);
+    expect(reset.messages[0]?.text).toContain("Conversation reset");
+  });
+
+  it("rejects stale bootstrap and result generations during reset recovery", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const stale = await createPreviewApi().getBootstrap();
+    const expectedGeneration = stale.conversationGeneration + 1;
+    const localV0 = createAuthoritativeResetBootstrap(stale, expectedGeneration);
+
+    expect(isAuthoritativeResetBootstrap(stale, expectedGeneration)).toBe(false);
+    expect(
+      isAuthoritativeResetBootstrap(
+        {
+          ...stale,
+          conversationGeneration: expectedGeneration,
+        },
+        expectedGeneration,
+      ),
+    ).toBe(false);
+    expect(isAuthoritativeResetBootstrap(localV0, expectedGeneration)).toBe(true);
+    expect(
+      isCurrentConversationResult(
+        { conversationGeneration: stale.conversationGeneration },
+        expectedGeneration,
+      ),
+    ).toBe(false);
+    expect(
+      isCurrentConversationResult({ conversationGeneration: expectedGeneration }, expectedGeneration),
+    ).toBe(true);
   });
 });
