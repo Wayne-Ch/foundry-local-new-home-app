@@ -39,9 +39,12 @@ let microphonePermissionGate: MicrophonePermissionGate | null = null;
 let shutdownStarted = false;
 const microphonePermissionProbeEnabled = process.env.DEMO_MIC_PERMISSION_PROBE === "1";
 const rendererResetProbeEnabled = process.env.DEMO_RENDERER_RESET_PROBE === "1";
+const streamOwnerProbeEnabled = process.env.DEMO_STREAM_OWNER_PROBE === "1";
+const rendererLifecycleProbeEnabled = rendererResetProbeEnabled || streamOwnerProbeEnabled;
 let rendererResetProbeTerminating = false;
+let streamOwnerProbeTerminating = false;
 
-interface RendererResetProbeLease {
+interface RendererLifecycleProbeLease {
   readonly lease: AudioStreamLease;
   streamId: string | null;
   activated: boolean;
@@ -49,18 +52,21 @@ interface RendererResetProbeLease {
   totalBytes: number;
 }
 
-interface RendererResetProbeCancellation {
+interface RendererLifecycleProbeCancellation {
   readonly streamId: string;
   readonly startedAt: number;
   completedAt: number | null;
   failure: string | null;
 }
 
-const rendererResetProbeLeases: RendererResetProbeLease[] = [];
-const rendererResetProbeCancellations: RendererResetProbeCancellation[] = [];
+const rendererLifecycleProbeLeases: RendererLifecycleProbeLease[] = [];
+const rendererLifecycleProbeCancellations: RendererLifecycleProbeCancellation[] = [];
+const rendererLifecycleProbeTrackStops = new Set<string>();
+const rendererLifecycleProbeErrors: string[] = [];
+const rendererTrackStopMarker = "ELECTRON_RENDERER_MEDIA_TRACK_STOP ";
 const controller = new DemoController();
 const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
-  const probeCancellation: RendererResetProbeCancellation | null = rendererResetProbeEnabled
+  const probeCancellation: RendererLifecycleProbeCancellation | null = rendererLifecycleProbeEnabled
     ? {
         streamId,
         startedAt: performance.now(),
@@ -69,7 +75,7 @@ const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
       }
     : null;
   if (probeCancellation !== null) {
-    rendererResetProbeCancellations.push(probeCancellation);
+    rendererLifecycleProbeCancellations.push(probeCancellation);
   }
   try {
     await controller.cancelAudioStream({ streamId });
@@ -111,14 +117,20 @@ if (process.env.DEMO_CAPTURE_PATH?.trim()) {
 if (microphonePermissionProbeEnabled) {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 }
-if (rendererResetProbeEnabled) {
+if (rendererLifecycleProbeEnabled) {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
   app.commandLine.appendSwitch(
     "use-file-for-fake-audio-capture",
     path.resolve("tests", "fixtures", "queen-desk.wav"),
   );
+}
+if (rendererResetProbeEnabled) {
   process.on("uncaughtException", (error) => failRendererResetProbe("UNCAUGHT_EXCEPTION", error));
   process.on("unhandledRejection", (error) => failRendererResetProbe("UNHANDLED_REJECTION", error));
+}
+if (streamOwnerProbeEnabled) {
+  process.on("uncaughtException", (error) => failStreamOwnerProbe("UNCAUGHT_EXCEPTION", error));
+  process.on("unhandledRejection", (error) => failStreamOwnerProbe("UNHANDLED_REJECTION", error));
 }
 
 function createWindow(): BrowserWindow {
@@ -141,6 +153,11 @@ function createWindow(): BrowserWindow {
   const webContents = window.webContents;
   const webContentsId = webContents.id;
   mainWebContents = webContents;
+  if (rendererLifecycleProbeEnabled) {
+    webContents.on("console-message", (event) => {
+      recordRendererLifecycleProbeMessage(event.message);
+    });
+  }
 
   const permissionGate = new MicrophonePermissionGate({
     expectedWebContents: webContents,
@@ -218,6 +235,11 @@ function createWindow(): BrowserWindow {
       void runRendererResetProbe(window, webContents);
     });
   }
+  if (streamOwnerProbeEnabled) {
+    webContents.once("did-finish-load", () => {
+      void runStreamOwnerProbe(window, webContents);
+    });
+  }
   if (process.env.DEMO_OPEN_DEVTOOLS === "1") {
     webContents.openDevTools({ mode: "detach" });
   }
@@ -266,7 +288,7 @@ function registerIpc(): void {
   ipcMain.handle(ipcChannels.startAudioStream, async (event, request: AudioStreamStartRequest) => {
     const renderer = assertTrustedRendererIpc(event);
     const lease = audioStreamOwnership.begin(renderer.owner);
-    const probeLease: RendererResetProbeLease | null = rendererResetProbeEnabled
+    const probeLease: RendererLifecycleProbeLease | null = rendererLifecycleProbeEnabled
       ? {
           lease,
           streamId: null,
@@ -276,7 +298,7 @@ function registerIpc(): void {
         }
       : null;
     if (probeLease !== null) {
-      rendererResetProbeLeases.push(probeLease);
+      rendererLifecycleProbeLeases.push(probeLease);
     }
     try {
       const response = await controller.startAudioStream(request, (partial) => {
@@ -304,8 +326,8 @@ function registerIpc(): void {
     const renderer = assertTrustedRendererIpc(event);
     audioStreamOwnership.assertOwned(renderer.owner, request.streamId);
     const response = controller.appendAudioStreamChunk(request);
-    if (rendererResetProbeEnabled) {
-      const probeLease = rendererResetProbeLeases.find(
+    if (rendererLifecycleProbeEnabled) {
+      const probeLease = rendererLifecycleProbeLeases.find(
         (candidate) => candidate.streamId === request.streamId,
       );
       if (probeLease !== undefined) {
@@ -434,6 +456,7 @@ function sendToFrame(frame: WebFrameMain, channel: string, payload: unknown): bo
     frame.send(channel, payload);
     return true;
   } catch (error) {
+    recordRendererLifecycleProbeError(error);
     console.error(`Failed to send ${channel} to the owning renderer frame:`, error);
     return false;
   }
@@ -444,6 +467,7 @@ function revokeAudioStreamOwner(
   frame?: Pick<AudioStreamOwnerIdentity, "frameTreeNodeId" | "frameToken">,
 ): void {
   void audioStreamOwnership.revokeOwner(webContentsId, frame).catch((error: unknown) => {
+    recordRendererLifecycleProbeError(error);
     console.error("Failed to cancel the renderer-owned audio stream:", error);
   });
 }
@@ -463,6 +487,7 @@ function frameOwnership(
       frameToken: frame.frameToken,
     };
   } catch (error) {
+    recordRendererLifecycleProbeError(error);
     console.error("Failed to capture renderer frame ownership during navigation:", error);
     return undefined;
   }
@@ -592,13 +617,16 @@ async function runMicrophonePermissionProbe(webContents: WebContents): Promise<v
   }
 }
 
+interface RendererMediaCaptureSnapshot {
+  readonly id: string;
+  readonly stopCalls: number;
+  readonly trackCount: number;
+  readonly readyStates: readonly string[];
+}
+
 interface RendererMediaProbeSnapshot {
   readonly captureCount: number;
-  readonly captures: readonly {
-    readonly stopCalls: number;
-    readonly trackCount: number;
-    readonly readyStates: readonly string[];
-  }[];
+  readonly captures: readonly RendererMediaCaptureSnapshot[];
 }
 
 interface RendererResetUiSnapshot {
@@ -613,15 +641,8 @@ async function runRendererResetProbe(window: BrowserWindow, webContents: WebCont
   try {
     window.show();
     window.focus();
-    await waitForProbeState(
-      async () =>
-        (await webContents.executeJavaScript(
-          `document.readyState === "complete" && document.querySelector("#resetButton") !== null`,
-          true,
-        )) === true,
-      "renderer controls to load",
-    );
-    await installRendererMediaProbe(webContents);
+    await waitForRendererControls(webContents);
+    await installRendererMediaProbe(webContents, "reset");
     await prepareRendererRecordingPipeline(webContents);
 
     const firstLease = await startRendererRecording(webContents, 0);
@@ -643,6 +664,7 @@ async function runRendererResetProbe(window: BrowserWindow, webContents: WebCont
     const secondGeneration = controller.bootstrap().conversationGeneration + 1;
     await clickRendererButton(webContents, "#resetButton");
     const secondReset = await waitForRendererReset(webContents, secondLease, 1, secondGeneration);
+    assertNoRendererLifecycleProbeErrors();
 
     console.log(
       `ELECTRON_RENDERER_RESET_PROBE_OK ${JSON.stringify({
@@ -675,29 +697,129 @@ async function runRendererResetProbe(window: BrowserWindow, webContents: WebCont
   }
 }
 
-async function installRendererMediaProbe(webContents: WebContents): Promise<void> {
+async function waitForRendererControls(webContents: WebContents): Promise<void> {
+  await waitForProbeState(
+    async () =>
+      (await webContents.executeJavaScript(
+        `document.readyState === "complete" && document.querySelector("#resetButton") !== null`,
+        true,
+      )) === true,
+    "renderer controls to load",
+  );
+}
+
+async function runStreamOwnerProbe(window: BrowserWindow, webContents: WebContents): Promise<void> {
+  try {
+    window.show();
+    window.focus();
+    await waitForRendererControls(webContents);
+    await installRendererMediaProbe(webContents, "reload");
+    await prepareRendererRecordingPipeline(webContents);
+
+    const reloadLease = await startRendererRecording(webContents, 0);
+    const reloadMedia = await readRendererMediaProbe(webContents);
+    assertActiveMediaCapture(reloadMedia, 0);
+    const reloadCapture = reloadMedia.captures[0];
+    if (reloadCapture === undefined || reloadLease.streamId === null) {
+      throw new Error("The reload lifecycle did not create an observable renderer recording.");
+    }
+
+    await reloadRenderer(webContents);
+    const reloadCancellationMs = await waitForLifecycleCancellation(reloadLease, "reload navigation");
+    await waitForRendererTrackStops(reloadCapture);
+    const staleReloadRoutable = audioStreamOwnership.canRoute(reloadLease.lease, reloadLease.streamId);
+    if (staleReloadRoutable) {
+      throw new Error("Reload navigation left the stale audio stream routable.");
+    }
+
+    await waitForRendererControls(webContents);
+    await installRendererMediaProbe(webContents, "close");
+    await prepareRendererRecordingPipeline(webContents);
+    const closeLease = await startRendererRecording(webContents, 1);
+    if (closeLease.streamId === null || closeLease.lease.sessionId <= reloadLease.lease.sessionId) {
+      throw new Error("Reload did not advance to a fresh audio ownership session.");
+    }
+    const closeMedia = await readRendererMediaProbe(webContents);
+    assertActiveMediaCapture(closeMedia, 0);
+    const closeCapture = closeMedia.captures[0];
+    if (closeCapture === undefined) {
+      throw new Error("The close lifecycle did not create an observable renderer recording.");
+    }
+
+    await closeRendererWindow(window);
+    const closeCancellationMs = await waitForLifecycleCancellation(closeLease, "window close");
+    await waitForRendererTrackStops(closeCapture);
+    const staleCloseRoutable = audioStreamOwnership.canRoute(closeLease.lease, closeLease.streamId);
+    if (staleCloseRoutable) {
+      throw new Error("Window close left the stale audio stream routable.");
+    }
+    assertNoRendererLifecycleProbeErrors();
+
+    console.log(
+      `ELECTRON_STREAM_OWNER_PROBE_OK ${JSON.stringify({
+        path: "real renderer Start recording -> reload navigation -> real renderer Start recording -> window close",
+        fakeCapture: "tests/fixtures/queen-desk.wav through Chromium fake MediaStream device",
+        reloadSessionId: reloadLease.lease.sessionId,
+        closeSessionId: closeLease.lease.sessionId,
+        reloadStreamChunks: reloadLease.chunkCount,
+        closeStreamChunks: closeLease.chunkCount,
+        reloadCancellationMs,
+        closeCancellationMs,
+        reloadTracksStopped: reloadCapture.trackCount,
+        closeTracksStopped: closeCapture.trackCount,
+        ownershipSessionAdvanced: true,
+        stalePartialRoutable: false,
+        destroyedObjectErrors: 0,
+        unhandledErrors: 0,
+      })}`,
+    );
+  } catch (error) {
+    process.exitCode = 1;
+    console.error("ELECTRON_STREAM_OWNER_PROBE_FAILED", error);
+  } finally {
+    streamOwnerProbeTerminating = true;
+    try {
+      await controller.shutdown();
+    } catch (error) {
+      process.exitCode = 1;
+      console.error("ELECTRON_STREAM_OWNER_PROBE_SHUTDOWN_FAILED", error);
+    }
+    app.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
+  }
+}
+
+async function installRendererMediaProbe(webContents: WebContents, captureGroup: string): Promise<void> {
   const installed = (await webContents.executeJavaScript(
     `(() => {
       const mediaDevices = navigator.mediaDevices;
       if (!mediaDevices || typeof mediaDevices.getUserMedia !== "function") {
         return false;
       }
-      if (window.__rendererResetProbeMedia) {
+      if (window.__rendererLifecycleProbeMedia?.group === ${JSON.stringify(captureGroup)}) {
         return true;
       }
-      const state = { captures: [] };
+      const state = { group: ${JSON.stringify(captureGroup)}, captures: [] };
       const originalGetUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
       Object.defineProperty(mediaDevices, "getUserMedia", {
         configurable: true,
         value: async (...args) => {
           const stream = await originalGetUserMedia(...args);
-          const capture = { stream, tracks: stream.getTracks(), stopCalls: 0 };
-          for (const track of capture.tracks) {
+          const capture = {
+            id: state.group + ":" + state.captures.length,
+            stream,
+            tracks: stream.getTracks(),
+            stopCalls: 0
+          };
+          for (const [trackIndex, track] of capture.tracks.entries()) {
             const originalStop = track.stop.bind(track);
             Object.defineProperty(track, "stop", {
               configurable: true,
               value: () => {
                 capture.stopCalls += 1;
+                console.info(
+                  ${JSON.stringify(rendererTrackStopMarker)} +
+                    JSON.stringify({ captureId: capture.id, trackIndex })
+                );
                 originalStop();
               }
             });
@@ -706,7 +828,7 @@ async function installRendererMediaProbe(webContents: WebContents): Promise<void
           return stream;
         }
       });
-      window.__rendererResetProbeMedia = state;
+      window.__rendererLifecycleProbeMedia = state;
       return true;
     })()`,
     true,
@@ -741,7 +863,7 @@ async function prepareRendererRecordingPipeline(webContents: WebContents): Promi
 async function startRendererRecording(
   webContents: WebContents,
   leaseIndex: number,
-): Promise<RendererResetProbeLease> {
+): Promise<RendererLifecycleProbeLease> {
   await clickRendererButton(webContents, "#recordButton");
   await waitForProbeState(
     async () =>
@@ -753,12 +875,12 @@ async function startRendererRecording(
   );
   await waitForProbeState(
     () => {
-      const lease = rendererResetProbeLeases[leaseIndex];
+      const lease = rendererLifecycleProbeLeases[leaseIndex];
       return lease?.activated === true && lease.streamId !== null && lease.chunkCount > 0;
     },
     `renderer recording ${leaseIndex + 1} to create a native owned stream and PCM chunk`,
   );
-  const lease = rendererResetProbeLeases[leaseIndex];
+  const lease = rendererLifecycleProbeLeases[leaseIndex];
   if (lease === undefined || lease.streamId === null) {
     throw new Error(`Renderer recording ${leaseIndex + 1} did not create an owned stream.`);
   }
@@ -767,7 +889,7 @@ async function startRendererRecording(
 
 async function waitForRendererReset(
   webContents: WebContents,
-  lease: RendererResetProbeLease,
+  lease: RendererLifecycleProbeLease,
   mediaCaptureIndex: number,
   conversationGeneration: number,
 ): Promise<{
@@ -779,10 +901,12 @@ async function waitForRendererReset(
   }
   const cancellation = await waitForProbeValue(
     () =>
-      rendererResetProbeCancellations.find(
-        (candidate) => candidate.streamId === lease.streamId && candidate.completedAt !== null,
+      rendererLifecycleProbeCancellations.find(
+        (candidate) =>
+          candidate.streamId === lease.streamId &&
+          (candidate.completedAt !== null || candidate.failure !== null),
       ),
-    (value): value is RendererResetProbeCancellation => value !== undefined,
+    (value): value is RendererLifecycleProbeCancellation => value !== undefined,
     "controller.cancelAudioStream to finish bounded native cancellation",
   );
   if (cancellation.failure !== null || cancellation.completedAt === null) {
@@ -869,10 +993,11 @@ function assertActiveMediaCapture(snapshot: RendererMediaProbeSnapshot, index: n
 async function readRendererMediaProbe(webContents: WebContents): Promise<RendererMediaProbeSnapshot> {
   return (await webContents.executeJavaScript(
     `(() => {
-      const state = window.__rendererResetProbeMedia;
+      const state = window.__rendererLifecycleProbeMedia;
       return {
         captureCount: state?.captures.length ?? 0,
         captures: (state?.captures ?? []).map((capture) => ({
+          id: capture.id,
           stopCalls: capture.stopCalls,
           trackCount: capture.tracks.length,
           readyStates: capture.tracks.map((track) => track.readyState)
@@ -894,6 +1019,138 @@ async function readRendererResetUi(webContents: WebContents): Promise<RendererRe
     }))()`,
     true,
   )) as RendererResetUiSnapshot;
+}
+
+async function reloadRenderer(webContents: WebContents): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      webContents.removeListener("did-finish-load", finish);
+      reject(new Error("Timed out waiting for the real renderer reload navigation."));
+    }, 30_000);
+    const finish = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    webContents.once("did-finish-load", finish);
+    try {
+      webContents.reload();
+    } catch (error) {
+      clearTimeout(timeout);
+      webContents.removeListener("did-finish-load", finish);
+      reject(error);
+    }
+  });
+}
+
+async function closeRendererWindow(window: BrowserWindow): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.removeListener("closed", finish);
+      reject(new Error("Timed out waiting for the real renderer window to close."));
+    }, 30_000);
+    const finish = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    window.once("closed", finish);
+    try {
+      window.close();
+    } catch (error) {
+      clearTimeout(timeout);
+      window.removeListener("closed", finish);
+      reject(error);
+    }
+  });
+}
+
+async function waitForLifecycleCancellation(
+  lease: RendererLifecycleProbeLease,
+  lifecycle: string,
+): Promise<number> {
+  if (lease.streamId === null) {
+    throw new Error(`Cannot verify ${lifecycle} without an activated native stream.`);
+  }
+  const cancellation = await waitForProbeValue(
+    () =>
+      rendererLifecycleProbeCancellations.find(
+        (candidate) =>
+          candidate.streamId === lease.streamId &&
+          (candidate.completedAt !== null || candidate.failure !== null),
+      ),
+    (value): value is RendererLifecycleProbeCancellation => value !== undefined,
+    `${lifecycle} to cancel the native renderer-owned stream`,
+  );
+  if (cancellation.failure !== null || cancellation.completedAt === null) {
+    throw new Error(
+      `${lifecycle} native audio cancellation failed: ${cancellation.failure ?? "unknown failure"}.`,
+    );
+  }
+  return Math.round(cancellation.completedAt - cancellation.startedAt);
+}
+
+async function waitForRendererTrackStops(capture: RendererMediaCaptureSnapshot): Promise<void> {
+  if (capture.trackCount < 1) {
+    throw new Error(`Renderer capture ${capture.id} did not expose a MediaStream track.`);
+  }
+  await waitForProbeState(
+    () =>
+      Array.from({ length: capture.trackCount }, (_, trackIndex) =>
+        rendererLifecycleProbeTrackStops.has(mediaTrackStopKey(capture.id, trackIndex)),
+      ).every(Boolean),
+    `renderer MediaStream tracks for ${capture.id} to stop`,
+    30_000,
+  );
+}
+
+function mediaTrackStopKey(captureId: string, trackIndex: number): string {
+  return `${captureId}:${trackIndex}`;
+}
+
+function recordRendererLifecycleProbeMessage(message: string): void {
+  if (message.startsWith(rendererTrackStopMarker)) {
+    try {
+      const payload = JSON.parse(message.slice(rendererTrackStopMarker.length)) as {
+        readonly captureId?: unknown;
+        readonly trackIndex?: unknown;
+      };
+      if (
+        typeof payload.captureId !== "string" ||
+        !Number.isInteger(payload.trackIndex) ||
+        (payload.trackIndex as number) < 0
+      ) {
+        throw new Error(`Invalid renderer track-stop payload: ${message}`);
+      }
+      rendererLifecycleProbeTrackStops.add(
+        mediaTrackStopKey(payload.captureId, payload.trackIndex as number),
+      );
+    } catch (error) {
+      rendererLifecycleProbeErrors.push(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (/object has been destroyed|unhandled(?: promise)? rejection|uncaught exception/i.test(message)) {
+    rendererLifecycleProbeErrors.push(message);
+  }
+}
+
+function recordRendererLifecycleProbeError(error: unknown): void {
+  if (!rendererLifecycleProbeEnabled) {
+    return;
+  }
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  if (/destroyed|detached|unhandled|uncaught/i.test(message)) {
+    rendererLifecycleProbeErrors.push(message);
+  }
+}
+
+function assertNoRendererLifecycleProbeErrors(): void {
+  if (rendererLifecycleProbeErrors.length > 0) {
+    throw new Error(
+      `Renderer lifecycle emitted destroyed-object or unhandled errors: ${JSON.stringify(
+        rendererLifecycleProbeErrors,
+      )}`,
+    );
+  }
 }
 
 async function waitForRendererButton(webContents: WebContents, selector: string): Promise<void> {
@@ -997,8 +1254,18 @@ function failRendererResetProbe(kind: string, error: unknown): void {
   app.exit(1);
 }
 
+function failStreamOwnerProbe(kind: string, error: unknown): void {
+  if (streamOwnerProbeTerminating) {
+    return;
+  }
+  streamOwnerProbeTerminating = true;
+  process.exitCode = 1;
+  console.error(`ELECTRON_STREAM_OWNER_PROBE_${kind}`, error);
+  app.exit(1);
+}
+
 app.on("window-all-closed", () => {
-  if (rendererResetProbeEnabled) {
+  if (rendererLifecycleProbeEnabled) {
     return;
   }
   if (process.platform !== "darwin") {

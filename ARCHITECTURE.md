@@ -148,11 +148,13 @@ visible fallback control. No code path silently substitutes it.
 Current validation covers worklet startup cleanup, generation-tagged renderer/main state-v0 reset,
 renderer reset concurrency, active-stream ownership revocation, cancellation failure/timeout
 recovery, stale bootstrap/result rejection, atomic failed-mode switching, submitted-transcript
-state, bounded cancellation/reset recovery, stale chunk/partial rejection, candidate-local
-intent-safe speech suggestions across arbitrary new-subject predicates, manual placement/retention,
-and the complete-Qwen-response execution gate. The Electron Reset probe uses the real renderer
-buttons, a controlled WAV-backed MediaStream, production IPC/controller/owner code, and a real
-Nemotron `AudioSession`.
+state, bounded cancellation/reset recovery, stale chunk/partial rejection, direct-action token-span
+speech suggestions, manual placement/retention, and the complete-Qwen-response execution gate. The
+Electron Reset probe uses the real renderer buttons, a controlled WAV-backed MediaStream,
+production IPC/controller/owner code, and a real Nemotron `AudioSession`. The separate stream-owner
+probe records through the same production path before reload navigation and window close, then
+asserts renderer-track and native ownership cancellation, session advancement, and stale-route
+rejection.
 
 ## One turn
 

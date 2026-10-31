@@ -7,8 +7,21 @@ const child = spawn(electron, ["."], {
     ...process.env,
     DEMO_RENDERER_RESET_PROBE: "1",
   },
-  stdio: "inherit",
+  stdio: ["ignore", "pipe", "pipe"],
 });
+
+const successMarker = "ELECTRON_RENDERER_RESET_PROBE_OK";
+let output = "";
+for (const [source, target] of [
+  [child.stdout, process.stdout],
+  [child.stderr, process.stderr],
+]) {
+  source.setEncoding("utf8");
+  source.on("data", (chunk) => {
+    target.write(chunk);
+    output = `${output}${chunk}`.slice(-1_000_000);
+  });
+}
 
 let timedOut = false;
 const timeout = setTimeout(() => {
@@ -16,17 +29,23 @@ const timeout = setTimeout(() => {
   child.kill();
 }, 360_000);
 
-const exitCode = await new Promise((resolve, reject) => {
+const result = await new Promise((resolve, reject) => {
   child.once("error", reject);
-  child.once("exit", (code) => resolve(code ?? 1));
+  child.once("exit", (code, signal) => resolve({ code, signal }));
 });
 clearTimeout(timeout);
 
 if (timedOut) {
   throw new Error("Electron renderer Reset probe timed out after 360 seconds.");
 }
-if (exitCode !== 0) {
-  throw new Error(`Electron renderer Reset probe exited with code ${exitCode}.`);
+if (result.signal !== null) {
+  throw new Error(`Electron renderer Reset probe exited on signal ${result.signal}.`);
+}
+if (result.code !== 0) {
+  throw new Error(`Electron renderer Reset probe exited with code ${result.code ?? "null"}.`);
+}
+if (!output.includes(successMarker)) {
+  throw new Error(`Electron renderer Reset probe exited without ${successMarker}.`);
 }
 
 console.log("Electron renderer Reset probe completed.");

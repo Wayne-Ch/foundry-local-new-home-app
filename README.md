@@ -37,13 +37,14 @@ room plan.
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
   display transitions from `Live draft — not sent` to the exact edited submitted prompt. The raw ASR
   transcript remains in Developer trace. A narrow, visible suggestion layer can correct
-  `queen size bag` -> `queen-size bed` only inside a local bed/layout clause and `creep` ->
-  `baby bed` only with local baby-bed/crib evidence. Each exact replacement is listed; quoted,
-  negated, travel/luggage, or cross-clause wording remains literal. Coordination or a comma followed
-  by an explicit new subject starts a candidate-local action window regardless of the following
-  verb, so an earlier layout action cannot leak into ordinary speech. The editable prompt initially
-  preserves the exact raw transcript. **Apply suggested furniture corrections** is the only action
-  that changes it; **Dismiss** leaves it raw, and an applied suggestion remains undoable.
+  `queen size bag` -> `queen-size bed` only when a nearby recognized furniture action directly
+  governs the candidate, and `creep` -> `baby bed` only with local positive baby-bed/crib evidence.
+  The bounded token span rejects punctuation, coordinators, subordinators, and explicit new subjects
+  between action and candidate, so actions never carry across `while`, `because`, or another clause.
+  Each exact replacement is listed; quoted, negated, travel/luggage, or cross-clause wording remains
+  literal. The editable prompt initially preserves the exact raw transcript. **Apply suggested
+  furniture corrections** is the only action that changes it; **Dismiss** leaves it raw, and an
+  applied suggestion remains undoable.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
   semantic intent delta (`bed`, `desk`, internal `crib`, and clarification). Audience prompts use
   **baby bed**; `baby bed`, `baby-bed`, `baby cot`, and `crib` map to the stable
@@ -208,6 +209,7 @@ npm run test:audio-integration
 npm run build
 npm run smoke:electron
 npm run probe:reset
+npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 ```
@@ -255,6 +257,10 @@ in [VALIDATION.md](VALIDATION.md).
 tracks stop, production IPC/controller/ownership cancellation completes, UI/controller state is v0,
 and a fresh recording lease succeeds. It fails nonzero on any missed stage, uncaught exception, or
 unhandled rejection.
+`probe:stream-owner` separately clicks the real renderer **Start recording** control, reloads the
+renderer during the active recording, starts another real recording after navigation, and closes the
+window. It requires both MediaStreams and native owned streams to cancel, ownership sessions to
+advance, stale partial routing to remain disabled, and no destroyed-object or unhandled errors.
 `capture:ui` captures an explicitly labeled browser-only visual preview because Electron
 `webContents.capturePage()` returns `UnknownVizError` in this execution environment.
 
@@ -322,7 +328,7 @@ did not globally disable the machine network.
 | `src/domain/fixture.ts` | verified demo room, catalog dimensions, and known options |
 | `src/renderer/renderer.ts` | stage UI, SVG layout, evidence cards, developer trace |
 | `src/renderer/placement-interaction.ts` | SVG coordinate conversion, snapping, bounds, and keyboard movement |
-| `src/renderer/speech-correction.ts` | clause-local ASR furniture suggestion detection |
+| `src/renderer/speech-correction.ts` | conservative direct-action token-span ASR furniture suggestions |
 | `src/renderer/speech-suggestion-state.ts` | raw-first Apply/Dismiss/Undo state and provenance |
 | `src/main/reset-handshake.ts` | concurrent trusted-owner revocation and authoritative controller reset |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |

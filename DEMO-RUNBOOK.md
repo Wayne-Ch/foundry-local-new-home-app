@@ -22,6 +22,7 @@ npm run test:audio-integration
 npm run build
 npm run smoke:electron
 npm run probe:reset
+npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 npm run start:built

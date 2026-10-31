@@ -24,7 +24,6 @@ describe("visible candidate-local speech correction suggestions", () => {
   });
 
   it.each([
-    "Keep the queen size bag.",
     "I packed a queen size bag for the trip. Keep the desk by the window.",
     "Keep the queen size bag for travel. Fit the desk beside the window.",
     "Fit the desk, and the queen size bag is luggage.",
@@ -36,23 +35,58 @@ describe("visible candidate-local speech correction suggestions", () => {
     });
   });
 
-  it("allows keep only when the same clause explicitly frames the phrase as a bed", () => {
-    expect(
-      applySpeechCorrectionSuggestions("Keep the queen size bag as the bed in this layout."),
-    ).toMatchObject({
-      correctedTranscript: "Keep the queen-size bed as the bed in this layout.",
+  it.each([
+    ["Keep the queen size bag.", "Keep the queen-size bed."],
+    ["Replace the queen size bag with a king bed.", "Replace the queen-size bed with a king bed."],
+    [
+      "Keep the queen size bag as the bed in this layout.",
+      "Keep the queen-size bed as the bed in this layout.",
+    ],
+  ])("suggests a Queen bed under a direct local furniture action: %s", (raw, correctedTranscript) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
+      correctedTranscript,
       corrections: [{ id: "queen-bed", original: "queen size bag", replacement: "queen-size bed" }],
     });
   });
 
   it("requires local baby-bed context before suggesting creep as baby bed", () => {
-    expect(applySpeechCorrectionSuggestions("Add a creep for the baby beside the desk.")).toMatchObject({
-      correctedTranscript: "Add a baby bed for the baby beside the desk.",
+    expect(applySpeechCorrectionSuggestions("Add a creep beside the desk for the baby.")).toMatchObject({
+      correctedTranscript: "Add a baby bed beside the desk for the baby.",
       corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
     });
     expect(applySpeechCorrectionSuggestions("Replace the crib with a creep.")).toMatchObject({
       correctedTranscript: "Replace the crib with a baby bed.",
       corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
+    });
+  });
+
+  it.each(["while", "because", "although", "whereas", "when", "after", "before", "since", "if", "unless"])(
+    "never inherits an action across a %s clause with a new subject",
+    (boundary) => {
+      const creep = `Keep the crib ${boundary} she called him a creep.`;
+      const bag = `Move the desk ${boundary} they bought a queen size bag for the drive.`;
+
+      expect(applySpeechCorrectionSuggestions(creep)).toEqual({
+        rawTranscript: creep,
+        correctedTranscript: creep,
+        corrections: [],
+      });
+      expect(applySpeechCorrectionSuggestions(bag)).toEqual({
+        rawTranscript: bag,
+        correctedTranscript: bag,
+        corrections: [],
+      });
+    },
+  );
+
+  it.each([
+    "Keep the crib she called him a creep.",
+    "Move the desk the movers bought a queen size bag for the drive.",
+  ])("requires the candidate itself to be in the direct action span: %s", (raw) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
     });
   });
 

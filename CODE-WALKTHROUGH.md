@@ -56,9 +56,9 @@ Put on screen:
   timeout recovery can release quarantine only for the same v0 generation;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
-- raw ASR retention in Developer trace plus a candidate-local, visible exact-replacement layer for
-  plausible `queen size bag` and `creep` furniture phrases; explicit new-subject clauses break action
-  inheritance regardless of their following verb;
+- raw ASR retention in Developer trace plus a candidate-local, visible exact-replacement layer that
+  requires a direct governing furniture action in a bounded token span; punctuation, coordinators,
+  subordinators, and explicit new subjects prevent action inheritance;
 - exact raw text first, with explicit **Apply suggested furniture corrections**, **Dismiss**, and
   post-Apply **Undo suggestions** controls;
 - Send transition to the exact edited submitted prompt and submitted/processing label;

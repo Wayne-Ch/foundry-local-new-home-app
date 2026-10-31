@@ -15,13 +15,14 @@ interface TextRange {
   readonly end: number;
 }
 
-interface CandidateWindow extends TextRange {
-  readonly text: string;
-}
-
 interface CorrectionCandidate extends TextRange {
   readonly id: SpeechCorrection["id"];
   readonly replacement: string;
+}
+
+interface WordToken extends TextRange {
+  readonly value: string;
+  readonly normalized: string;
 }
 
 interface GoverningAction {
@@ -30,15 +31,76 @@ interface GoverningAction {
   readonly end: number;
 }
 
-const actionSource =
-  "add|arrange|bring|fit|include|keep|move|need|place|position|put|remove|replace|require|retain|swap|use|want";
-const actionPattern = new RegExp(`\\b(?:${actionSource})\\b`, "gi");
-const hardClauseBoundaryPattern = /[.!?;:\r\n]+/g;
-const softClauseBoundaryPattern = /,|\b(?:and|but|then)\b/gi;
-const independentActionClausePattern = new RegExp(
-  `^(?:\\s|please\\s+)*(?:(?:no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not)\\s+)?(?:${actionSource}|avoid|exclude|be)\\b`,
-  "i",
-);
+const governingActions = new Set([
+  "add",
+  "arrange",
+  "bring",
+  "fit",
+  "include",
+  "keep",
+  "move",
+  "need",
+  "place",
+  "position",
+  "put",
+  "remove",
+  "replace",
+  "require",
+  "retain",
+  "swap",
+  "use",
+  "want",
+]);
+const replacementActions = new Set(["replace", "swap"]);
+const replacementConnectors = new Set(["for", "with"]);
+const directObjectLeadWords = new Set([
+  "a",
+  "an",
+  "another",
+  "any",
+  "current",
+  "existing",
+  "her",
+  "his",
+  "its",
+  "my",
+  "new",
+  "old",
+  "our",
+  "same",
+  "some",
+  "that",
+  "the",
+  "their",
+  "these",
+  "this",
+  "those",
+  "your",
+]);
+const clauseBoundaryWords = new Set([
+  "after",
+  "although",
+  "and",
+  "as",
+  "because",
+  "before",
+  "but",
+  "if",
+  "nor",
+  "once",
+  "or",
+  "since",
+  "so",
+  "then",
+  "though",
+  "unless",
+  "until",
+  "when",
+  "whenever",
+  "whereas",
+  "while",
+  "yet",
+]);
 const subjectPronouns = new Set([
   "everybody",
   "everyone",
@@ -54,51 +116,7 @@ const subjectPronouns = new Set([
   "who",
   "you",
 ]);
-const subjectDeterminers = new Set([
-  "a",
-  "an",
-  "another",
-  "any",
-  "each",
-  "either",
-  "every",
-  "her",
-  "his",
-  "its",
-  "my",
-  "neither",
-  "no",
-  "our",
-  "some",
-  "that",
-  "the",
-  "their",
-  "these",
-  "this",
-  "those",
-  "your",
-]);
-const nonSubjectOpeners = new Set([
-  "against",
-  "along",
-  "also",
-  "as",
-  "beside",
-  "for",
-  "inside",
-  "instead",
-  "just",
-  "like",
-  "near",
-  "only",
-  "outside",
-  "over",
-  "please",
-  "rather",
-  "under",
-  "with",
-  "without",
-]);
+const hardClauseBoundaryPattern = /[.!?;:\r\n]+/g;
 const wordTokenPattern = /\b[A-Za-z][\w'-]*\b/g;
 const queenBagPattern = /\bqueen[\s-]+size(?:d)?[\s-]+bag\b/gi;
 const creepPattern = /\bcreep\b/gi;
@@ -110,7 +128,9 @@ const babyBedContextPattern = /\b(?:baby|cot|crib|infant|newborn|nursery|toddler
 const literalBagContextPattern =
   /\b(?:baggage|carry[\s-]?on|journey|luggage|pack|packed|packing|suitcase|travel|trip|vacation)\b/i;
 const strongLayoutActions = new Set(["arrange", "fit", "move", "place", "position", "replace", "swap"]);
-const maxActionDistanceWords = 12;
+const contextOnlyActions = new Set(["keep", "retain"]);
+const maxActionDistanceWords = 6;
+const maxContextWordsAfterCandidate = 10;
 const scopedNegationSource =
   "no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not|without|avoid(?:ed|ing|s)?|exclude(?:d|s|ing)?|rather\\s+than";
 
@@ -148,33 +168,6 @@ function maskRanges(value: string, valueStart: number, ranges: readonly TextRang
   return masked;
 }
 
-function startsIndependentActionClause(value: string): boolean {
-  return independentActionClausePattern.test(value);
-}
-
-function startsIndependentSubjectClause(value: string): boolean {
-  const tokens = [...value.matchAll(wordTokenPattern)];
-  const first = tokens[0]?.[0];
-  if (first === undefined) {
-    return false;
-  }
-  const normalized = first.toLowerCase();
-  if (subjectPronouns.has(normalized)) {
-    return tokens.length >= 2;
-  }
-  if (subjectDeterminers.has(normalized)) {
-    return tokens.length >= 3;
-  }
-  if (/^[A-Z]/.test(first)) {
-    return tokens.length >= 2;
-  }
-  return tokens.length >= 3 && !nonSubjectOpeners.has(normalized);
-}
-
-function startsIndependentClause(value: string): boolean {
-  return startsIndependentActionClause(value) || startsIndependentSubjectClause(value);
-}
-
 function boundaryIsQuoted(start: number, end: number, quotedRanges: readonly TextRange[]): boolean {
   return quotedRanges.some((range) => overlapsRange(start, end, range));
 }
@@ -206,58 +199,54 @@ function findHardCandidateWindow(
   return { start, end };
 }
 
-function findCandidateWindow(
-  rawTranscript: string,
-  candidate: TextRange,
-  quotedRanges: readonly TextRange[],
-): CandidateWindow {
-  const hardWindow = findHardCandidateWindow(rawTranscript, candidate, quotedRanges);
-  let start = hardWindow.start;
-  let end = hardWindow.end;
-
-  for (const match of rawTranscript.matchAll(softClauseBoundaryPattern)) {
+function collectWordTokens(value: string, end = value.length): WordToken[] {
+  const tokens: WordToken[] = [];
+  wordTokenPattern.lastIndex = 0;
+  for (const match of value.slice(0, end).matchAll(wordTokenPattern)) {
     if (match.index === undefined) {
       continue;
     }
-    const boundaryEnd = match.index + match[0].length;
-    if (
-      match.index < hardWindow.start ||
-      match.index >= hardWindow.end ||
-      boundaryIsQuoted(match.index, boundaryEnd, quotedRanges)
-    ) {
-      continue;
-    }
-    if (boundaryEnd <= candidate.start) {
-      const candidatePrefix = maskRanges(
-        rawTranscript.slice(boundaryEnd, candidate.start),
-        boundaryEnd,
-        quotedRanges,
-      );
-      if (startsIndependentClause(candidatePrefix)) {
-        start = boundaryEnd;
-      }
-      continue;
-    }
-    if (match.index >= candidate.end) {
-      const suffix = maskRanges(rawTranscript.slice(boundaryEnd, hardWindow.end), boundaryEnd, quotedRanges);
-      if (startsIndependentClause(suffix)) {
-        end = match.index;
-        break;
-      }
-    }
+    tokens.push({
+      value: match[0],
+      normalized: match[0].toLowerCase(),
+      start: match.index,
+      end: match.index + match[0].length,
+    });
   }
-
-  return {
-    start,
-    end,
-    text: rawTranscript.slice(start, end),
-  };
+  return tokens;
 }
 
-function wordDistance(value: string, leftEnd: number, rightStart: number): number {
-  const start = Math.min(leftEnd, rightStart);
-  const end = Math.max(leftEnd, rightStart);
-  return value.slice(start, end).match(/\b[\w'-]+\b/g)?.length ?? 0;
+function containsOnlyWordsAndWhitespace(value: string, tokens: readonly WordToken[]): boolean {
+  let cursor = 0;
+  for (const token of tokens) {
+    if (value.slice(cursor, token.start).trim() !== "") {
+      return false;
+    }
+    cursor = token.end;
+  }
+  return value.slice(cursor).trim() === "";
+}
+
+function hasDirectObjectShape(action: string, gapTokens: readonly WordToken[]): boolean {
+  if (gapTokens.length <= 3 && gapTokens.every((token) => directObjectLeadWords.has(token.normalized))) {
+    return true;
+  }
+  if (!replacementActions.has(action)) {
+    return false;
+  }
+  const connectorIndex = gapTokens.findIndex((token) => replacementConnectors.has(token.normalized));
+  if (connectorIndex < 1 || connectorIndex > 3) {
+    return false;
+  }
+  const replacedObject = gapTokens.slice(0, connectorIndex);
+  const candidateLead = gapTokens.slice(connectorIndex + 1);
+  const replacedNouns = replacedObject.filter((token) => !directObjectLeadWords.has(token.normalized));
+  return (
+    replacedNouns.length >= 1 &&
+    replacedNouns.length <= 2 &&
+    candidateLead.length <= 2 &&
+    candidateLead.every((token) => directObjectLeadWords.has(token.normalized))
+  );
 }
 
 function hasScopedNegationBefore(value: string, position: number, maxWords: number): boolean {
@@ -271,32 +260,57 @@ function actionIsNegated(value: string, actionStart: number): boolean {
   return hasScopedNegationBefore(value, actionStart, 6);
 }
 
-function findGoverningAction(clauseText: string, candidateStart: number): GoverningAction | null {
-  const actions: GoverningAction[] = [];
-  actionPattern.lastIndex = 0;
-  for (const match of clauseText.matchAll(actionPattern)) {
-    if (match.index === undefined || actionIsNegated(clauseText, match.index)) {
+function findDirectGoverningAction(clauseText: string, candidateStart: number): GoverningAction | null {
+  const tokens = collectWordTokens(clauseText, candidateStart);
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    const token = tokens[index];
+    if (token === undefined || !governingActions.has(token.normalized)) {
       continue;
     }
-    const verb = match[0].toLowerCase();
-    const end = match.index + match[0].length;
-    const precedesCandidate = end <= candidateStart;
-    const followsCandidateFit = verb === "fit" && match.index >= candidateStart;
-    if (!precedesCandidate && !followsCandidateFit) {
-      continue;
+    const gapText = clauseText.slice(token.end, candidateStart);
+    const gapTokens = collectWordTokens(gapText);
+    if (gapTokens.length > maxActionDistanceWords) {
+      return null;
     }
-    const distance = wordDistance(clauseText, end, candidateStart);
-    if (distance <= maxActionDistanceWords) {
-      actions.push({ verb, start: match.index, end });
+    if (
+      actionIsNegated(clauseText, token.start) ||
+      !containsOnlyWordsAndWhitespace(gapText, gapTokens) ||
+      gapTokens.some((gapToken) => clauseBoundaryWords.has(gapToken.normalized)) ||
+      !hasDirectObjectShape(token.normalized, gapTokens)
+    ) {
+      return null;
     }
+    return {
+      verb: token.normalized,
+      start: token.start,
+      end: token.end,
+    };
   }
-  return (
-    actions.sort(
-      (left, right) =>
-        wordDistance(clauseText, left.end, candidateStart) -
-        wordDistance(clauseText, right.end, candidateStart),
-    )[0] ?? null
-  );
+  return null;
+}
+
+function findLocalContextEnd(clauseText: string, candidateEnd: number): number {
+  const suffix = clauseText.slice(candidateEnd);
+  const tokens = collectWordTokens(suffix);
+  let end = candidateEnd;
+  let wordCount = 0;
+  for (const token of tokens) {
+    const separator = suffix.slice(end - candidateEnd, token.start);
+    if (
+      separator.trim() !== "" ||
+      (clauseBoundaryWords.has(token.normalized) && token.normalized !== "as") ||
+      subjectPronouns.has(token.normalized) ||
+      /^[A-Z]/.test(token.value)
+    ) {
+      break;
+    }
+    wordCount += 1;
+    if (wordCount > maxContextWordsAfterCandidate) {
+      break;
+    }
+    end = candidateEnd + token.end;
+  }
+  return end;
 }
 
 function cueIsNegated(value: string, cueStart: number): boolean {
@@ -330,10 +344,10 @@ function candidateIsNegated(clauseText: string, candidate: TextRange): boolean {
 
 function hasQueenBedContext(clauseText: string, candidate: TextRange, action: GoverningAction): boolean {
   const context = maskCandidate(clauseText, candidate.start, candidate.end);
-  if (literalBagContextPattern.test(context)) {
-    return false;
-  }
   if (hasPositiveCue(context, explicitBedContextPattern)) {
+    return true;
+  }
+  if (contextOnlyActions.has(action.verb)) {
     return true;
   }
   if (!hasPositiveCue(context, layoutEntityPattern)) {
@@ -368,20 +382,41 @@ function collectCandidates(rawTranscript: string, quotedRanges: readonly TextRan
       if (quotedRanges.some((range) => overlapsRange(start, end, range))) {
         continue;
       }
-      const window = findCandidateWindow(rawTranscript, { start, end }, quotedRanges);
-      const maskedClause = maskRanges(window.text, window.start, quotedRanges);
+      const window = findHardCandidateWindow(rawTranscript, { start, end }, quotedRanges);
+      const maskedClause = maskRanges(
+        rawTranscript.slice(window.start, window.end),
+        window.start,
+        quotedRanges,
+      );
       const localCandidate = { start: start - window.start, end: end - window.start };
       if (candidateIsNegated(maskedClause, localCandidate)) {
         continue;
       }
-      const action = findGoverningAction(maskedClause, localCandidate.start);
+      const action = findDirectGoverningAction(maskedClause, localCandidate.start);
       if (action === null) {
         continue;
       }
+      if (
+        candidatePattern.id === "queen-bed" &&
+        literalBagContextPattern.test(maskCandidate(maskedClause, localCandidate.start, localCandidate.end))
+      ) {
+        continue;
+      }
+      const contextEnd = findLocalContextEnd(maskedClause, localCandidate.end);
+      const context = maskedClause.slice(action.start, contextEnd);
+      const contextCandidate = {
+        start: localCandidate.start - action.start,
+        end: localCandidate.end - action.start,
+      };
+      const contextAction = {
+        ...action,
+        start: 0,
+        end: action.end - action.start,
+      };
       const hasContext =
         candidatePattern.id === "queen-bed"
-          ? hasQueenBedContext(maskedClause, localCandidate, action)
-          : hasBabyBedContext(maskedClause, localCandidate);
+          ? hasQueenBedContext(context, contextCandidate, contextAction)
+          : hasBabyBedContext(context, contextCandidate);
       if (hasContext) {
         candidates.push({ start, end, id: candidatePattern.id, replacement: candidatePattern.replacement });
       }
