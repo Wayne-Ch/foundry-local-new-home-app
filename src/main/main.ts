@@ -27,6 +27,7 @@ import {
   MicrophonePermissionGate,
   permissionOriginForDocument,
 } from "./microphone-permission";
+import { createResetConversationHandler } from "./reset-handshake";
 
 let mainWindow: BrowserWindow | null = null;
 let mainWebContents: WebContents | null = null;
@@ -34,9 +35,14 @@ let microphonePermissionGate: MicrophonePermissionGate | null = null;
 let shutdownStarted = false;
 const microphonePermissionProbeEnabled = process.env.DEMO_MIC_PERMISSION_PROBE === "1";
 const streamOwnerProbeEnabled = process.env.DEMO_STREAM_OWNER_PROBE === "1";
+const streamOwnerResetProbeId = "00000000-0000-4000-8000-000000000003";
 const streamOwnerReloadProbeId = "00000000-0000-4000-8000-000000000001";
 const streamOwnerCloseProbeId = "00000000-0000-4000-8000-000000000002";
-const streamOwnerProbeIds = new Set([streamOwnerReloadProbeId, streamOwnerCloseProbeId]);
+const streamOwnerProbeIds = new Set([
+  streamOwnerResetProbeId,
+  streamOwnerReloadProbeId,
+  streamOwnerCloseProbeId,
+]);
 const streamOwnerProbeCancellations = new Set<string>();
 let streamOwnerProbeTerminating = false;
 const controller = new DemoController();
@@ -310,7 +316,20 @@ function registerIpc(): void {
     assertTrustedRendererIpc(event);
     return controller.applyManualPlacement(request);
   });
-  ipcMain.handle(ipcChannels.resetConversation, () => controller.reset());
+  ipcMain.handle(
+    ipcChannels.resetConversation,
+    createResetConversationHandler(
+      assertTrustedRendererIpc,
+      audioStreamOwnership,
+      () => controller.reset(),
+      (error) => {
+        console.error(
+          "Active audio cancellation failed during Reset; continuing with controller reset:",
+          error,
+        );
+      },
+    ),
+  );
 }
 
 function assertTrustedRendererIpc(event: IpcMainInvokeEvent): {
@@ -522,15 +541,45 @@ async function runStreamOwnerProbe(
   try {
     const frame = webContents.mainFrame;
     const previousFrameToken = frame.frameToken;
-    const lease = audioStreamOwnership.begin({
+    const resetLease = audioStreamOwnership.begin({
       webContentsId,
       processId: frame.processId,
       frameId: frame.routingId,
       frameTreeNodeId: frame.frameTreeNodeId,
       frameToken: frame.frameToken,
     });
-    if (!(await audioStreamOwnership.activate(lease, streamOwnerReloadProbeId))) {
-      throw new Error("The initial renderer frame could not acquire the probe stream.");
+    if (!(await audioStreamOwnership.activate(resetLease, streamOwnerResetProbeId))) {
+      throw new Error("The initial renderer frame could not acquire the Reset probe stream.");
+    }
+    const resetResult = (await webContents.executeJavaScript(
+      `window.demoApi.resetConversation().then((bootstrap) => ({
+        version: bootstrap.state.version,
+        stateRef: bootstrap.state.stateRef,
+        traceLength: bootstrap.trace.length
+      }))`,
+      true,
+    )) as { readonly version: number; readonly stateRef: string; readonly traceLength: number };
+    if (
+      resetResult.version !== 0 ||
+      resetResult.stateRef !== "layout-state-v0" ||
+      resetResult.traceLength !== 0 ||
+      !streamOwnerProbeCancellations.has(streamOwnerResetProbeId) ||
+      audioStreamOwnership.canRoute(resetLease, streamOwnerResetProbeId)
+    ) {
+      throw new Error(
+        `Active Reset did not revoke ownership and return state v0: ${JSON.stringify(resetResult)}`,
+      );
+    }
+
+    const reloadLease = audioStreamOwnership.begin({
+      webContentsId,
+      processId: frame.processId,
+      frameId: frame.routingId,
+      frameTreeNodeId: frame.frameTreeNodeId,
+      frameToken: frame.frameToken,
+    });
+    if (!(await audioStreamOwnership.activate(reloadLease, streamOwnerReloadProbeId))) {
+      throw new Error("The renderer could not acquire a fresh stream after Reset.");
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -547,23 +596,23 @@ async function runStreamOwnerProbe(
 
     if (
       !streamOwnerProbeCancellations.has(streamOwnerReloadProbeId) ||
-      audioStreamOwnership.canRoute(lease, streamOwnerReloadProbeId)
+      audioStreamOwnership.canRoute(reloadLease, streamOwnerReloadProbeId)
     ) {
       throw new Error("Renderer reload did not cancel and revoke the original audio stream owner.");
     }
     const currentFrame = webContents.mainFrame;
     const currentFrameToken = currentFrame.frameToken;
-    const nextLease = audioStreamOwnership.begin({
+    const closeLease = audioStreamOwnership.begin({
       webContentsId,
       processId: currentFrame.processId,
       frameId: currentFrame.routingId,
       frameTreeNodeId: currentFrame.frameTreeNodeId,
       frameToken: currentFrame.frameToken,
     });
-    if (nextLease.sessionId === lease.sessionId) {
+    if (reloadLease.sessionId === resetLease.sessionId || closeLease.sessionId === reloadLease.sessionId) {
       throw new Error("Renderer reload reused the revoked audio ownership session.");
     }
-    if (!(await audioStreamOwnership.activate(nextLease, streamOwnerCloseProbeId))) {
+    if (!(await audioStreamOwnership.activate(closeLease, streamOwnerCloseProbeId))) {
       throw new Error("The reloaded renderer frame could not acquire the close probe stream.");
     }
     await new Promise<void>((resolve, reject) => {
@@ -578,15 +627,19 @@ async function runStreamOwnerProbe(
       window.close();
     });
     await waitForProbeCancellation(streamOwnerCloseProbeId);
-    if (audioStreamOwnership.canRoute(nextLease, streamOwnerCloseProbeId)) {
+    if (audioStreamOwnership.canRoute(closeLease, streamOwnerCloseProbeId)) {
       throw new Error("Window close left the renderer audio stream owner routable.");
     }
     console.log(
       `STREAM_OWNER_PROBE_OK ${JSON.stringify({
         previousFrameToken,
         currentFrameToken,
-        previousSessionId: lease.sessionId,
-        currentSessionId: nextLease.sessionId,
+        resetSessionId: resetLease.sessionId,
+        reloadSessionId: reloadLease.sessionId,
+        closeSessionId: closeLease.sessionId,
+        activeResetCancelled: true,
+        activeResetVersion: resetResult.version,
+        nextRecordAcquired: true,
         reloadCancelled: true,
         closeCancelled: true,
         stalePartialRoutable: false,

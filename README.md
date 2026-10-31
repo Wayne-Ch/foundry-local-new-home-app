@@ -24,7 +24,9 @@ room plan.
 - **Main-owned stream lifecycle:** main captures the initiating `webContents`, frame, ownership
   session, and stream ID. Navigation, reload, renderer loss, frame/webContents destruction, or
   window close revokes that owner and cancels the stream; partials can only return to the captured
-  frame and never a replacement renderer.
+  frame and never a replacement renderer. Reset disables renderer input and releases microphone
+  tracks, then main revokes the whole `webContents` lease, awaits bounded cancellation, resets the
+  controller, and returns one state-v0 payload. Repeated Reset/reload/close cleanup is idempotent.
 - **Explicit fallback:** exact `openai-whisper-tiny-generic-cpu:4` is available only through the
   visibly labeled **Whisper Tiny fallback (record then transcribe)** action. The stage default
   remains Nemotron; the fallback loads only after that explicit user choice and never activates
@@ -35,8 +37,10 @@ room plan.
   transcript remains in Developer trace. A narrow, visible suggestion layer can correct
   `queen size bag` -> `queen-size bed` only inside a local bed/layout clause and `creep` ->
   `baby bed` only with local baby-bed/crib evidence. Each exact replacement is listed; quoted,
-  negated, or cross-clause wording remains literal. The corrected draft is editable, can be restored
-  to the original transcript, and is never silently submitted.
+  negated, travel/luggage, or cross-clause wording remains literal. The editable prompt initially
+  preserves the exact raw transcript. **Apply suggested furniture corrections** is the only action
+  that changes it; **Dismiss** leaves it raw, and an applied suggestion remains undoable. Nothing is
+  silently rewritten or submitted.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
   semantic intent delta (`bed`, `desk`, internal `crib`, and clarification). Audience prompts use
   **baby bed**; `baby bed`, `baby-bed`, `baby cot`, and `crib` map to the stable
@@ -77,20 +81,20 @@ The corrected compact contract keeps all semantic enums available and emits acce
 retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
 invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 18 fixed-gate scenarios,
 including negated bed/desk transitions and unsupported California King, twin-bed, and moon-pod
-requests plus `baby-bed` and `baby cot` aliases. It loaded in 3.783 seconds and measured 5.711 seconds
-warm median / 10.908 seconds warm
+requests plus `baby-bed` and `baby cot` aliases. It loaded in 3.355 seconds and measured 5.597 seconds
+warm median / 9.834 seconds warm
 maximum. Other candidates were not rerun for this final semantic gate.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.304 s**, and the final aggregate transcript **91 ms**
-after input ended. Cached model preparation took **6.102 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.248 s**, and the final aggregate transcript **205 ms**
+after input ended. Cached model preparation took **5.482 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **4.094 s** cached preparation,
-and **213 ms** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **4.035 s** cached preparation,
+and **221 ms** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
 emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
@@ -152,9 +156,11 @@ In the app:
 4. Select **Start recording** and speak for at most 20 seconds. The **Live draft — not sent** panel
    revises while speech is arriving and the timer remains visible.
 5. Select **Stop**. The final aggregate transcript is placed into **Manual prompt**.
-6. Review the visible speech suggestions, if any, or restore the original transcript. Edit as
-   needed, then select **Send**. Stop never submits automatically; Send changes the draft label to
-   submitted/processing and shows the exact edited prompt.
+6. Review the visible speech suggestions, if any. The Manual prompt initially contains the exact raw
+   transcript. Select **Apply suggested furniture corrections**, **Dismiss**, edit the raw text, or
+   apply and then **Undo suggestions**. Select **Send** only after review. Stop never submits
+   automatically; Send changes the draft label to submitted/processing and shows the exact edited
+   prompt.
 7. If Nemotron deterministically fails, the UI exposes
    **Whisper Tiny fallback (record then transcribe)**. Selecting it is an explicit model switch;
    record again, wait for the final Whisper transcript, then review and click **Send**.
@@ -233,7 +239,7 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 The October 30 selected-default integration completed 13 real Qwen turns—including explicit
 recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants—in
-**2.451–8.924 s**. The unrestricted-schema benchmark measured **5.711 s median / 10.908 s max** for
+**2.532–9.300 s**. The unrestricted-schema benchmark measured **5.597 s median / 9.834 s max** for
 exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed. The legacy full-input
 Qwen2.5 path measured **23.955–38.893 s**.
 
@@ -311,7 +317,9 @@ did not globally disable the machine network.
 | `src/domain/fixture.ts` | verified demo room, catalog dimensions, and known options |
 | `src/renderer/renderer.ts` | stage UI, SVG layout, evidence cards, developer trace |
 | `src/renderer/placement-interaction.ts` | SVG coordinate conversion, snapping, bounds, and keyboard movement |
-| `src/renderer/speech-correction.ts` | narrow visible ASR correction suggestions |
+| `src/renderer/speech-correction.ts` | clause-local ASR furniture suggestion detection |
+| `src/renderer/speech-suggestion-state.ts` | raw-first Apply/Dismiss/Undo state and provenance |
+| `src/main/reset-handshake.ts` | trusted renderer ownership revocation followed by controller reset |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |
 | `scripts/run-layout-model-benchmarks.mjs` | isolated exact-candidate latency and quality suite |
 | `scripts/run-nemotron-integration.ts` | real Nemotron partial/final streaming and timing acceptance |

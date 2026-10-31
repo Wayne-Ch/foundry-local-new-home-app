@@ -54,29 +54,32 @@ In the app:
    and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
    produced; live revisions remain in the explicitly labeled draft panel.
 6. Select **Reset**, then load both models again. Reset clears the editable/submitted prompt,
-   transcript trace, visible suggestion provenance, manual preview/drag state, and recording timers
-   before returning the renderer and main response to state v0. It intentionally unloads the audio
-   model, settles/disposes an active stream, and deletes tracked Whisper fallback captures. If native
-   work exceeds the reset bound, the UI stays quarantined until automatic session replacement
-   succeeds or a later explicit Reset succeeds.
+   transcript trace, pending/applied suggestion and undo provenance, manual preview/drag state, and
+   recording timers before returning the renderer and main response to state v0. Renderer input is
+   disabled and microphone tracks are released first; main then revokes the active renderer lease,
+   settles/disposes the bounded native stream, resets the controller, and deletes tracked Whisper
+   fallback captures. If native work exceeds the reset bound, the UI stays quarantined until
+   automatic session replacement succeeds or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 8. Run one focused real-microphone recovery gate with:
 
    > Keep the Queen bed. Add a baby bed. Use a compact desk. Keep the closet clear.
 
    Confirm the raw transcript remains in Developer trace. If the observed demo vocabulary is
-   misheard, confirm the visible suggestion label, editable corrected Manual prompt, and the same
-   feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate or
-   relabel the committed Queen + desk WAV fixture as baby-bed evidence.
+   misheard, confirm the exact raw text initially remains in Manual prompt, the banner lists exact
+   before/after replacements, and only **Apply suggested furniture corrections** changes the prompt.
+   Confirm **Dismiss** leaves raw and **Undo suggestions** restores raw, then use Apply and verify the
+   same feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate
+   or relabel the committed Queen + desk WAV fixture as baby-bed evidence.
 
-Observed selected-default integration timings on the validated laptop were 2.451–8.924 seconds per
+Observed selected-default integration timings on the validated laptop were 2.532–9.300 seconds per
 turn, including bounded application-validation correction when needed. The unrestricted semantic
-benchmark measured 5.711 seconds median and 10.908 seconds maximum. Do not start the first
+benchmark measured 5.597 seconds median and 9.834 seconds maximum. Do not start the first
 inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,304 ms,
-stop-to-final at 91 ms, and 6,102 ms cached preparation. The explicit Whisper fallback prepared in
-4,094 ms and transcribed the same fixture in 213 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,248 ms,
+stop-to-final at 205 ms, and 5,482 ms cached preparation. The explicit Whisper fallback prepared in
+4,035 ms and transcribed the same fixture in 221 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow
@@ -318,7 +321,7 @@ alone—is the offline readiness gate.
 | Nemotron unavailable or live stream fails | If the labeled **Whisper Tiny fallback (record then transcribe)** action is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
 | Whisper fallback unavailable | Keep typed input. The voice badge must not claim fallback readiness. |
 | No feasible layout after Turn B | Select the visible recovery action: keep Queen, allow the compact desk, add a baby bed, and keep door/closet/window/250 mm clearance locked. The action enters the same Qwen/app validation pipeline as typed input. |
-| Empty/incorrect transcript | Review the visible suggestion label, edit the draft or restore/replace it with typed text, then click Send. The raw ASR transcript remains in Developer trace and the app never auto-submits it. |
+| Empty/incorrect transcript | Review the exact raw draft and visible replacement diff. Apply explicitly, Dismiss, edit, or Undo before Send. The raw ASR transcript remains in Developer trace and the app never auto-rewrites or auto-submits it. |
 
 There is no canned natural-language fallback. The visible response is explicitly labeled
 **Application evidence**.

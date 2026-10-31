@@ -1,7 +1,6 @@
 import {
   applyPartialTranscriptEvent,
   audioDurationMsFromPcmBytes,
-  createTranscriptDraftUpdate,
   reduceAudioRecorderState,
 } from "../audio/audio-contract";
 import {
@@ -68,7 +67,16 @@ import {
 } from "./renderer-lifecycle";
 import { DEFAULT_AUDIO_NOTICE, resetRendererTransientState } from "./reset-state";
 import { runtimeBadgeLabel } from "./runtime-presentation";
-import { applySpeechCorrectionSuggestions, type SpeechCorrectionResult } from "./speech-correction";
+import { applySpeechCorrectionSuggestions } from "./speech-correction";
+import {
+  applySpeechSuggestion,
+  createSpeechSuggestionDraft,
+  dismissSpeechSuggestion,
+  reconcileSpeechSuggestionEdit,
+  type SpeechCorrectionProvenance,
+  type SpeechSuggestionState,
+  undoSpeechSuggestion,
+} from "./speech-suggestion-state";
 import "./styles.css";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -95,12 +103,8 @@ let audioOperationId = 0;
 let resetRecoveryMonitor: Promise<void> | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
-let speechCorrection:
-  | (SpeechCorrectionResult & {
-      readonly originalDraftValue: string;
-      readonly correctedDraftValue: string;
-    })
-  | null = null;
+let speechCorrection: SpeechSuggestionState | null = null;
+let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
 
 interface PlacementDragState {
   readonly pointerId: number;
@@ -125,8 +129,11 @@ const liveTranscriptPanel = requiredElement("liveTranscriptPanel");
 const liveTranscriptLabel = requiredElement("liveTranscriptLabel");
 const liveTranscriptText = requiredElement("liveTranscriptText");
 const speechSuggestionPanel = requiredElement("speechSuggestionPanel");
+const speechSuggestionTitle = requiredElement("speechSuggestionTitle");
 const speechSuggestionText = requiredElement("speechSuggestionText");
-const speechUseOriginalButton = requiredButton("speechUseOriginalButton");
+const speechApplyButton = requiredButton("speechApplyButton");
+const speechDismissButton = requiredButton("speechDismissButton");
+const speechUndoButton = requiredButton("speechUndoButton");
 const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
@@ -381,20 +388,63 @@ recoveryPrimaryButton.addEventListener("click", () => {
   }
 });
 
-speechUseOriginalButton.addEventListener("click", () => {
+speechApplyButton.addEventListener("click", () => {
   if (speechCorrection === null) {
     return;
   }
-  promptInput.value = speechCorrection.originalDraftValue;
+  const applied = applySpeechSuggestion(speechCorrection, promptInput.value);
+  promptInput.value = applied.promptValue;
+  speechCorrection = applied.suggestion;
+  speechCorrectionProvenance = applied.provenance;
+  audioNotice =
+    applied.provenance === null
+      ? "The editable prompt changed, so the stale suggestion was cleared."
+      : "Furniture corrections applied by explicit user action. Review or undo before Send.";
   promptInput.focus();
-  speechCorrection = null;
   renderSpeechSuggestion();
+  renderAudio();
+  renderTrace();
+});
+
+speechDismissButton.addEventListener("click", () => {
+  if (speechCorrection === null) {
+    return;
+  }
+  const dismissed = dismissSpeechSuggestion(speechCorrection);
+  promptInput.value = dismissed.promptValue;
+  speechCorrection = dismissed.suggestion;
+  speechCorrectionProvenance = dismissed.provenance;
+  audioNotice = "Furniture correction suggestion dismissed. The raw transcript remains editable.";
+  promptInput.focus();
+  renderSpeechSuggestion();
+  renderAudio();
+  renderTrace();
+});
+
+speechUndoButton.addEventListener("click", () => {
+  if (speechCorrection === null) {
+    return;
+  }
+  const undone = undoSpeechSuggestion(speechCorrection, promptInput.value);
+  promptInput.value = undone.promptValue;
+  speechCorrection = undone.suggestion;
+  speechCorrectionProvenance = undone.provenance;
+  audioNotice = "Furniture corrections undone. The raw transcript is restored.";
+  promptInput.focus();
+  renderSpeechSuggestion();
+  renderAudio();
+  renderTrace();
 });
 
 promptInput.addEventListener("input", () => {
-  if (speechCorrection !== null && promptInput.value !== speechCorrection.correctedDraftValue) {
-    speechCorrection = null;
+  if (speechCorrection !== null) {
+    const reconciled = reconcileSpeechSuggestionEdit(speechCorrection, promptInput.value);
+    if (reconciled === null) {
+      speechCorrection = null;
+      speechCorrectionProvenance = null;
+    }
     renderSpeechSuggestion();
+    renderTrace();
   }
 });
 
@@ -703,12 +753,20 @@ function renderRecoveryActions(): void {
 function renderSpeechSuggestion(): void {
   speechSuggestionPanel.hidden = speechCorrection === null;
   if (speechCorrection === null) {
+    speechSuggestionTitle.textContent = "";
     speechSuggestionText.textContent = "";
     return;
   }
+  const applied = speechCorrection.status === "applied";
+  speechSuggestionTitle.textContent = applied
+    ? "Furniture corrections applied by you"
+    : "Furniture correction suggestions";
   speechSuggestionText.textContent = speechCorrection.corrections
     .map((correction) => `“${correction.original}” → “${correction.replacement}”`)
     .join(" · ");
+  speechApplyButton.hidden = applied;
+  speechDismissButton.hidden = applied;
+  speechUndoButton.hidden = !applied;
 }
 
 function resetRendererTransientUi(): void {
@@ -719,6 +777,7 @@ function resetRendererTransientUi(): void {
     audioRecorderState,
     audioNotice,
     speechCorrection,
+    speechCorrectionProvenance,
     trace: viewState.trace,
     manualPreview,
     manualPreviewOrigin,
@@ -734,6 +793,7 @@ function resetRendererTransientUi(): void {
   audioRecorderState = resetState.audioRecorderState;
   audioNotice = resetState.audioNotice;
   speechCorrection = resetState.speechCorrection;
+  speechCorrectionProvenance = resetState.speechCorrectionProvenance;
   viewState = { ...viewState, trace: resetState.trace };
   manualPreview = resetState.manualPreview;
   manualPreviewOrigin = resetState.manualPreviewOrigin;
@@ -1379,7 +1439,10 @@ function renderTrace(): void {
     audioReadiness: viewState.audioReadiness,
     currentState: viewState.state,
   });
-  audioTrace.textContent = pretty(lastTracePayload("audio-transcription") ?? "No speech transcript yet.");
+  audioTrace.textContent = pretty({
+    rawTranscript: lastTracePayload("audio-transcription") ?? "No speech transcript yet.",
+    appliedSuggestion: speechCorrectionProvenance ?? "No furniture correction suggestion has been applied.",
+  });
   toolTrace.textContent = pretty(lastTracePayload("model-tool-call") ?? "No tool call yet.");
   geometryTrace.textContent = pretty({
     validation: lastTracePayload("validation") ?? "No validation yet.",
@@ -1682,17 +1745,10 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
       trace: response.trace,
     };
     const correction = applySpeechCorrectionSuggestions(response.result.transcript);
-    const originalDraft = createTranscriptDraftUpdate(promptInput.value, correction.rawTranscript);
-    const correctedDraft = createTranscriptDraftUpdate(promptInput.value, correction.correctedTranscript);
-    promptInput.value = correctedDraft.value;
-    speechCorrection =
-      correction.corrections.length === 0
-        ? null
-        : {
-            ...correction,
-            originalDraftValue: originalDraft.value,
-            correctedDraftValue: correctedDraft.value,
-          };
+    const suggestionDraft = createSpeechSuggestionDraft(promptInput.value, correction);
+    promptInput.value = suggestionDraft.promptValue;
+    speechCorrection = suggestionDraft.suggestion;
+    speechCorrectionProvenance = null;
     promptInput.focus();
     audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "COMPLETE" });
     liveTranscriptDraft = {
@@ -1704,7 +1760,7 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
     liveTranscriptPhase = "draft";
     audioNotice =
       correction.corrections.length > 0
-        ? "Visible speech suggestions were applied to the editable draft. Review them, then click Send."
+        ? "Furniture correction suggestions are available. Apply or dismiss them before Send."
         : `${
             response.result.mode === "nemotron_streaming" ? "Nemotron final" : "Whisper fallback"
           } transcript added. Review it, then click Send.`;

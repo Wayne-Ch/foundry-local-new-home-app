@@ -110,12 +110,20 @@
             </div>
             <div id="speechSuggestionPanel" class="speech-suggestion-panel" hidden>
               <div>
-                <strong>Speech suggestions auto-applied — review or undo before Send</strong>
+                <strong id="speechSuggestionTitle">Furniture correction suggestions</strong>
                 <span id="speechSuggestionText"></span>
               </div>
-              <button id="speechUseOriginalButton" class="button button-ghost" type="button">
-                Undo suggestions
-              </button>
+              <div class="speech-suggestion-actions">
+                <button id="speechApplyButton" class="button button-primary" type="button">
+                  Apply suggested furniture corrections
+                </button>
+                <button id="speechDismissButton" class="button button-ghost" type="button">
+                  Dismiss
+                </button>
+                <button id="speechUndoButton" class="button button-ghost" type="button" hidden>
+                  Undo suggestions
+                </button>
+              </div>
             </div>
             <p class="input-note">
               Every submitted turn uses the existing validated text pipeline. No cloud fallback.

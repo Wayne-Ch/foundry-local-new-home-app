@@ -31,8 +31,14 @@ function state(overrides: Partial<RendererTransientState> = {}): RendererTransie
     audioRecorderState: { status: "idle", elapsedMs: 0, detail: "" },
     audioNotice: "Visible speech suggestions were applied.",
     speechCorrection: {
-      originalDraftValue: "Fit the queen size bag beside the desk.",
-      correctedDraftValue: "Fit the queen-size bed beside the desk.",
+      status: "applied",
+      rawDraftValue: "Fit the queen size bag beside the desk.",
+      suggestedDraftValue: "Fit the queen-size bed beside the desk.",
+    },
+    speechCorrectionProvenance: {
+      source: "explicit_user_acceptance",
+      promptBefore: "Fit the queen size bag beside the desk.",
+      promptAfter: "Fit the queen-size bed beside the desk.",
     },
     trace: [rawTranscriptTrace],
     manualPreview: null,
@@ -62,6 +68,7 @@ describe("renderer reset state", () => {
       audioRecorderState: { status: "idle", elapsedMs: 0, detail: "" },
       audioNotice: DEFAULT_AUDIO_NOTICE,
       speechCorrection: null,
+      speechCorrectionProvenance: null,
       trace: [],
     });
   });
@@ -98,6 +105,7 @@ describe("renderer reset state", () => {
         promptValue: "Use my manually edited requirement.",
         liveTranscriptDraft: editedDraft,
         speechCorrection: null,
+        speechCorrectionProvenance: null,
         manualPreview: { accepted: true },
         manualPreviewOrigin: { instanceId: "desk-standard-1" },
         placementDrag: { pointerId: 9 },
@@ -107,6 +115,7 @@ describe("renderer reset state", () => {
     expect(reset).toMatchObject({
       promptValue: "",
       speechCorrection: null,
+      speechCorrectionProvenance: null,
       trace: [],
       manualPreview: null,
       manualPreviewOrigin: null,

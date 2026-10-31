@@ -37,7 +37,7 @@ flowchart LR
 - explicit microphone permission UX, 20-second capture bound, `AudioWorklet` PCM conversion,
   ordered typed IPC, renderer and native queue bounds, and transcript-as-draft behavior;
 - partial subtitle replacement for display only, raw final transcript retention, a visible narrow
-  speech-suggestion layer, and the explicit Whisper fallback policy;
+  user-accepted speech-suggestion layer, and the explicit Whisper fallback policy;
 - owner-only temporary WAV lifecycle for Whisper fallback;
 - verified room, zone, rule, and furniture dimensions;
 - accepted state and stale-state references;
@@ -76,7 +76,11 @@ sequenceDiagram
   M->>A: ItemQueue.markFinished()
   A-->>M: Final aggregate SpeechResult
   M-->>R: Final transcript + model/timing evidence
-  R->>U: Editable Manual prompt draft; no submit
+  R->>U: Exact raw transcript in editable Manual prompt
+  opt Local furniture suggestion is plausible
+    R-->>U: Exact before/after diff + Apply/Dismiss
+    U->>R: Explicit Apply, Dismiss, edit, or later Undo
+  end
   U->>T: Review/edit, then click Send
 
   opt Explicit fallback after deterministic Nemotron failure/user action
@@ -101,6 +105,10 @@ bounded reset/shutdown drain and quarantine rules. Main also owns a renderer-fra
 the captured `webContents`, frame identity, ownership-session ID, and stream ID. Main-frame
 navigation/reload, renderer loss, webContents destruction, or window close revokes the lease,
 cancels native streaming, and prevents old partials from being delivered to a replacement renderer.
+Reset uses the same ownership authority: the renderer blocks input and releases local tracks first;
+main revokes any lease for that `webContents`, awaits the bounded native cancellation path, then
+resets controller/runtime state. Ownership release is immediate and repeated revoke/reset calls are
+safe, while a late stream activation is canceled against its revoked lease.
 
 Pinned v2.2.1 accepts Whisper fallback transcription by URI. A measured inline
 `Item.audioFromData("wav", bytes)` request failed with:
@@ -125,19 +133,19 @@ explicit recovery selection.
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 4.094 s; transcription 213 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 4.035 s; transcription 221 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.304 s; stop-to-final 91 ms; cached prepare 6.102 s; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.248 s; stop-to-final 205 ms; cached prepare 5.482 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 21 test files and 569 passing tests. The suite includes worklet startup
-cleanup, atomic renderer/main state-v0 reset, renderer reset concurrency, atomic failed-mode
-switching, renderer-owner reload/close cancellation, submitted-transcript state, bounded
-cancellation/reset recovery, stale chunk/partial rejection, clause-local intent-safe speech
+Current validation covers worklet startup cleanup, atomic renderer/main state-v0 reset, renderer
+reset concurrency, active-stream ownership revocation, cancellation failure/timeout recovery,
+atomic failed-mode switching, renderer-owner reload/close cancellation, submitted-transcript state,
+bounded cancellation/reset recovery, stale chunk/partial rejection, clause-local intent-safe speech
 suggestions, manual placement/retention, and the complete-Qwen-response execution gate.
 
 ## One turn

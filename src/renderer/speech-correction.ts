@@ -33,11 +33,15 @@ interface GoverningAction {
 const actionSource =
   "add|arrange|bring|fit|include|keep|move|need|place|position|put|remove|replace|require|retain|swap|use|want";
 const actionPattern = new RegExp(`\\b(?:${actionSource})\\b`, "gi");
+const clauseVerbPattern = new RegExp(`\\b(?:${actionSource}|avoid|exclude)\\b`, "i");
 const hardClauseBoundaryPattern = /[.!?;:\r\n]+/g;
-const softClauseBoundaryPattern = new RegExp(
-  `(?:,|\\b(?:and|but|then)\\b)(?=\\s+(?:please\\s+)?(?:(?:do\\s+not|don't|dont|never|not)\\s+)?(?:${actionSource}|be)\\b)`,
-  "gi",
+const softClauseBoundaryPattern = /,|\b(?:and|but|then)\b/gi;
+const independentActionClausePattern = new RegExp(
+  `^(?:\\s|please\\s+)*(?:(?:no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not)\\s+)?(?:${actionSource}|avoid|exclude|be)\\b`,
+  "i",
 );
+const independentSubjectClausePattern =
+  /^(?:\s)*(?:a|an|he|her|his|i|it|my|our|she|that|the|their|these|they|this|those|we|you|your)\b(?:\s+[\w'-]+){0,7}\s+(?:am|are|belongs?|contains?|has|have|is|means?|was|were)\b/i;
 const queenBagPattern = /\bqueen[\s-]+size(?:d)?[\s-]+bag\b/gi;
 const creepPattern = /\bcreep\b/gi;
 const explicitBedContextPattern = /\b(?:bed|bedroom|headboard|mattress|sleep|sleeping)\b/gi;
@@ -45,8 +49,12 @@ const layoutEntityPattern = /\b(?:closet|cot|crib|desk|door|furniture|layout|nur
 const spatialContextPattern =
   /\b(?:against|along|beside|between|blocking|by|clear of|inside|near|next to|opposite|under|within)\b/gi;
 const babyBedContextPattern = /\b(?:baby|cot|crib|infant|newborn|nursery|toddler)\b/gi;
+const literalBagContextPattern =
+  /\b(?:baggage|carry[\s-]?on|journey|luggage|pack|packed|packing|suitcase|travel|trip|vacation)\b/i;
 const strongLayoutActions = new Set(["arrange", "fit", "move", "place", "position", "replace", "swap"]);
 const maxActionDistanceWords = 12;
+const scopedNegationSource =
+  "no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not|without|avoid(?:ed|ing|s)?|exclude(?:d|s|ing)?|rather\\s+than";
 
 function collectQuotedRanges(value: string): TextRange[] {
   const ranges: TextRange[] = [];
@@ -83,8 +91,11 @@ function maskRanges(value: string, valueStart: number, ranges: readonly TextRang
 }
 
 function hasAction(value: string): boolean {
-  actionPattern.lastIndex = 0;
-  return actionPattern.test(value);
+  return clauseVerbPattern.test(value);
+}
+
+function startsIndependentClause(value: string): boolean {
+  return independentActionClausePattern.test(value) || independentSubjectClausePattern.test(value);
 }
 
 function appendSoftClauseRanges(
@@ -105,7 +116,9 @@ function appendSoftClauseRanges(
       break;
     }
     const prefix = maskRanges(rawTranscript.slice(clauseStart, match.index), clauseStart, quotedRanges);
-    if (!hasAction(prefix)) {
+    const nextStart = match.index + match[0].length;
+    const suffix = maskRanges(rawTranscript.slice(nextStart, end), nextStart, quotedRanges);
+    if (!hasAction(prefix) || !startsIndependentClause(suffix)) {
       continue;
     }
     clauses.push({
@@ -113,7 +126,7 @@ function appendSoftClauseRanges(
       end: match.index,
       text: rawTranscript.slice(clauseStart, match.index),
     });
-    clauseStart = match.index + match[0].length;
+    clauseStart = nextStart;
   }
   clauses.push({
     start: clauseStart,
@@ -147,9 +160,15 @@ function wordDistance(value: string, leftEnd: number, rightStart: number): numbe
   return value.slice(start, end).match(/\b[\w'-]+\b/g)?.length ?? 0;
 }
 
+function hasScopedNegationBefore(value: string, position: number, maxWords: number): boolean {
+  const prefix = value.slice(0, position);
+  return new RegExp(`\\b(?:${scopedNegationSource})\\b(?:\\s+[\\w'-]+){0,${maxWords}}\\s*$`, "i").test(
+    prefix,
+  );
+}
+
 function actionIsNegated(value: string, actionStart: number): boolean {
-  const prefix = value.slice(Math.max(0, actionStart - 48), actionStart);
-  return /\b(?:do\s+not|don't|dont|never|not)\b(?:\s+\w+){0,4}\s*$/i.test(prefix);
+  return hasScopedNegationBefore(value, actionStart, 6);
 }
 
 function findGoverningAction(clauseText: string, candidateStart: number): GoverningAction | null {
@@ -181,8 +200,10 @@ function findGoverningAction(clauseText: string, candidateStart: number): Govern
 }
 
 function cueIsNegated(value: string, cueStart: number): boolean {
-  const prefix = value.slice(Math.max(0, cueStart - 36), cueStart);
-  return /\b(?:excluding|no|not|without)\b(?:\s+\w+){0,2}\s*$/i.test(prefix);
+  const prefix = value.slice(0, cueStart);
+  return (
+    hasScopedNegationBefore(value, cueStart, 3) || /\b(?:excluding|no)\b(?:\s+[\w'-]+){0,2}\s*$/i.test(prefix)
+  );
 }
 
 function hasPositiveCue(value: string, pattern: RegExp): boolean {
@@ -199,8 +220,19 @@ function maskCandidate(clauseText: string, candidateStart: number, candidateEnd:
   return `${clauseText.slice(0, candidateStart)}${" ".repeat(candidateEnd - candidateStart)}${clauseText.slice(candidateEnd)}`;
 }
 
+function candidateIsNegated(clauseText: string, candidate: TextRange): boolean {
+  if (hasScopedNegationBefore(clauseText, candidate.start, 12)) {
+    return true;
+  }
+  const suffix = clauseText.slice(candidate.end);
+  return /^(?:\s+[\w'-]+){0,4}\s+(?:not\s+anymore|no\s+longer)\b/i.test(suffix);
+}
+
 function hasQueenBedContext(clauseText: string, candidate: TextRange, action: GoverningAction): boolean {
   const context = maskCandidate(clauseText, candidate.start, candidate.end);
+  if (literalBagContextPattern.test(context)) {
+    return false;
+  }
   if (hasPositiveCue(context, explicitBedContextPattern)) {
     return true;
   }
@@ -246,6 +278,9 @@ function collectCandidates(
       }
       const maskedClause = maskRanges(clause.text, clause.start, quotedRanges);
       const localCandidate = { start: start - clause.start, end: end - clause.start };
+      if (candidateIsNegated(maskedClause, localCandidate)) {
+        continue;
+      }
       const action = findGoverningAction(maskedClause, localCandidate.start);
       if (action === null) {
         continue;

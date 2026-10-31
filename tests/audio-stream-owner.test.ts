@@ -41,6 +41,45 @@ describe("main-process audio stream ownership", () => {
     expect(cancelStream).toHaveBeenCalledWith("late-stream");
   });
 
+  it("releases ownership immediately when reset wins before stream activation", async () => {
+    const cancelStream = vi.fn(async () => {});
+    const ownership = new AudioStreamOwnership(cancelStream);
+    const oldLease = ownership.begin(ownerA);
+
+    await ownership.revokeOwner(ownerA.webContentsId);
+    const nextLease = ownership.begin(ownerA);
+
+    await expect(ownership.activate(oldLease, "late-stream")).resolves.toBe(false);
+    expect(cancelStream).toHaveBeenCalledWith("late-stream");
+    await expect(ownership.activate(nextLease, "next-stream")).resolves.toBe(true);
+  });
+
+  it("keeps repeated reload and close revocation idempotent", async () => {
+    const cancelStream = vi.fn(async () => {});
+    const ownership = new AudioStreamOwnership(cancelStream);
+    const lease = ownership.begin(ownerA);
+    await ownership.activate(lease, "stream-a");
+
+    await ownership.revokeOwner(ownerA.webContentsId, ownerA);
+    await ownership.revokeOwner(ownerA.webContentsId, ownerA);
+    await ownership.revokeOwner(ownerA.webContentsId);
+
+    expect(cancelStream).toHaveBeenCalledOnce();
+    expect(() => ownership.begin(ownerA)).not.toThrow();
+  });
+
+  it("releases ownership when bounded cancellation rejects", async () => {
+    const cancelStream = vi.fn(async () => {
+      throw new Error("audio cancellation timed out");
+    });
+    const ownership = new AudioStreamOwnership(cancelStream);
+    const lease = ownership.begin(ownerA);
+    await ownership.activate(lease, "stream-a");
+
+    await expect(ownership.revokeOwner(ownerA.webContentsId)).rejects.toThrow("audio cancellation timed out");
+    expect(() => ownership.begin(ownerA)).not.toThrow();
+  });
+
   it("never routes an old partial or stream command to a new renderer owner", async () => {
     const ownership = new AudioStreamOwnership(async () => {});
     const oldLease = ownership.begin(ownerA);

@@ -51,18 +51,23 @@ Put on screen:
   `markFinished`;
 - main-owned renderer/frame/session/stream identity, with cancellation on reload, renderer loss,
   destruction, or window close and no partial forwarding to a replacement renderer;
+- Reset ownership handshake: renderer input/tracks stop first, main revokes and awaits bounded stream
+  cleanup, then controller state returns to v0; repeated cleanup is idempotent;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
 - raw ASR retention in Developer trace plus a clause-local, visible exact-replacement layer for
-  high-confidence `queen size bag` and `creep` furniture phrases before Send;
+  plausible `queen size bag` and `creep` furniture phrases before Send;
+- exact raw text first, with explicit **Apply suggested furniture corrections**, **Dismiss**, and
+  post-Apply **Undo suggestions** controls;
 - Send transition to the exact edited submitted prompt and submitted/processing label;
 - explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
 
 Message:
 
 > Audio is an optional local input adapter. Nemotron partials are display-only. Stop produces one
-> final editable draft; any demo-vocabulary suggestion is visible and reversible, and the user still
-> clicks Send before it becomes an ordinary text turn. ASR never calls geometry.
+> final raw editable draft; any demo-vocabulary suggestion is visible but changes the prompt only
+> after explicit acceptance, and the user still clicks Send before it becomes an ordinary text turn.
+> ASR never calls geometry.
 
 ## 6:10–7:10 — Multi-turn local planning request
 

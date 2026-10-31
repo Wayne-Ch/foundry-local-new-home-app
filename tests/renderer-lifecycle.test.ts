@@ -31,12 +31,18 @@ describe("renderer lifecycle coordination", () => {
   it("starts reset without waiting for renderer cleanup to finish", async () => {
     const cleanupGate = deferred();
     const calls: string[] = [];
+    let inputDisabled = false;
+    let tracksReleased = false;
     const cleanup = vi.fn(async () => {
+      inputDisabled = true;
+      tracksReleased = true;
       calls.push("cleanup-started");
       await cleanupGate.promise;
       calls.push("cleanup-finished");
     });
     const reset = vi.fn(async () => {
+      expect(inputDisabled).toBe(true);
+      expect(tracksReleased).toBe(true);
       calls.push("reset-started");
       return "bootstrap";
     });

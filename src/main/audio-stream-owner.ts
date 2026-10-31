@@ -93,6 +93,9 @@ export class AudioStreamOwnership {
       return;
     }
     active.revoked = true;
+    if (this.#current === active) {
+      this.#current = null;
+    }
     await this.#cancel(active);
   }
 

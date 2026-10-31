@@ -27,6 +27,8 @@ describe("visible clause-local speech correction suggestions", () => {
     "Keep the queen size bag.",
     "I packed a queen size bag for the trip. Keep the desk by the window.",
     "Keep the queen size bag for travel. Fit the desk beside the window.",
+    "Fit the desk, and the queen size bag is luggage.",
+    "Move the queen size bag by the door before the trip.",
   ])("keeps literal or ambiguous bag wording unchanged: %s", (raw) => {
     expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
       correctedTranscript: raw,
@@ -58,6 +60,16 @@ describe("visible clause-local speech correction suggestions", () => {
     const raw = "Add a creep beside the desk. Keep the closet clear.";
 
     expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it("keeps ordinary creep wording exact", () => {
+    const raw = "Do not be a creep.";
+
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
       correctedTranscript: raw,
       corrections: [],
     });
@@ -108,6 +120,44 @@ describe("visible clause-local speech correction suggestions", () => {
     const raw = "Do not add a creep for the baby. Never fit the queen size bag beside the desk.";
 
     expect(applySpeechCorrectionSuggestions(raw)).toMatchObject({
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it.each([
+    "No need to add a creep for the baby.",
+    "I no longer want a creep for the baby.",
+    "Arrange the nursery without a creep for the baby.",
+    "Avoid adding a creep for the baby.",
+    "Exclude a creep for the baby.",
+    "Use the crib rather than a creep for the baby.",
+    "I want a creep for the baby not anymore.",
+  ])("suppresses baby-bed suggestions under local negation: %s", (raw) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it.each([
+    "No need to add a creep for the baby, but add a creep beside the crib.",
+    "I no longer want a creep for the baby. Add a creep beside the crib.",
+    "Arrange the nursery without a creep for the baby, then add a creep beside the crib.",
+    "Exclude a creep for the baby; replace the crib with a creep.",
+  ])("allows a later positive clause to suggest independently: %s", (raw) => {
+    const result = applySpeechCorrectionSuggestions(raw);
+
+    expect(result.corrections).toEqual([{ id: "baby-bed", original: "creep", replacement: "baby bed" }]);
+    expect(result.correctedTranscript.match(/baby bed/g)).toHaveLength(1);
+  });
+
+  it("does not create suggestions for exact supported aliases", () => {
+    const raw = "Keep the Queen bed. Add a baby bed. Use a compact desk if needed.";
+
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
       correctedTranscript: raw,
       corrections: [],
     });
