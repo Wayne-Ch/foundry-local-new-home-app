@@ -59,17 +59,20 @@ are rejected. Repeated Reset and a subsequent recording use a fresh ownership le
 
 Speech suggestions require a direct local governing action in a small token span before the
 candidate. Punctuation, coordinators, subordinators, or an explicit new subject between the action
-and candidate reject the suggestion; an action from an earlier clause is never inherited. Quoted
-wording, travel/luggage context, and local negation (`not`, `never`, `don't`, `no need to`, `no
-longer`, `without`, `avoid`, `exclude`, `rather than`, and `not anymore`) remain literal. `creep`
-requires local positive baby-bed/crib evidence, and `queen size bag` requires direct keep/retain or
-plausible local bed/layout evidence. The exact raw transcript is inserted first; Apply is explicit,
-Dismiss leaves raw, and Apply remains undoable before Send.
+and candidate reject the suggestion; an action from an earlier clause is never inherited.
+Candidate-local modifiers define negation and luggage suppression, so earlier negative or packed
+luggage clauses do not suppress a later positive candidate after `but`, `then`, a clause comma, or a
+subordinator. Local `do not fit...` and local `...as luggage` remain literal. Punctuated additive
+negation such as `Do not, under any circumstances, add...`, `Never, ever add...`, and `Don't, please
+add...` also remains literal. `creep` requires a direct additive/request/placement/replacement action
+plus local baby/nursery/layout evidence; keep/move/remove person usages remain exact. Exact `baby bed`
+never creates a correction. The exact raw transcript is inserted first; Apply is explicit, Dismiss
+leaves raw, and Apply remains undoable before Send.
 
 ## Commands run
 
 ```powershell
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm rebuild electron esbuild foundry-local-sdk
 npm run probe:foundry
@@ -102,11 +105,11 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 23 files / 633 tests pass; Vitest reported 1.59 s |
+| Unit tests | 24 files / 666 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
-| Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 7 ms then 5 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
-| Electron stream-owner probe | Pass; a real renderer recording produced 2 PCM chunks before reload navigation and a fresh session produced 1 chunk before window close; both renderer tracks stopped, native cancellation completed in 11 ms and 33 ms, ownership advanced from session 1 to 2, stale routing was false, and no destroyed-object or unhandled errors occurred |
+| Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
+| Electron stream-owner probe | Pass; the negative self-test intentionally rejected a renderer promise and was caught through both console and CDP `Runtime.exceptionThrown`, proving the harness assertion fails; the subsequent real reload/close path produced 1 PCM chunk per session, stopped both renderer tracks, canceled native ownership in 8 ms and 41 ms, advanced session 1 to 2, rejected stale routing, and finished with zero lifecycle errors |
 | Electron microphone permission probe | Pass |
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
@@ -114,7 +117,7 @@ npm run capture:ui
 | King + compact desk + baby bed | No feasible bounded option; east preview measures 70 / 250 mm and 170 / 250 mm |
 | Recovery action | Pass; visible choice enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
 | Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
-| Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct governing-action token span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; all requested `while`/`because`/`although`/`whereas`/`when`/`after`/`before`/`since`/`if`/`unless` new-subject variants, quoted speech, expanded negation, multiline input, travel/luggage bags, and ordinary `creep` wording are negative-tested |
+| Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct candidate-local governing-action span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; additive/request/placement `creep` positives, keep/move/remove-person negatives, punctuated/adverb negation, exact `baby bed`, local luggage, and independent later clauses across `but`, `then`, commas, and subordinators are focused-tested |
 | Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main v0, clears accepted/transient evidence, rejects stale bootstrap/results, preserves v0 through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease |
 | Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
 | Renderer interaction | Pass in browser preview; keyboard focus survived repeated SVG redraws, the semantic fieldset exposed placement controls, valid preview -> Apply created state v4 while Beat E remained pending, invalid 226 / 250 mm preview disabled Apply, and Revert restored the accepted layout |
@@ -135,10 +138,10 @@ npm run capture:ui
 | Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 397,297 bytes |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
-| Nemotron timing | Cached prepare 5,095 ms; first partial 1,291 ms; stop-to-final 101 ms |
+| Nemotron timing | Cached prepare 3,231 ms; first partial 1,269 ms; stop-to-final 196 ms |
 | Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
 | Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
-| Whisper fallback timing | Cached prepare 7,416 ms; final transcription 228 ms |
+| Whisper fallback timing | Cached prepare 3,125 ms; final transcription 242 ms |
 | Failed audio-mode switching | Pass; requested mode is shown not ready while the previously working model remains loaded when target resolution fails |
 | Transcript submission state | Pass; the exact edited prompt becomes submitted/processing and never remains labeled `not sent` after Send |
 | Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
@@ -153,19 +156,19 @@ Final command outputs from the October 31 independent revision run:
 |---|---|
 | `npm run probe:foundry` | Pass; exact selected default cached; exact task/device/EP/cache metadata recorded for all candidates |
 | Electron runtime materialization | Pass from the checksum-verified cached 42.3.3 archive after npm postinstall returned without extracting it |
-| `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18; 5,677 ms load, 6,008 ms median, 9,051 ms max |
-| `npm run lint` | 79 files checked |
+| `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18; 4,355 ms load, 5,671 ms median, 9,107 ms max |
+| `npm run lint` | 81 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 23 files / 633 tests; Vitest reported 1.59 s |
+| `npm test` | 24 files / 666 tests pass |
 | `npm run build` | Pass; 122 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
-| `npm run probe:reset` | Pass; actual renderer Start/Reset controls, controlled WAV-backed MediaStream, production IPC/controller/owner, real Nemotron stream, 1 PCM chunk per cycle, 7 ms then 5 ms cancellation, stopped tracks, v0 UI/controller, and fresh lease session 2 |
-| `npm run probe:stream-owner` | Pass; actual renderer Start recording produced 2 chunks before reload navigation and 1 chunk in fresh session 2 before window close; both tracks and native streams cancelled in 11 ms and 33 ms, stale routing was false, and destroyed-object/unhandled error counts were zero |
+| `npm run probe:reset` | Pass; actual renderer Start/Reset controls, controlled WAV-backed MediaStream, production IPC/controller/owner, real Nemotron stream, 1 PCM chunk per cycle, 6 ms then 4 ms cancellation, stopped tracks, v0 UI/controller, and fresh lease session 2 |
+| `npm run probe:stream-owner` | Pass; injected rejected promise made the harness assertion fail through console + CDP `Runtime.exceptionThrown`; after clearing only that expected self-test evidence, actual reload/close recordings produced 1 chunk each, both tracks and native streams canceled in 8 ms and 41 ms, stale routing was false, and lifecycle error counts were zero |
 | `npm run probe:microphone-permission` | Pass, including its required rebuild |
-| `npm run capture:ui` | Pass; 397,297-byte labeled 16:9 screenshot, including rebuild |
-| `npm run test:audio-integration` | Pass; 7,416 ms prepare, 228 ms transcription |
-| `npm run test:nemotron-integration` | Pass; 31 partials, 1,291 ms first partial, 101 ms stop-to-final |
-| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.349–8.841 s |
+| `npm run capture:ui` | Pass; regenerated 397,170-byte labeled 16:9 preview was visually identical, so the unchanged 397,297-byte committed reference was restored |
+| `npm run test:audio-integration` | Pass; 3,125 ms prepare, 242 ms transcription |
+| `npm run test:nemotron-integration` | Pass; 31 partials, 1,269 ms first partial, 196 ms stop-to-final |
+| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.579–8.942 s |
 
 ## Layout latency profile
 
@@ -190,22 +193,22 @@ model-selection evidence; the legacy comparison remains the measured contract-pa
 
 | Intent-delta turn | Attempts | Generation | Validation | Total | Prompt tokens | Output tokens | Prompt / schema / output bytes |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| A · Queen + desk | 2 | 7,897 ms | 22.910 ms | 7,930 ms | 958 | 65 | 1,461 / 1,998 / 168 |
-| B · King replacement | 2 | 6,522 ms | 4.650 ms | 6,532 ms | 1,423 | 64 | 1,323 / 1,998 / 168 |
-| C · Add baby bed | 2 | 8,227 ms | 3.302 ms | 8,239 ms | 1,905 | 64 | 1,469 / 1,998 / 168 |
-| Controlled failure | 2 | 7,886 ms | 7.572 ms | 7,899 ms | 2,389 | 64 | 1,416 / 1,998 / 171 |
-| Adversarial correction | 2 | 8,834 ms | 2.374 ms | 8,841 ms | 2,855 | 64 | 1,421 / 1,998 / 174 |
-| Replace King with Queen | 1 | 4,899 ms | 1.040 ms | 4,903 ms | 1,604 | 32 | 463 / 999 / 86 |
-| From King to Queen | 1 | 5,198 ms | 1.855 ms | 5,204 ms | 1,744 | 32 | 479 / 999 / 86 |
-| Scoped negation | 1 | 5,564 ms | 1.240 ms | 5,568 ms | 1,890 | 32 | 500 / 999 / 86 |
-| Baby-bed alias | 1 | 2,423 ms | 1.365 ms | 2,427 ms | 431 | 32 | 511 / 999 / 85 |
-| Baby-cot alias | 1 | 2,346 ms | 1.374 ms | 2,349 ms | 431 | 32 | 511 / 999 / 85 |
-| Negated bed + desk transitions | 2 | 4,499 ms | 1.457 ms | 4,503 ms | 663 | 64 | 1,534 / 1,998 / 167 |
-| Unsupported California King | 2 | 4,706 ms | 4.057 ms | 4,713 ms | 609 | 64 | 1,322 / 1,998 / 175 |
-| Unsupported twin + moon pod | 2 | 5,718 ms | 4.718 ms | 5,728 ms | 619 | 64 | 1,344 / 1,998 / 175 |
+| A · Queen + desk | 2 | 7,242 ms | 16.811 ms | 7,266 ms | 958 | 65 | 1,461 / 1,998 / 168 |
+| B · King replacement | 2 | 6,513 ms | 3.186 ms | 6,521 ms | 1,423 | 64 | 1,323 / 1,998 / 168 |
+| C · Add baby bed | 2 | 6,939 ms | 3.474 ms | 6,949 ms | 1,905 | 64 | 1,469 / 1,998 / 168 |
+| Controlled failure | 2 | 8,018 ms | 2.210 ms | 8,026 ms | 2,389 | 64 | 1,416 / 1,998 / 171 |
+| Adversarial correction | 2 | 8,935 ms | 2.062 ms | 8,942 ms | 2,855 | 64 | 1,421 / 1,998 / 174 |
+| Replace King with Queen | 1 | 5,045 ms | 1.512 ms | 5,050 ms | 1,604 | 32 | 463 / 999 / 86 |
+| From King to Queen | 1 | 5,318 ms | 1.605 ms | 5,323 ms | 1,744 | 32 | 479 / 999 / 86 |
+| Scoped negation | 1 | 5,669 ms | 0.644 ms | 5,673 ms | 1,890 | 32 | 500 / 999 / 86 |
+| Baby-bed alias | 1 | 2,576 ms | 0.920 ms | 2,579 ms | 431 | 32 | 511 / 999 / 85 |
+| Baby-cot alias | 1 | 2,629 ms | 1.100 ms | 2,633 ms | 431 | 32 | 511 / 999 / 85 |
+| Negated bed + desk transitions | 2 | 5,147 ms | 2.513 ms | 5,155 ms | 663 | 64 | 1,534 / 1,998 / 167 |
+| Unsupported California King | 2 | 5,000 ms | 3.560 ms | 5,007 ms | 609 | 64 | 1,322 / 1,998 / 175 |
+| Unsupported twin + moon pod | 2 | 5,219 ms | 3.314 ms | 5,226 ms | 619 | 64 | 1,344 / 1,998 / 175 |
 
 The historical October 29 real-app maximum was 11,162 ms. The October 31 thirteen-turn integration
-with explicit recovery and baby-bed aliases measured 2,349–8,841 ms while preserving the compact
+with explicit recovery and baby-bed aliases measured 2,579–8,942 ms while preserving the compact
 semantic contract. The extra bounded attempt on several turns remains visible rather than hidden by
 prompt-preselected enums.
 
@@ -221,7 +224,7 @@ passes the full gate.
 
 | Exact candidate | Task | Device / EP | Cached size | Load | Warm median / max | Attempts / failures | Peak process RSS | Result |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| `qwen3-0.6b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 529 MB | 5,677 ms | 6,008 / 9,051 ms | 35 / 0 | 9,935 MB | **Selected; required gate pass, 18/18** |
+| `qwen3-0.6b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 529 MB | 4,355 ms | 5,671 / 9,107 ms | 35 / 0 | 9,809 MB | **Selected; required gate pass, 18/18** |
 
 Peak RSS is whole-process mapped working-set evidence, not dedicated model or VRAM allocation. The
 other cached candidates were not rerun under this final corrected semantic gate, so prior quality
@@ -249,14 +252,14 @@ Catalog and measured comparison:
 
 | Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
 |---|---|---|---:|---:|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 7,416 ms current cached prepare | 228 ms, exact |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 3,125 ms current cached prepare | 242 ms, exact |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 5,095 ms current cached prepare | 31 live revisions; first 1,291 ms; final 101 ms after stop; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 3,231 ms current cached prepare | 31 live revisions; first 1,269 ms; final 196 ms after stop; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
 
 Nemotron English was downloaded once under the authorized under-1-GB policy and remains in the
 shared cache as the stage default. The current real-time run produced 31 subtitle revisions, first
-text at 1,291 ms, and final output 101 ms after the 5.53-second input ended. The UI displays those
+text at 1,269 ms, and final output 196 ms after the 5.53-second input ended. The UI displays those
 partials only in **Live draft — not sent**. On Stop, it inserts only the terminal aggregate
 `SpeechResult` into Manual prompt. On Send, that panel transitions to the exact edited submitted
 prompt and a processing/submitted label.
@@ -271,13 +274,13 @@ Final real app-service Nemotron integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 5,095 ms, cached |
+| Prepare manager/catalog/model | 3,231 ms, cached |
 | Partial revisions | 31 |
-| First partial | “Can” at 1,291 ms |
+| First partial | “Can” at 1,269 ms |
 | Final transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door” |
 | Key-word recall | 7/7 (100%) |
-| Stop-to-final | 101 ms |
-| Total paced stream | 6,216 ms |
+| Stop-to-final | 196 ms |
+| Total paced stream | 6,221 ms |
 | Endpoint | in-process SDK only |
 
 Final real app-service Whisper fallback integration:
@@ -286,10 +289,10 @@ Final real app-service Whisper fallback integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 7,416 ms, cached |
+| Prepare manager/catalog/model | 3,125 ms, cached |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 228 ms |
+| Transcription | 242 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 
@@ -316,7 +319,11 @@ Final real app-service Whisper fallback integration:
   stopped both renderer tracks, canceled both native streams, and acquired ownership session 2.
 - The separate real Electron stream-owner probe recorded through reload navigation and window close,
   stopped both renderer tracks, canceled both native streams, advanced ownership from session 1 to 2,
-  rejected stale routing, and exited with no destroyed-object, uncaught, or unhandled error.
+  rejected stale routing, and exited with no lifecycle error. Before that normal path, an intentional
+  rejected renderer promise reached both Chromium's console error event and CDP
+  `Runtime.exceptionThrown`; the negative assertion failed as required, then only the expected
+  self-test evidence was cleared. Main-process `uncaughtException` and `unhandledRejection` traps
+  remained active.
 - The app does not configure `serviceEndpoint`, call `startWebService`, or make inference HTTP
   requests.
 - `disableNonessentialTelemetry` is enabled.

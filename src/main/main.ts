@@ -31,6 +31,7 @@ import {
   MicrophonePermissionGate,
   permissionOriginForDocument,
 } from "./microphone-permission";
+import { RendererLifecycleErrorMonitor } from "./renderer-lifecycle-errors";
 import { createResetConversationHandler } from "./reset-handshake";
 
 let mainWindow: BrowserWindow | null = null;
@@ -62,7 +63,8 @@ interface RendererLifecycleProbeCancellation {
 const rendererLifecycleProbeLeases: RendererLifecycleProbeLease[] = [];
 const rendererLifecycleProbeCancellations: RendererLifecycleProbeCancellation[] = [];
 const rendererLifecycleProbeTrackStops = new Set<string>();
-const rendererLifecycleProbeErrors: string[] = [];
+const rendererLifecycleErrorMonitor = new RendererLifecycleErrorMonitor();
+let rendererLifecycleProbeMonitorReady: Promise<void> = Promise.resolve();
 const rendererTrackStopMarker = "ELECTRON_RENDERER_MEDIA_TRACK_STOP ";
 const controller = new DemoController();
 const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
@@ -155,8 +157,9 @@ function createWindow(): BrowserWindow {
   mainWebContents = webContents;
   if (rendererLifecycleProbeEnabled) {
     webContents.on("console-message", (event) => {
-      recordRendererLifecycleProbeMessage(event.message);
+      recordRendererLifecycleProbeMessage(String(event.level), event.message);
     });
+    rendererLifecycleProbeMonitorReady = attachRendererLifecycleProbeMonitor(webContents);
   }
 
   const permissionGate = new MicrophonePermissionGate({
@@ -641,6 +644,8 @@ async function runRendererResetProbe(window: BrowserWindow, webContents: WebCont
   try {
     window.show();
     window.focus();
+    await rendererLifecycleProbeMonitorReady;
+    assertNoRendererLifecycleProbeErrors();
     await waitForRendererControls(webContents);
     await installRendererMediaProbe(webContents, "reset");
     await prepareRendererRecordingPipeline(webContents);
@@ -712,7 +717,10 @@ async function runStreamOwnerProbe(window: BrowserWindow, webContents: WebConten
   try {
     window.show();
     window.focus();
+    await rendererLifecycleProbeMonitorReady;
+    assertNoRendererLifecycleProbeErrors();
     await waitForRendererControls(webContents);
+    const rejectionSelfTestChannels = await verifyRendererUnhandledRejectionDetection(webContents);
     await installRendererMediaProbe(webContents, "reload");
     await prepareRendererRecordingPipeline(webContents);
 
@@ -771,6 +779,10 @@ async function runStreamOwnerProbe(window: BrowserWindow, webContents: WebConten
         stalePartialRoutable: false,
         destroyedObjectErrors: 0,
         unhandledErrors: 0,
+        rendererRejectionSelfTest: {
+          caught: true,
+          channels: rejectionSelfTestChannels,
+        },
       })}`,
     );
   } catch (error) {
@@ -1106,7 +1118,20 @@ function mediaTrackStopKey(captureId: string, trackIndex: number): string {
   return `${captureId}:${trackIndex}`;
 }
 
-function recordRendererLifecycleProbeMessage(message: string): void {
+async function attachRendererLifecycleProbeMonitor(webContents: WebContents): Promise<void> {
+  const debuggerSession = webContents.debugger;
+  if (!debuggerSession.isAttached()) {
+    debuggerSession.attach("1.3");
+  }
+  debuggerSession.on("message", (_event, method, params) => {
+    if (method === "Runtime.exceptionThrown") {
+      rendererLifecycleErrorMonitor.recordRuntimeException(params);
+    }
+  });
+  await debuggerSession.sendCommand("Runtime.enable");
+}
+
+function recordRendererLifecycleProbeMessage(level: string, message: string): void {
   if (message.startsWith(rendererTrackStopMarker)) {
     try {
       const payload = JSON.parse(message.slice(rendererTrackStopMarker.length)) as {
@@ -1124,33 +1149,73 @@ function recordRendererLifecycleProbeMessage(message: string): void {
         mediaTrackStopKey(payload.captureId, payload.trackIndex as number),
       );
     } catch (error) {
-      rendererLifecycleProbeErrors.push(error instanceof Error ? error.message : String(error));
+      rendererLifecycleErrorMonitor.recordProbeHarnessError(error);
     }
     return;
   }
-  if (/object has been destroyed|unhandled(?: promise)? rejection|uncaught exception/i.test(message)) {
-    rendererLifecycleProbeErrors.push(message);
-  }
+  rendererLifecycleErrorMonitor.recordConsole(level, message);
 }
 
 function recordRendererLifecycleProbeError(error: unknown): void {
   if (!rendererLifecycleProbeEnabled) {
     return;
   }
-  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  if (/destroyed|detached|unhandled|uncaught/i.test(message)) {
-    rendererLifecycleProbeErrors.push(message);
-  }
+  rendererLifecycleErrorMonitor.recordMainLifecycleError(error);
 }
 
 function assertNoRendererLifecycleProbeErrors(): void {
-  if (rendererLifecycleProbeErrors.length > 0) {
+  rendererLifecycleErrorMonitor.assertNone();
+}
+
+async function verifyRendererUnhandledRejectionDetection(
+  webContents: WebContents,
+): Promise<readonly string[]> {
+  const marker = `renderer-probe-rejection-${Date.now()}`;
+  await webContents.executeJavaScript(
+    `(() => {
+      Promise.reject(new Error(${JSON.stringify(marker)}));
+      return true;
+    })()`,
+    true,
+  );
+  await waitForProbeState(
+    () =>
+      rendererLifecycleErrorMonitor
+        .snapshot()
+        .some((error) => error.channel === "runtime.exceptionThrown" && error.message.includes(marker)),
+    "the renderer rejection negative self-test to reach Runtime.exceptionThrown",
+    10_000,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const detectedErrors = rendererLifecycleErrorMonitor
+    .snapshot()
+    .filter((error) => error.message.includes(marker));
+  const unexpectedErrors = rendererLifecycleErrorMonitor
+    .snapshot()
+    .filter((error) => !error.message.includes(marker));
+  if (unexpectedErrors.length > 0) {
     throw new Error(
-      `Renderer lifecycle emitted destroyed-object or unhandled errors: ${JSON.stringify(
-        rendererLifecycleProbeErrors,
+      `The renderer rejection self-test observed unrelated lifecycle errors: ${JSON.stringify(
+        unexpectedErrors,
       )}`,
     );
   }
+  let assertionFailed = false;
+  try {
+    assertNoRendererLifecycleProbeErrors();
+  } catch (error) {
+    assertionFailed = true;
+    if (!(error instanceof Error) || !error.message.includes(marker)) {
+      throw error;
+    }
+  }
+  if (!assertionFailed) {
+    throw new Error("The renderer rejection negative self-test did not fail the lifecycle harness.");
+  }
+  rendererLifecycleErrorMonitor.clear();
+  assertNoRendererLifecycleProbeErrors();
+  return [...new Set(detectedErrors.map((error) => error.channel))];
 }
 
 async function waitForRendererButton(webContents: WebContents, selector: string): Promise<void> {

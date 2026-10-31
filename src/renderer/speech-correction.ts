@@ -51,8 +51,29 @@ const governingActions = new Set([
   "use",
   "want",
 ]);
+const babyBedGoverningActions = new Set([
+  "add",
+  "arrange",
+  "bring",
+  "fit",
+  "include",
+  "need",
+  "place",
+  "position",
+  "put",
+  "replace",
+  "require",
+  "swap",
+  "use",
+  "want",
+]);
 const replacementActions = new Set(["replace", "swap"]);
 const replacementConnectors = new Set(["for", "with"]);
+const actionParticles = new Map<string, ReadonlySet<string>>([
+  ["bring", new Set(["in"])],
+  ["fit", new Set(["in"])],
+  ["put", new Set(["in"])],
+]);
 const directObjectLeadWords = new Set([
   "a",
   "an",
@@ -120,19 +141,89 @@ const hardClauseBoundaryPattern = /[.!?;:\r\n]+/g;
 const wordTokenPattern = /\b[A-Za-z][\w'-]*\b/g;
 const queenBagPattern = /\bqueen[\s-]+size(?:d)?[\s-]+bag\b/gi;
 const creepPattern = /\bcreep\b/gi;
-const explicitBedContextPattern = /\b(?:bed|bedroom|headboard|mattress|sleep|sleeping)\b/gi;
-const layoutEntityPattern = /\b(?:closet|cot|crib|desk|door|furniture|layout|nursery|wall|window)\b/gi;
-const spatialContextPattern =
-  /\b(?:against|along|beside|between|blocking|by|clear of|inside|near|next to|opposite|under|within)\b/gi;
-const babyBedContextPattern = /\b(?:baby|cot|crib|infant|newborn|nursery|toddler)\b/gi;
-const literalBagContextPattern =
-  /\b(?:baggage|carry[\s-]?on|journey|luggage|pack|packed|packing|suitcase|travel|trip|vacation)\b/i;
+const explicitBedContextWords = new Set(["bed", "bedroom", "headboard", "mattress", "sleep", "sleeping"]);
+const layoutEntityWords = new Set([
+  "closet",
+  "cot",
+  "crib",
+  "desk",
+  "door",
+  "furniture",
+  "layout",
+  "nursery",
+  "wall",
+  "window",
+]);
+const spatialContextWords = new Set([
+  "against",
+  "along",
+  "beside",
+  "between",
+  "blocking",
+  "by",
+  "clear",
+  "inside",
+  "near",
+  "next",
+  "opposite",
+  "under",
+  "within",
+]);
+const babyBedContextWords = new Set(["baby", "cot", "crib", "infant", "newborn", "nursery", "toddler"]);
+const literalBagContextWords = new Set([
+  "baggage",
+  "carry-on",
+  "carryon",
+  "journey",
+  "luggage",
+  "suitcase",
+  "travel",
+  "trip",
+  "vacation",
+]);
+const localContextLeadWords = new Set([
+  "against",
+  "along",
+  "at",
+  "beside",
+  "by",
+  "for",
+  "in",
+  "inside",
+  "near",
+  "next",
+  "within",
+]);
+const interruptionModifierWords = new Set([
+  "absolutely",
+  "actually",
+  "all",
+  "any",
+  "at",
+  "by",
+  "case",
+  "certainly",
+  "circumstances",
+  "currently",
+  "definitely",
+  "ever",
+  "in",
+  "just",
+  "kindly",
+  "means",
+  "now",
+  "please",
+  "really",
+  "simply",
+  "under",
+  "whatsoever",
+]);
 const strongLayoutActions = new Set(["arrange", "fit", "move", "place", "position", "replace", "swap"]);
 const contextOnlyActions = new Set(["keep", "retain"]);
+const defaultContextBoundaryExceptions = new Set(["as"]);
+const literalBagContextBoundaryExceptions = new Set(["after", "as", "before"]);
 const maxActionDistanceWords = 6;
 const maxContextWordsAfterCandidate = 10;
-const scopedNegationSource =
-  "no\\s+need\\s+to|no\\s+longer|do\\s+not|don't|dont|never|not|without|avoid(?:ed|ing|s)?|exclude(?:d|s|ing)?|rather\\s+than";
 
 function collectQuotedRanges(value: string): TextRange[] {
   const ranges: TextRange[] = [];
@@ -228,18 +319,26 @@ function containsOnlyWordsAndWhitespace(value: string, tokens: readonly WordToke
 }
 
 function hasDirectObjectShape(action: string, gapTokens: readonly WordToken[]): boolean {
-  if (gapTokens.length <= 3 && gapTokens.every((token) => directObjectLeadWords.has(token.normalized))) {
+  const allowedParticles = actionParticles.get(action);
+  const objectTokens =
+    gapTokens[0] !== undefined && allowedParticles?.has(gapTokens[0].normalized) === true
+      ? gapTokens.slice(1)
+      : gapTokens;
+  if (
+    objectTokens.length <= 3 &&
+    objectTokens.every((token) => directObjectLeadWords.has(token.normalized))
+  ) {
     return true;
   }
   if (!replacementActions.has(action)) {
     return false;
   }
-  const connectorIndex = gapTokens.findIndex((token) => replacementConnectors.has(token.normalized));
+  const connectorIndex = objectTokens.findIndex((token) => replacementConnectors.has(token.normalized));
   if (connectorIndex < 1 || connectorIndex > 3) {
     return false;
   }
-  const replacedObject = gapTokens.slice(0, connectorIndex);
-  const candidateLead = gapTokens.slice(connectorIndex + 1);
+  const replacedObject = objectTokens.slice(0, connectorIndex);
+  const candidateLead = objectTokens.slice(connectorIndex + 1);
   const replacedNouns = replacedObject.filter((token) => !directObjectLeadWords.has(token.normalized));
   return (
     replacedNouns.length >= 1 &&
@@ -249,15 +348,113 @@ function hasDirectObjectShape(action: string, gapTokens: readonly WordToken[]): 
   );
 }
 
-function hasScopedNegationBefore(value: string, position: number, maxWords: number): boolean {
-  const prefix = value.slice(0, position);
-  return new RegExp(`\\b(?:${scopedNegationSource})\\b(?:\\s+[\\w'-]+){0,${maxWords}}\\s*$`, "i").test(
-    prefix,
+function containsTokenSequence(tokens: readonly WordToken[], sequence: readonly string[]): boolean {
+  if (sequence.length === 0 || tokens.length < sequence.length) {
+    return false;
+  }
+  for (let index = 0; index <= tokens.length - sequence.length; index += 1) {
+    if (sequence.every((word, offset) => tokens[index + offset]?.normalized === word)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function tokenIsAvoidance(token: WordToken): boolean {
+  return /^(?:avoid|avoided|avoiding|avoids|exclude|excluded|excluding|excludes)$/.test(token.normalized);
+}
+
+function containsNegationCue(tokens: readonly WordToken[]): boolean {
+  return (
+    tokens.some(
+      (token) =>
+        token.normalized === "don't" ||
+        token.normalized === "dont" ||
+        token.normalized === "never" ||
+        token.normalized === "not" ||
+        token.normalized === "without" ||
+        tokenIsAvoidance(token),
+    ) ||
+    containsTokenSequence(tokens, ["do", "not"]) ||
+    containsTokenSequence(tokens, ["no", "need", "to"]) ||
+    containsTokenSequence(tokens, ["no", "longer"]) ||
+    containsTokenSequence(tokens, ["rather", "than"])
   );
 }
 
-function actionIsNegated(value: string, actionStart: number): boolean {
-  return hasScopedNegationBefore(value, actionStart, 6);
+function endsWithNegationCue(tokens: readonly WordToken[]): boolean {
+  const normalized = tokens.map((token) => token.normalized);
+  const suffixMatches = (sequence: readonly string[]) =>
+    normalized.length >= sequence.length &&
+    sequence.every((word, offset) => normalized[normalized.length - sequence.length + offset] === word);
+  return (
+    suffixMatches(["don't"]) ||
+    suffixMatches(["dont"]) ||
+    suffixMatches(["never"]) ||
+    suffixMatches(["not"]) ||
+    suffixMatches(["do", "not"]) ||
+    suffixMatches(["no", "need", "to"]) ||
+    suffixMatches(["no", "longer"])
+  );
+}
+
+function tokensAreInterruptionModifiers(tokens: readonly WordToken[]): boolean {
+  return tokens.every((token) => interruptionModifierWords.has(token.normalized));
+}
+
+function tokensAreLocalContextPhrase(tokens: readonly WordToken[]): boolean {
+  const first = tokens[0];
+  if (first === undefined || !localContextLeadWords.has(first.normalized)) {
+    return false;
+  }
+  return tokens.some(
+    (token) =>
+      babyBedContextWords.has(token.normalized) ||
+      layoutEntityWords.has(token.normalized) ||
+      literalBagContextWords.has(token.normalized) ||
+      token.normalized.startsWith("pack"),
+  );
+}
+
+function findLocalModifierStart(clauseText: string, actionStart: number): number {
+  const tokens = collectWordTokens(clauseText, actionStart);
+  let boundaryStart = 0;
+  for (const token of tokens) {
+    if (clauseBoundaryWords.has(token.normalized)) {
+      boundaryStart = token.end;
+    }
+  }
+
+  const commaIndexes: number[] = [];
+  for (let index = boundaryStart; index < actionStart; index += 1) {
+    if (clauseText[index] === ",") {
+      commaIndexes.push(index);
+    }
+  }
+  if (commaIndexes.length === 0) {
+    return boundaryStart;
+  }
+
+  let localStart = (commaIndexes.at(-1) ?? boundaryStart - 1) + 1;
+  let trailingTokens = collectWordTokens(clauseText.slice(localStart, actionStart));
+  for (let index = commaIndexes.length - 1; index >= 0; index -= 1) {
+    const comma = commaIndexes[index];
+    if (comma === undefined || !tokensAreInterruptionModifiers(trailingTokens)) {
+      break;
+    }
+    const priorStart = index === 0 ? boundaryStart : (commaIndexes[index - 1] ?? boundaryStart - 1) + 1;
+    const priorTokens = collectWordTokens(clauseText.slice(priorStart, comma));
+    if (
+      !endsWithNegationCue(priorTokens) &&
+      !tokensAreInterruptionModifiers(priorTokens) &&
+      !tokensAreLocalContextPhrase(priorTokens)
+    ) {
+      break;
+    }
+    localStart = priorStart;
+    trailingTokens = [...priorTokens, ...trailingTokens];
+  }
+  return localStart;
 }
 
 function findDirectGoverningAction(clauseText: string, candidateStart: number): GoverningAction | null {
@@ -273,7 +470,6 @@ function findDirectGoverningAction(clauseText: string, candidateStart: number): 
       return null;
     }
     if (
-      actionIsNegated(clauseText, token.start) ||
       !containsOnlyWordsAndWhitespace(gapText, gapTokens) ||
       gapTokens.some((gapToken) => clauseBoundaryWords.has(gapToken.normalized)) ||
       !hasDirectObjectShape(token.normalized, gapTokens)
@@ -289,7 +485,11 @@ function findDirectGoverningAction(clauseText: string, candidateStart: number): 
   return null;
 }
 
-function findLocalContextEnd(clauseText: string, candidateEnd: number): number {
+function findLocalContextEnd(
+  clauseText: string,
+  candidateEnd: number,
+  boundaryExceptions = defaultContextBoundaryExceptions,
+): number {
   const suffix = clauseText.slice(candidateEnd);
   const tokens = collectWordTokens(suffix);
   let end = candidateEnd;
@@ -298,7 +498,7 @@ function findLocalContextEnd(clauseText: string, candidateEnd: number): number {
     const separator = suffix.slice(end - candidateEnd, token.start);
     if (
       separator.trim() !== "" ||
-      (clauseBoundaryWords.has(token.normalized) && token.normalized !== "as") ||
+      (clauseBoundaryWords.has(token.normalized) && !boundaryExceptions.has(token.normalized)) ||
       subjectPronouns.has(token.normalized) ||
       /^[A-Z]/.test(token.value)
     ) {
@@ -313,17 +513,15 @@ function findLocalContextEnd(clauseText: string, candidateEnd: number): number {
   return end;
 }
 
-function cueIsNegated(value: string, cueStart: number): boolean {
-  const prefix = value.slice(0, cueStart);
-  return (
-    hasScopedNegationBefore(value, cueStart, 3) || /\b(?:excluding|no)\b(?:\s+[\w'-]+){0,2}\s*$/i.test(prefix)
-  );
+function cueIsNegated(tokens: readonly WordToken[], cueIndex: number): boolean {
+  const prefix = tokens.slice(Math.max(0, cueIndex - 4), cueIndex);
+  const previous = tokens[cueIndex - 1];
+  return containsNegationCue(prefix) || previous?.normalized === "no";
 }
 
-function hasPositiveCue(value: string, pattern: RegExp): boolean {
-  pattern.lastIndex = 0;
-  for (const match of value.matchAll(pattern)) {
-    if (match.index !== undefined && !cueIsNegated(value, match.index)) {
+function hasPositiveCue(tokens: readonly WordToken[], words: ReadonlySet<string>): boolean {
+  for (const [index, token] of tokens.entries()) {
+    if (words.has(token.normalized) && !cueIsNegated(tokens, index)) {
       return true;
     }
   }
@@ -334,34 +532,47 @@ function maskCandidate(clauseText: string, candidateStart: number, candidateEnd:
   return `${clauseText.slice(0, candidateStart)}${" ".repeat(candidateEnd - candidateStart)}${clauseText.slice(candidateEnd)}`;
 }
 
-function candidateIsNegated(clauseText: string, candidate: TextRange): boolean {
-  if (hasScopedNegationBefore(clauseText, candidate.start, 12)) {
+function candidateIsNegated(localText: string, candidate: TextRange, action: GoverningAction): boolean {
+  const beforeAction = collectWordTokens(localText, action.start);
+  if (containsNegationCue(beforeAction)) {
     return true;
   }
-  const suffix = clauseText.slice(candidate.end);
-  return /^(?:\s+[\w'-]+){0,4}\s+(?:not\s+anymore|no\s+longer)\b/i.test(suffix);
+  const actionToCandidate = collectWordTokens(localText.slice(action.end, candidate.start));
+  if (containsNegationCue(actionToCandidate)) {
+    return true;
+  }
+  const suffix = collectWordTokens(localText.slice(candidate.end)).slice(0, 6);
+  return containsTokenSequence(suffix, ["not", "anymore"]) || containsTokenSequence(suffix, ["no", "longer"]);
 }
 
 function hasQueenBedContext(clauseText: string, candidate: TextRange, action: GoverningAction): boolean {
-  const context = maskCandidate(clauseText, candidate.start, candidate.end);
-  if (hasPositiveCue(context, explicitBedContextPattern)) {
+  const contextTokens = collectWordTokens(maskCandidate(clauseText, candidate.start, candidate.end));
+  if (hasPositiveCue(contextTokens, explicitBedContextWords)) {
     return true;
   }
   if (contextOnlyActions.has(action.verb)) {
     return true;
   }
-  if (!hasPositiveCue(context, layoutEntityPattern)) {
+  if (!hasPositiveCue(contextTokens, layoutEntityWords)) {
     return false;
   }
   return (
     strongLayoutActions.has(action.verb) ||
-    hasPositiveCue(context, spatialContextPattern) ||
-    /\b(?:furniture|layout|nursery)\b/i.test(context)
+    hasPositiveCue(contextTokens, spatialContextWords) ||
+    contextTokens.some((token) => ["furniture", "layout", "nursery"].includes(token.normalized))
   );
 }
 
 function hasBabyBedContext(clauseText: string, candidate: TextRange): boolean {
-  return hasPositiveCue(maskCandidate(clauseText, candidate.start, candidate.end), babyBedContextPattern);
+  const contextTokens = collectWordTokens(maskCandidate(clauseText, candidate.start, candidate.end));
+  return hasPositiveCue(contextTokens, babyBedContextWords);
+}
+
+function hasLiteralBagContext(clauseText: string, candidate: TextRange): boolean {
+  const contextTokens = collectWordTokens(maskCandidate(clauseText, candidate.start, candidate.end));
+  return contextTokens.some(
+    (token) => literalBagContextWords.has(token.normalized) || token.normalized.startsWith("pack"),
+  );
 }
 
 function collectCandidates(rawTranscript: string, quotedRanges: readonly TextRange[]): CorrectionCandidate[] {
@@ -389,30 +600,39 @@ function collectCandidates(rawTranscript: string, quotedRanges: readonly TextRan
         quotedRanges,
       );
       const localCandidate = { start: start - window.start, end: end - window.start };
-      if (candidateIsNegated(maskedClause, localCandidate)) {
-        continue;
-      }
       const action = findDirectGoverningAction(maskedClause, localCandidate.start);
       if (action === null) {
         continue;
       }
-      if (
-        candidatePattern.id === "queen-bed" &&
-        literalBagContextPattern.test(maskCandidate(maskedClause, localCandidate.start, localCandidate.end))
-      ) {
+      if (candidatePattern.id === "baby-bed" && !babyBedGoverningActions.has(action.verb)) {
         continue;
       }
+      const localStart = findLocalModifierStart(maskedClause, action.start);
       const contextEnd = findLocalContextEnd(maskedClause, localCandidate.end);
-      const context = maskedClause.slice(action.start, contextEnd);
+      const literalBagContextEnd = findLocalContextEnd(
+        maskedClause,
+        localCandidate.end,
+        literalBagContextBoundaryExceptions,
+      );
+      const context = maskedClause.slice(localStart, contextEnd);
       const contextCandidate = {
-        start: localCandidate.start - action.start,
-        end: localCandidate.end - action.start,
+        start: localCandidate.start - localStart,
+        end: localCandidate.end - localStart,
       };
       const contextAction = {
         ...action,
-        start: 0,
-        end: action.end - action.start,
+        start: action.start - localStart,
+        end: action.end - localStart,
       };
+      if (candidateIsNegated(context, contextCandidate, contextAction)) {
+        continue;
+      }
+      if (
+        candidatePattern.id === "queen-bed" &&
+        hasLiteralBagContext(maskedClause.slice(localStart, literalBagContextEnd), contextCandidate)
+      ) {
+        continue;
+      }
       const hasContext =
         candidatePattern.id === "queen-bed"
           ? hasQueenBedContext(context, contextCandidate, contextAction)

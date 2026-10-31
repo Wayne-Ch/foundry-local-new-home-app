@@ -49,9 +49,21 @@ describe("visible candidate-local speech correction suggestions", () => {
     });
   });
 
-  it("requires local baby-bed context before suggesting creep as baby bed", () => {
+  it("requires a direct additive, request, placement, or replacement action with local baby-bed context", () => {
     expect(applySpeechCorrectionSuggestions("Add a creep beside the desk for the baby.")).toMatchObject({
       correctedTranscript: "Add a baby bed beside the desk for the baby.",
+      corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
+    });
+    expect(applySpeechCorrectionSuggestions("Bring in a creep for the nursery layout.")).toMatchObject({
+      correctedTranscript: "Bring in a baby bed for the nursery layout.",
+      corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
+    });
+    expect(applySpeechCorrectionSuggestions("For the baby, place a creep beside the desk.")).toMatchObject({
+      correctedTranscript: "For the baby, place a baby bed beside the desk.",
+      corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
+    });
+    expect(applySpeechCorrectionSuggestions("We need a creep in the nursery.")).toMatchObject({
+      correctedTranscript: "We need a baby bed in the nursery.",
       corrections: [{ id: "baby-bed", original: "creep", replacement: "baby bed" }],
     });
     expect(applySpeechCorrectionSuggestions("Replace the crib with a creep.")).toMatchObject({
@@ -99,9 +111,14 @@ describe("visible candidate-local speech correction suggestions", () => {
     });
   });
 
-  it("keeps ordinary creep wording exact", () => {
-    const raw = "Do not be a creep.";
-
+  it.each([
+    "Do not be a creep.",
+    "Keep the creep away from the baby.",
+    "That guy is a creep.",
+    "Move the creep away from the nursery.",
+    "Remove the creep from the baby's room.",
+    "Retain the creep near the crib.",
+  ])("keeps ordinary-person and avoidance creep wording exact: %s", (raw) => {
     expect(applySpeechCorrectionSuggestions(raw)).toEqual({
       rawTranscript: raw,
       correctedTranscript: raw,
@@ -227,6 +244,19 @@ describe("visible candidate-local speech correction suggestions", () => {
   });
 
   it.each([
+    "Do not, under any circumstances, add a creep for the baby.",
+    "Never, ever add a creep for the baby.",
+    "Don't, please add a creep for the baby.",
+    "I do not, under any circumstances, want a creep in the nursery.",
+  ])("suppresses punctuated or adverb-interrupted additive negation: %s", (raw) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it.each([
     "No need to add a creep for the baby.",
     "I no longer want a creep for the baby.",
     "Arrange the nursery without a creep for the baby.",
@@ -252,6 +282,70 @@ describe("visible candidate-local speech correction suggestions", () => {
 
     expect(result.corrections).toEqual([{ id: "baby-bed", original: "creep", replacement: "baby bed" }]);
     expect(result.correctedTranscript.match(/baby bed/g)).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "Do not move the desk but fit the queen size bag beside the desk.",
+      "Do not move the desk but fit the queen-size bed beside the desk.",
+    ],
+    [
+      "Do not move the desk, then fit the queen size bag beside the desk.",
+      "Do not move the desk, then fit the queen-size bed beside the desk.",
+    ],
+    [
+      "Do not move the desk, fit the queen size bag beside the desk.",
+      "Do not move the desk, fit the queen-size bed beside the desk.",
+    ],
+    [
+      "Although I said not to move the desk, fit the queen size bag beside the desk.",
+      "Although I said not to move the desk, fit the queen-size bed beside the desk.",
+    ],
+    [
+      "I packed luggage, but fit the queen size bag beside the desk.",
+      "I packed luggage, but fit the queen-size bed beside the desk.",
+    ],
+    [
+      "I packed luggage, then fit the queen size bag beside the desk.",
+      "I packed luggage, then fit the queen-size bed beside the desk.",
+    ],
+    [
+      "I packed luggage, fit the queen size bag beside the desk.",
+      "I packed luggage, fit the queen-size bed beside the desk.",
+    ],
+    [
+      "After I packed luggage, fit the queen size bag beside the desk.",
+      "After I packed luggage, fit the queen-size bed beside the desk.",
+    ],
+  ])("keeps earlier negation or luggage outside the later candidate span: %s", (raw, corrected) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: corrected,
+      corrections: [{ id: "queen-bed", original: "queen size bag", replacement: "queen-size bed" }],
+    });
+  });
+
+  it.each([
+    "Do not fit the queen size bag beside the desk.",
+    "Don't, please fit the queen size bag beside the desk.",
+    "Fit the queen size bag as luggage.",
+    "I packed the queen size bag as luggage.",
+  ])("suppresses local Queen candidates under negation or luggage semantics: %s", (raw) => {
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
+    });
+  });
+
+  it("does not create a correction for the exact baby bed term", () => {
+    const raw = "Add a baby bed to the nursery layout.";
+
+    expect(applySpeechCorrectionSuggestions(raw)).toEqual({
+      rawTranscript: raw,
+      correctedTranscript: raw,
+      corrections: [],
+    });
   });
 
   it("does not create suggestions for exact supported aliases", () => {

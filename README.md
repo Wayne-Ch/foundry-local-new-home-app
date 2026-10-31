@@ -38,11 +38,13 @@ room plan.
   display transitions from `Live draft — not sent` to the exact edited submitted prompt. The raw ASR
   transcript remains in Developer trace. A narrow, visible suggestion layer can correct
   `queen size bag` -> `queen-size bed` only when a nearby recognized furniture action directly
-  governs the candidate, and `creep` -> `baby bed` only with local positive baby-bed/crib evidence.
-  The bounded token span rejects punctuation, coordinators, subordinators, and explicit new subjects
-  between action and candidate, so actions never carry across `while`, `because`, or another clause.
-  Each exact replacement is listed; quoted, negated, travel/luggage, or cross-clause wording remains
-  literal. The editable prompt initially preserves the exact raw transcript. **Apply suggested
+  governs the candidate. Negation and luggage cues are evaluated only in that candidate's governing
+  action span and local modifiers, so an earlier `do not move...` or `packed luggage...` clause does
+  not suppress a later positive `fit...` clause. `creep` -> `baby bed` is narrower: it requires a
+  direct additive, request, placement, or replacement action such as add, bring, fit, need, place,
+  replace, or want plus local baby/nursery/layout evidence. Keep/move/remove person wording remains
+  literal, as do quoted text, local luggage wording, punctuated/adverb-interrupted negation, and exact
+  `baby bed`. The editable prompt initially preserves the exact raw transcript. **Apply suggested
   furniture corrections** is the only action that changes it; **Dismiss** leaves it raw, and an
   applied suggestion remains undoable.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
@@ -85,20 +87,20 @@ The corrected compact contract keeps all semantic enums available and emits acce
 retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
 invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 18 fixed-gate scenarios,
 including negated bed/desk transitions and unsupported California King, twin-bed, and moon-pod
-requests plus `baby-bed` and `baby cot` aliases. It loaded in 4.505 seconds and measured 5.357 seconds
-warm median / 10.216 seconds warm maximum. Other candidates were not rerun for this final semantic
+requests plus `baby-bed` and `baby cot` aliases. It loaded in 4.355 seconds and measured 5.671 seconds
+warm median / 9.107 seconds warm maximum. Other candidates were not rerun for this final semantic
 gate.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.288 s**, and the final aggregate transcript **231 ms**
-after input ended. Cached model preparation took **1.975 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.269 s**, and the final aggregate transcript **196 ms**
+after input ended. Cached model preparation took **3.231 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **2.901 s** cached preparation,
-and **1.203 s** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **3.125 s** cached preparation,
+and **242 ms** record-then-transcribe time for the same phrase in the October 31 rerun. It does not
 emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
@@ -242,9 +244,9 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The October 30 selected-default integration completed 13 real Qwen turns—including explicit
+The October 31 selected-default integration completed 13 real Qwen turns—including explicit
 recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants—in
-**2.332–8.362 s**. The unrestricted-schema benchmark measured **5.357 s median / 10.216 s max** for
+**2.579–8.942 s**. The unrestricted-schema benchmark measured **5.671 s median / 9.107 s max** for
 exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed. The legacy full-input
 Qwen2.5 path measured **23.955–38.893 s**.
 
@@ -255,12 +257,15 @@ in [VALIDATION.md](VALIDATION.md).
 `probe:reset` uses Chromium's controlled WAV-backed microphone device, clicks the real renderer
 **Start recording** and **Reset** controls, requires real Nemotron PCM chunks, verifies renderer
 tracks stop, production IPC/controller/ownership cancellation completes, UI/controller state is v0,
-and a fresh recording lease succeeds. It fails nonzero on any missed stage, uncaught exception, or
-unhandled rejection.
+and a fresh recording lease succeeds. It keeps main-process exception/rejection traps and also fails
+on renderer console errors or CDP `Runtime.exceptionThrown` page-error signals.
 `probe:stream-owner` separately clicks the real renderer **Start recording** control, reloads the
 renderer during the active recording, starts another real recording after navigation, and closes the
 window. It requires both MediaStreams and native owned streams to cancel, ownership sessions to
 advance, stale partial routing to remain disabled, and no destroyed-object or unhandled errors.
+Before the normal path, it intentionally rejects a renderer promise and proves the harness fails the
+negative self-test through both Chromium console and CDP exception channels; it then clears only that
+expected evidence and requires the reload/close path to finish with zero errors.
 `capture:ui` captures an explicitly labeled browser-only visual preview because Electron
 `webContents.capturePage()` returns `UnknownVizError` in this execution environment.
 
