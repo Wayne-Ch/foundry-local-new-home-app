@@ -66,6 +66,7 @@ import {
   SingleFlightOperation,
   submitTranscriptDraft,
 } from "./renderer-lifecycle";
+import { DEFAULT_AUDIO_NOTICE, resetRendererTransientState } from "./reset-state";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import { applySpeechCorrectionSuggestions, type SpeechCorrectionResult } from "./speech-correction";
 import "./styles.css";
@@ -79,7 +80,7 @@ let latestToolResult: LayoutToolResult | null = null;
 let isBusy = false;
 let runtimeStartupPending = true;
 let audioRecorderState: AudioRecorderState = { status: "idle", elapsedMs: 0, detail: "" };
-let audioNotice = "Editable draft only; click Send to submit.";
+let audioNotice = DEFAULT_AUDIO_NOTICE;
 let voiceOperation: VoiceCaptureOperation | null = null;
 let liveTranscriptDraft: LiveTranscriptDraft = {
   streamId: null,
@@ -322,6 +323,7 @@ resetButton.addEventListener("click", async () => {
     return;
   }
   const resetGeneration = operationBarrier.beginReset();
+  resetRendererTransientUi();
   setBusy(true);
   try {
     const bootstrap = await resetAfterStartingCleanup(
@@ -332,11 +334,8 @@ resetButton.addEventListener("click", async () => {
       return;
     }
     viewState = bootstrap;
-    latestToolResult = null;
-    manualPreview = null;
-    manualPreviewOrigin = null;
-    speechCorrection = null;
-    audioNotice = "Editable draft only; click Send to submit.";
+    latestToolResult = bootstrap.lastToolResult;
+    resetRendererTransientUi();
     renderAll();
   } catch (error) {
     if (!operationBarrier.isCurrentReset(resetGeneration)) {
@@ -363,6 +362,7 @@ resetButton.addEventListener("click", async () => {
   if (operationBarrier.finishReset(resetGeneration)) {
     runtimeStartupPending = false;
     setBusy(false);
+    resetButton.focus({ preventScroll: true });
   }
 });
 
@@ -709,6 +709,35 @@ function renderSpeechSuggestion(): void {
   speechSuggestionText.textContent = speechCorrection.corrections
     .map((correction) => `“${correction.original}” → “${correction.replacement}”`)
     .join(" · ");
+}
+
+function resetRendererTransientUi(): void {
+  const resetState = resetRendererTransientState({
+    promptValue: promptInput.value,
+    liveTranscriptDraft,
+    liveTranscriptPhase,
+    audioRecorderState,
+    audioNotice,
+    speechCorrection,
+    trace: viewState.trace,
+    manualPreview,
+    manualPreviewOrigin,
+    placementDrag,
+  });
+  if (placementDrag !== null && roomSvg.hasPointerCapture(placementDrag.pointerId)) {
+    roomSvg.releasePointerCapture(placementDrag.pointerId);
+  }
+  promptInput.blur();
+  promptInput.value = resetState.promptValue;
+  liveTranscriptDraft = resetState.liveTranscriptDraft;
+  liveTranscriptPhase = resetState.liveTranscriptPhase;
+  audioRecorderState = resetState.audioRecorderState;
+  audioNotice = resetState.audioNotice;
+  speechCorrection = resetState.speechCorrection;
+  viewState = { ...viewState, trace: resetState.trace };
+  manualPreview = resetState.manualPreview;
+  manualPreviewOrigin = resetState.manualPreviewOrigin;
+  placementDrag = resetState.placementDrag;
 }
 
 function renderLayout(): void {

@@ -48,6 +48,14 @@ Manual placement keeps model/tool history intact, reuses the same deterministic 
 stale or invalid previews, and records separate provenance before creating a new accepted application
 layout version.
 
+The independent reset/speech revision clears the editable prompt, submitted transcript state, raw
+audio trace, suggestion metadata, recording state, manual preview, pointer drag, and focus before a
+reset completes. Main and browser-preview reset responses now converge on the same state-v0 payload.
+Speech suggestions are clause-local: punctuation and action-led conjunctions bound context, quoted or
+negated wording is left literal, `creep` requires local baby-bed/crib evidence, and `queen size bag`
+requires an explicit local bed/layout requirement. Every applied replacement remains visible and
+undoable before Send; the raw transcript remains trace evidence until Reset.
+
 ## Commands run
 
 ```powershell
@@ -83,7 +91,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json` |
-| Unit tests | 19 files / 552 tests pass; Vitest reported 1.22 s |
+| Unit tests | 21 files / 569 tests pass; Vitest reported 1.93 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer-owner reload/close probe | Pass; both streams canceled, ownership session advanced, stale partial routing rejected, no uncaught exception or unhandled rejection |
@@ -94,7 +102,8 @@ npm run capture:ui
 | King + compact desk + baby bed | No feasible bounded option; east preview measures 70 / 250 mm and 170 / 250 mm |
 | Recovery action | Pass; visible choice enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
 | Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
-| Visible ASR suggestions | Pass; observed `queen size bag` and `creep` corrections are context-bounded, visible, editable, reversible, and negative-tested |
+| Visible ASR suggestions | Pass; exact replacements are clause-local, visible, editable, reversible, and preserve raw trace evidence; quoted speech, negation, multiline input, repeated terms, literal bags, and ordinary `creep` wording are negative-tested |
+| Reset consistency | Pass; corrected/manual drafts, submitted transcript state, suggestion provenance, raw trace, recording/transcribing state, manual preview, pointer drag, and focus return to one renderer/main state-v0 UI |
 | Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
 | Renderer interaction | Pass in browser preview; keyboard focus survived repeated SVG redraws, the semantic fieldset exposed placement controls, valid preview -> Apply created state v4 while Beat E remained pending, invalid 226 / 250 mm preview disabled Apply, and Revert restored the accepted layout |
 | Requirements / measurements | Pass; accepted and rejected exact-option measurements share the same evaluated option as checks/conflicts |
@@ -111,13 +120,13 @@ npm run capture:ui
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
-| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 397,056 bytes |
+| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 397,368 bytes |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
-| Nemotron timing | Cached prepare 6,102 ms; first partial 1,304 ms; stop-to-final 91 ms |
+| Nemotron timing | Cached prepare 5,364 ms; first partial 1,265 ms; stop-to-final 101 ms |
 | Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
 | Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
-| Whisper fallback timing | Cached prepare 4,094 ms; final transcription 213 ms |
+| Whisper fallback timing | Cached prepare 4,660 ms; final transcription 244 ms |
 | Failed audio-mode switching | Pass; requested mode is shown not ready while the previously working model remains loaded when target resolution fails |
 | Transcript submission state | Pass; the exact edited prompt becomes submitted/processing and never remains labeled `not sent` after Send |
 | Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
@@ -126,24 +135,24 @@ npm run capture:ui
 | Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
 
-Final command outputs from the October 29 run:
+Final command outputs from the October 30 independent revision run:
 
 | Command | Result |
 |---|---|
 | `npm run probe:foundry` | Pass; exact selected default cached; exact task/device/EP/cache metadata recorded for all candidates |
 | `npm rebuild electron` | Pass after adding the exact Electron package to the approved install-script set |
 | `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18 in an isolated exact-model process |
-| `npm run lint` | 71 files checked |
+| `npm run lint` | 74 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 19 files / 552 tests; Vitest reported 1.22 s |
-| `npm run build` | Pass; 120 renderer modules |
+| `npm test` | 21 files / 569 tests; Vitest reported 1.93 s |
+| `npm run build` | Pass; 121 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:stream-owner` | Pass; real reload and close both cancel the captured renderer-owned stream |
 | `npm run probe:microphone-permission` | Pass, including its required rebuild |
-| `npm run capture:ui` | Pass; 397,056-byte labeled 16:9 screenshot, including rebuild |
-| `npm run test:audio-integration` | Pass; 4,094 ms prepare, 213 ms transcription |
-| `npm run test:nemotron-integration` | Pass; 31 partials, 1,304 ms first partial, 91 ms stop-to-final |
-| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.451–8.924 s |
+| `npm run capture:ui` | Pass; 397,368-byte labeled 16:9 screenshot, including rebuild |
+| `npm run test:audio-integration` | Pass; 4,660 ms prepare, 244 ms transcription |
+| `npm run test:nemotron-integration` | Pass; 31 partials, 1,265 ms first partial, 101 ms stop-to-final |
+| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.255–8.370 s |
 
 ## Layout latency profile
 

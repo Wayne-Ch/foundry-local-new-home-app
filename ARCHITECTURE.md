@@ -134,11 +134,11 @@ Nemotron is selected because the stage UI now renders its revising partials. Whi
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 19 test files and 552 passing tests. The suite includes worklet startup
-cleanup, renderer reset concurrency, atomic failed-mode switching, renderer-owner reload/close
-cancellation, submitted-transcript state, bounded cancellation/reset recovery, stale chunk/partial
-rejection, context-bounded speech suggestions, manual placement/retention, and the
-complete-Qwen-response execution gate.
+Current validation covers 21 test files and 569 passing tests. The suite includes worklet startup
+cleanup, atomic renderer/main state-v0 reset, renderer reset concurrency, atomic failed-mode
+switching, renderer-owner reload/close cancellation, submitted-transcript state, bounded
+cancellation/reset recovery, stale chunk/partial rejection, clause-local intent-safe speech
+suggestions, manual placement/retention, and the complete-Qwen-response execution gate.
 
 ## One turn
 

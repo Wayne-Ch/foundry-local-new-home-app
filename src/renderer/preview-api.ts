@@ -209,6 +209,28 @@ function buildPreview(): BootstrapPayload {
   };
 }
 
+function buildResetPreview(): BootstrapPayload {
+  return {
+    roomPlan,
+    state: createInitialDemoState(),
+    readiness,
+    audioReadiness,
+    stageTurns,
+    completedStageTurnIds: [],
+    lastInteraction: null,
+    selectedLayout: null,
+    lastToolResult: null,
+    messages: [
+      {
+        id: "preview-reset-system",
+        role: "system",
+        text: "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
+      },
+    ],
+    trace: [],
+  };
+}
+
 export function createPreviewApi(): DemoApi {
   let bootstrap = buildPreview();
   return {
@@ -287,7 +309,7 @@ export function createPreviewApi(): DemoApi {
       };
     },
     resetConversation: async () => {
-      bootstrap = buildPreview();
+      bootstrap = buildResetPreview();
       return bootstrap;
     },
     onProgress: () => () => {},

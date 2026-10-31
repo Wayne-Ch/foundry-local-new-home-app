@@ -32,9 +32,11 @@ room plan.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
   display transitions from `Live draft — not sent` to the exact edited submitted prompt. The raw ASR
-  transcript remains in Developer trace. A narrow, visible suggestion layer can correct the observed
-  demo-context phrases `queen size bag` -> `queen-size bed` and `creep` -> `baby bed`; the corrected
-  draft is editable, can be restored to the original transcript, and is never silently submitted.
+  transcript remains in Developer trace. A narrow, visible suggestion layer can correct
+  `queen size bag` -> `queen-size bed` only inside a local bed/layout clause and `creep` ->
+  `baby bed` only with local baby-bed/crib evidence. Each exact replacement is listed; quoted,
+  negated, or cross-clause wording remains literal. The corrected draft is editable, can be restored
+  to the original transcript, and is never silently submitted.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
   semantic intent delta (`bed`, `desk`, internal `crib`, and clarification). Audience prompts use
   **baby bed**; `baby bed`, `baby-bed`, `baby cot`, and `crib` map to the stable

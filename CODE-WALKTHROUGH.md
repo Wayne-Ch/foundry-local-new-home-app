@@ -53,8 +53,8 @@ Put on screen:
   destruction, or window close and no partial forwarding to a replacement renderer;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
-- raw ASR retention in Developer trace plus the narrow, visible `queen size bag` and `creep`
-  suggestion layer before Send;
+- raw ASR retention in Developer trace plus a clause-local, visible exact-replacement layer for
+  high-confidence `queen size bag` and `creep` furniture phrases before Send;
 - Send transition to the exact edited submitted prompt and submitted/processing label;
 - explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
 

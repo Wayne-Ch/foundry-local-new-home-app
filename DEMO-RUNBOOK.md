@@ -53,10 +53,12 @@ In the app:
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, streaming PCM `ItemQueue`,
    and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
    produced; live revisions remain in the explicitly labeled draft panel.
-6. Select **Reset**, then load both models again. Reset intentionally unloads the audio model and
-   settles/disposes an active stream and deletes tracked Whisper fallback captures. If native work
-   exceeds the reset bound, the UI stays quarantined until automatic session replacement succeeds
-   or a later explicit Reset succeeds.
+6. Select **Reset**, then load both models again. Reset clears the editable/submitted prompt,
+   transcript trace, visible suggestion provenance, manual preview/drag state, and recording timers
+   before returning the renderer and main response to state v0. It intentionally unloads the audio
+   model, settles/disposes an active stream, and deletes tracked Whisper fallback captures. If native
+   work exceeds the reset bound, the UI stays quarantined until automatic session replacement
+   succeeds or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
 8. Run one focused real-microphone recovery gate with:
 
