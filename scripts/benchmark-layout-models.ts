@@ -199,7 +199,7 @@ function buildScenarios(): readonly ScenarioDefinition[] {
   });
   const afterC = authoredTurn(afterB.state, {
     bed: "queen",
-    desk: "flexible",
+    desk: "compact",
     crib: "add",
     changedPreference: stageTurns[2]?.prompt ?? "",
     clarification: "none",
@@ -212,7 +212,7 @@ function buildScenarios(): readonly ScenarioDefinition[] {
     clarification: "none",
   });
   const correctionPrompt =
-    "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.";
+    "Correction: keep the Queen bed and compact desk. Remove the baby bed. Do not switch to a King.";
   const afterCorrection = authoredTurn(afterFailure.state, {
     bed: "queen",
     desk: "compact",
@@ -265,7 +265,7 @@ function buildScenarios(): readonly ScenarioDefinition[] {
       state: afterB.state,
       expectedIntent: {
         bed: ["queen", "keep"],
-        desk: ["flexible"],
+        desk: ["compact"],
         crib: ["add"],
         clarification: ["none"],
       },
@@ -396,11 +396,41 @@ function buildScenarios(): readonly ScenarioDefinition[] {
     },
     {
       id: "paraphrase-crib-flexible-desk",
-      prompt: "Retain the queen, bring in the crib, and let the desk size adjust.",
+      prompt: "Retain the Queen, bring in a baby bed, and let the desk size adjust.",
       state: afterA.state,
       expectedIntent: {
         bed: ["queen", "keep"],
         desk: ["flexible"],
+        crib: ["add"],
+        clarification: ["none"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "feasible",
+      expectedSelectedOptionId: "queen-crib-compact-v1",
+      group: "paraphrase",
+    },
+    {
+      id: "paraphrase-baby-bed-hyphen",
+      prompt: "Keep the Queen bed, add a baby-bed, and use the compact desk.",
+      state: afterA.state,
+      expectedIntent: {
+        bed: ["queen", "keep"],
+        desk: ["compact"],
+        crib: ["add"],
+        clarification: ["none"],
+      },
+      expectedFurniture: ["bed-queen", "desk-compact", "crib-standard"],
+      expectedStatus: "feasible",
+      expectedSelectedOptionId: "queen-crib-compact-v1",
+      group: "paraphrase",
+    },
+    {
+      id: "paraphrase-baby-cot",
+      prompt: "Keep the Queen bed, add a baby cot, and use the compact desk.",
+      state: afterA.state,
+      expectedIntent: {
+        bed: ["queen", "keep"],
+        desk: ["compact"],
         crib: ["add"],
         clarification: ["none"],
       },
@@ -426,7 +456,7 @@ function buildScenarios(): readonly ScenarioDefinition[] {
     },
     {
       id: "paraphrase-from-king-to-queen",
-      prompt: "Move from King to Queen and keep the crib.",
+      prompt: "Move from King to Queen and keep the baby bed.",
       state: kingCompactCribState,
       expectedIntent: {
         bed: ["queen"],
@@ -441,7 +471,7 @@ function buildScenarios(): readonly ScenarioDefinition[] {
     },
     {
       id: "paraphrase-scoped-negation",
-      prompt: "Do not keep the King; use the Queen and do not remove the crib.",
+      prompt: "Do not keep the King; use the Queen and do not remove the baby bed.",
       state: kingCompactCribState,
       expectedIntent: {
         bed: ["queen"],

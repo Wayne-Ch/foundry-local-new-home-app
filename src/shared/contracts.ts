@@ -11,6 +11,7 @@ import type {
   AudioTranscriptionResult,
   PrepareAudioRequest,
 } from "../audio/audio-types";
+import type { ManualPlacementOutcome, ManualPlacementRequest } from "../domain/manual-placement";
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
@@ -33,6 +34,7 @@ export const ipcChannels = {
   authorizeMicrophone: "demo:authorize-microphone",
   transcribeAudio: "demo:transcribe-audio",
   runTurn: "demo:run-turn",
+  applyManualPlacement: "demo:apply-manual-placement",
   resetConversation: "demo:reset-conversation",
   progress: "demo:progress",
 } as const;
@@ -55,6 +57,7 @@ export interface TraceEntry {
     | "geometry"
     | "model-summary"
     | "application-response"
+    | "manual-placement"
     | "audio-transcription"
     | "runtime"
     | "error";
@@ -75,6 +78,8 @@ export interface BootstrapPayload {
   readonly readiness: RuntimeReadiness;
   readonly audioReadiness: AudioReadiness;
   readonly stageTurns: readonly StageTurnDefinition[];
+  readonly completedStageTurnIds: readonly StageTurnId[];
+  readonly lastInteraction: "turn" | "manual" | null;
   readonly selectedLayout: EvaluatedLayoutOption | null;
   readonly lastToolResult: LayoutToolResult | null;
   readonly messages: readonly ConversationMessage[];
@@ -90,10 +95,20 @@ export interface RunTurnResponse {
   readonly state: DemoStateSnapshot;
   readonly toolResult: LayoutToolResult | null;
   readonly selectedLayout: EvaluatedLayoutOption | null;
+  readonly completedStageTurnIds: readonly StageTurnId[];
+  readonly lastInteraction: "turn";
   readonly assistantText: string;
   readonly messages: readonly ConversationMessage[];
   readonly trace: readonly TraceEntry[];
   readonly readiness: RuntimeReadiness;
+}
+
+export interface ManualPlacementResponse {
+  readonly outcome: ManualPlacementOutcome;
+  readonly completedStageTurnIds: readonly StageTurnId[];
+  readonly lastInteraction: "turn" | "manual" | null;
+  readonly messages: readonly ConversationMessage[];
+  readonly trace: readonly TraceEntry[];
 }
 
 export interface ProgressEvent {
@@ -140,6 +155,7 @@ export interface DemoApi {
   finishAudioStream(request: AudioStreamFinishRequest): Promise<AudioTranscriptionResponse>;
   cancelAudioStream(request: AudioStreamCancelRequest): Promise<void>;
   runTurn(request: RunTurnRequest): Promise<RunTurnResponse>;
+  applyManualPlacement(request: ManualPlacementRequest): Promise<ManualPlacementResponse>;
   resetConversation(): Promise<BootstrapPayload>;
   onProgress(callback: (event: ProgressEvent) => void): () => void;
   onAudioPartial(callback: (event: AudioPartialTranscriptEvent) => void): () => void;

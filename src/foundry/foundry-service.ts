@@ -50,6 +50,7 @@ import {
 } from "../domain/tool-contract";
 import type {
   DemoStateSnapshot,
+  EvaluatedLayoutOption,
   LayoutToolResult,
   ModelIdentity,
   RuntimeReadiness,
@@ -1331,6 +1332,7 @@ export class FoundryLayoutService {
     userPrompt: string,
     state: DemoStateSnapshot,
     onPhase?: (phase: string, detail: string) => void,
+    currentAcceptedLayout: EvaluatedLayoutOption | null = null,
   ): Promise<FoundryTurnOutcome> {
     this.#assertRuntimeLifecycleAvailable();
     if (this.#turnPromise !== null) {
@@ -1341,11 +1343,13 @@ export class FoundryLayoutService {
 
     const generation = this.#layoutGeneration;
     let trackedPromise: Promise<FoundryTurnOutcome>;
-    trackedPromise = this.#runTurn(userPrompt, state, generation, onPhase).finally(() => {
-      if (this.#turnPromise === trackedPromise) {
-        this.#turnPromise = null;
-      }
-    });
+    trackedPromise = this.#runTurn(userPrompt, state, generation, onPhase, currentAcceptedLayout).finally(
+      () => {
+        if (this.#turnPromise === trackedPromise) {
+          this.#turnPromise = null;
+        }
+      },
+    );
     this.#turnPromise = trackedPromise;
     return trackedPromise;
   }
@@ -1355,6 +1359,7 @@ export class FoundryLayoutService {
     state: DemoStateSnapshot,
     generation: number,
     onPhase?: (phase: string, detail: string) => void,
+    currentAcceptedLayout: EvaluatedLayoutOption | null = null,
   ): Promise<FoundryTurnOutcome> {
     const turnStarted = performance.now();
     await this.initialize();
@@ -1588,7 +1593,7 @@ export class FoundryLayoutService {
     onPhase?.("geometry-running", "Running deterministic bounded geometry checks.");
     this.#assertLayoutOperationCurrent(generation);
     const geometryStarted = performance.now();
-    const toolResult = compareKnownLayoutOptions(validatedInput, state);
+    const toolResult = compareKnownLayoutOptions(validatedInput, state, currentAcceptedLayout);
     const geometryMs = performance.now() - geometryStarted;
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
     const assistantText = renderApplicationEvidence(toolResult);

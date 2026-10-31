@@ -1,6 +1,6 @@
 # Validation record
 
-**Date:** October 29, 2026
+**Date:** October 30, 2026
 
 **Platform:** Windows 11 Enterprise x64, build `10.0.26300`
 
@@ -30,22 +30,30 @@
 | Audio language | English |
 | Default audio path | AudioWorklet -> PCM16LE 16 kHz mono -> typed bounded chunks -> native `AudioSession` PCM `ItemQueue` |
 | Explicit fallback | `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
-| Audio submission policy | live partials are display-only; final transcript is editable; never auto-submit |
+| Audio submission policy | live partials are display-only; raw final transcript stays in trace; visible narrow suggestions produce an editable draft; never auto-submit |
 
 The compact contract moved exact IDs, state references, versions, units, retained objects, locked
 constraints, required checks, and unknown-term construction into application code. The model emits
-only semantic bed/desk/crib changes and clarification; the application preserves the exact submitted
-prompt as `changedPreference`. The runtime schema keeps every compact intent value available;
+only semantic bed/desk/internal-crib changes and clarification; the application preserves the exact
+submitted prompt as `changedPreference`. Audience prompts use **baby bed**. `baby bed`, `baby-bed`,
+`baby cot`, and technical `crib` map to stable `crib-standard`. The runtime schema keeps every compact
+intent value available;
 application validation handles directional transitions, scoped negation, ambiguity, retained state,
 and fail-closed furniture recognition. Exact `qwen3-0.6b-generic-gpu:2` remains the stage-validated
 built-in default after passing the corrected semantic gate.
+
+The October 30 UI adds an explicit Turn B recovery action, visible requirements and exact pair
+measurements, red/green SVG dimension callouts, and application-owned 50 mm-grid direct manipulation.
+Manual placement keeps model/tool history intact, reuses the same deterministic validator, rejects
+stale or invalid previews, and records separate provenance before creating a new accepted application
+layout version.
 
 ## Commands run
 
 ```powershell
 npm install --no-audit --no-fund
-npm install-scripts approve esbuild foundry-local-sdk
-npm rebuild esbuild foundry-local-sdk
+npm install-scripts approve electron esbuild foundry-local-sdk
+npm rebuild electron esbuild foundry-local-sdk
 npm run probe:foundry
 $env:LAYOUT_BENCHMARK_MODELS="qwen3-0.6b-generic-gpu:2"
 $env:LAYOUT_BENCHMARK_REQUIRED_MODELS="qwen3-0.6b-generic-gpu:2"
@@ -74,35 +82,42 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Unit tests | 15 files / 178 tests pass; Vitest reported 2.30 s |
+| Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json` |
+| Unit tests | 19 files / 552 tests pass; Vitest reported 1.22 s |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer-owner reload/close probe | Pass; both streams canceled, ownership session advanced, stale partial routing rejected, no uncaught exception or unhandled rejection |
 | Electron microphone permission probe | Pass |
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
-| Turn C Queen + crib + compact desk | Feasible |
-| King + desk + crib | No feasible bounded option |
+| Turn C Queen + baby bed + compact desk | Feasible; recovery prompt preserved exactly |
+| King + compact desk + baby bed | No feasible bounded option; east preview measures 70 / 250 mm and 170 / 250 mm |
+| Recovery action | Pass; visible choice enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
+| Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
+| Visible ASR suggestions | Pass; observed `queen size bag` and `creep` corrections are context-bounded, visible, editable, reversible, and negative-tested |
+| Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
+| Renderer interaction | Pass in browser preview; keyboard focus survived repeated SVG redraws, the semantic fieldset exposed placement controls, valid preview -> Apply created state v4 while Beat E remained pending, invalid 226 / 250 mm preview disabled Apply, and Revert restored the accepted layout |
+| Requirements / measurements | Pass; accepted and rejected exact-option measurements share the same evaluated option as checks/conflicts |
 | Adversarial negation/correction | Feasible Queen + compact desk |
 | Exact default model/EP enforced | Pass; integration asserts exact ID and canonical WebGPU EP |
 | Compact intent contract | Pass; model schema contains no IDs, state refs, dimensions, placements, fit, conflicts, or geometry verdict |
 | App-derived authority fields | Pass; exact IDs, versions, units, state ref, retained IDs, locked constraints, required checks, and unknowns are derived |
-| Candidate quality gate | Pass for required default; exact Qwen3 passed 16/16 independently authored scenarios |
+| Candidate quality gate | Pass for required default; exact Qwen3 passed 18/18 independently authored scenarios |
 | Negated transitions | Pass; prohibited bed/desk replacements preserve accepted items, punctuation scopes clauses, and ambiguous conjunctions require clarification without changing any slot |
 | Unsupported item | Pass; California King, twin/twin bed, moon pod, armchair, cabinet, bassinet, night stand, dresser, and likely action-object nouns force clarification while supported intent is preserved |
 | Stale/invented protections | Pass; stale state, invented IDs, and extra geometry/verdict fields are rejected |
-| Paraphrases | Pass; original three plus affirmative replace/from-to, scoped-negation correction, and negated bed/desk transitions |
+| Paraphrases | Pass; original cases plus affirmative replace/from-to, scoped-negation correction, negated bed/desk transitions, `baby-bed`, and `baby cot` |
 | Empty-cache preparation path | Pass; direct regression covers catalog lookup, model download, EP registration, and load |
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
-| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png` |
+| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 397,056 bytes |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
-| Nemotron timing | Cached prepare 3,100 ms; first partial 1,303 ms; stop-to-final 100 ms |
+| Nemotron timing | Cached prepare 6,102 ms; first partial 1,304 ms; stop-to-final 91 ms |
 | Real Whisper fallback integration | Exact English transcript; 100% key-word recall |
 | Whisper fallback model/EP | Exact `openai-whisper-tiny-generic-cpu:4` on CPU EP |
-| Whisper fallback timing | Cached prepare 1,807 ms; final transcription 211 ms |
+| Whisper fallback timing | Cached prepare 4,094 ms; final transcription 213 ms |
 | Failed audio-mode switching | Pass; requested mode is shown not ready while the previously working model remains loaded when target resolution fails |
 | Transcript submission state | Pass; the exact edited prompt becomes submitted/processing and never remains labeled `not sent` after Send |
 | Partial JSON execution gate | Pass; `finishReason: "length"` is retried/rolled back and never reaches geometry |
@@ -116,18 +131,19 @@ Final command outputs from the October 29 run:
 | Command | Result |
 |---|---|
 | `npm run probe:foundry` | Pass; exact selected default cached; exact task/device/EP/cache metadata recorded for all candidates |
-| `npm run benchmark:layout` | Pass; required Qwen3 default passed 16/16 in an isolated exact-model process |
-| `npm run lint` | 62 files checked |
+| `npm rebuild electron` | Pass after adding the exact Electron package to the approved install-script set |
+| `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18 in an isolated exact-model process |
+| `npm run lint` | 71 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 15 files / 178 tests; Vitest reported 2.30 s |
-| `npm run build` | Pass; 115 renderer modules |
+| `npm test` | 19 files / 552 tests; Vitest reported 1.22 s |
+| `npm run build` | Pass; 120 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:stream-owner` | Pass; real reload and close both cancel the captured renderer-owned stream |
 | `npm run probe:microphone-permission` | Pass, including its required rebuild |
-| `npm run capture:ui` | Pass; 388,975-byte labeled screenshot, including rebuild |
-| `npm run test:audio-integration` | Pass; 1,807 ms prepare, 211 ms transcription |
-| `npm run test:nemotron-integration` | Pass; 31 partials, 1,303 ms first partial, 100 ms stop-to-final |
-| `npm run test:integration` | Pass; eleven real Qwen3 turns including affirmative and negated transitions plus unsupported variants, 4.630–11.163 s |
+| `npm run capture:ui` | Pass; 397,056-byte labeled 16:9 screenshot, including rebuild |
+| `npm run test:audio-integration` | Pass; 4,094 ms prepare, 213 ms transcription |
+| `npm run test:nemotron-integration` | Pass; 31 partials, 1,304 ms first partial, 91 ms stop-to-final |
+| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.451–8.924 s |
 
 ## Layout latency profile
 
@@ -139,7 +155,7 @@ state references, retained objects, units, and clarification details.
 |---|---:|---:|---:|---:|---:|---:|---:|
 | A · Queen + desk | 1 | 23,945 ms | 4.722 ms | 23,955 ms | 748 | 210 | 1,043 / 1,812 / 697 |
 | B · King replacement | 2 | 36,029 ms | 1.066 ms | 36,037 ms | 1,285 | 198 | 1,310 / 1,758 / 653 |
-| C · Add crib | 2 | 25,789 ms | 0.698 ms | 25,795 ms | 1,820 | 212 | 1,355 / 1,754 / 700 |
+| C · Add baby bed | 2 | 25,789 ms | 0.698 ms | 25,795 ms | 1,820 | 212 | 1,355 / 1,754 / 700 |
 | Controlled failure | 2 | 27,797 ms | 0.558 ms | 27,806 ms | 2,378 | 223 | 1,369 / 1,773 / 729 |
 | Negation/correction | 2 | 38,882 ms | 0.721 ms | 38,893 ms | 2,943 | 219 | 1,367 / 1,769 / 721 |
 
@@ -154,7 +170,7 @@ model-selection evidence; the legacy comparison remains the measured contract-pa
 |---|---:|---:|---:|---:|---:|---:|---:|
 | A · Queen + desk | 2 | 7,697 ms | 15.180 ms | 7,718 ms | 922 | 113 | 1,163 / 1,141 / 195 |
 | B · King replacement | 2 | 6,332 ms | 1.904 ms | 6,338 ms | 1,509 | 98 | 986 / 1,107 / 156 |
-| C · Add crib | 2 | 7,934 ms | 1.716 ms | 7,941 ms | 2,100 | 117 | 1,177 / 1,147 / 200 |
+| C · Add baby bed | 2 | 7,934 ms | 1.716 ms | 7,941 ms | 2,100 | 117 | 1,177 / 1,147 / 200 |
 | Controlled failure | 2 | 9,456 ms | 5.241 ms | 9,467 ms | 2,736 | 120 | 1,107 / 1,147 / 199 |
 | Unambiguous correction | 1 | 5,283 ms | 1.323 ms | 5,288 ms | 1,613 | 59 | 524 / 1,150 / 205 |
 | Replace King with Queen | 2 | 11,155 ms | 2.413 ms | 11,162 ms | 3,656 | 91 | 937 / 1,090 / 143 |
@@ -164,22 +180,24 @@ model-selection evidence; the legacy comparison remains the measured contract-pa
 | Unsupported California King | 2 | 4,626 ms | 1.433 ms | 4,630 ms | 588 | 88 | 969 / 1,090 / 146 |
 | Unsupported twin + moon pod | 2 | 4,833 ms | 3.699 ms | 4,840 ms | 608 | 98 | 1,002 / 1,101 / 158 |
 
-The corrected real-app maximum is 11,162 ms, still a **71.3% reduction** from the 38,893 ms legacy
-maximum while preserving the compact semantic contract. The extra bounded attempt on several turns
-is now visible rather than hidden by prompt-preselected enums.
+The historical October 29 real-app maximum was 11,162 ms. The October 30 thirteen-turn integration
+with explicit recovery and baby-bed aliases measured 2,451–8,924 ms while preserving the compact
+semantic contract. The extra bounded attempt on several turns remains visible rather than hidden by
+prompt-preselected enums.
 
 ## Exact model benchmark
 
 The corrected benchmark kept all semantic enums unrestricted and used independently authored intent,
 candidate, status, and selection expectations. It covered A/B/C, controlled failure, correction,
-four unsupported-furniture clarifications, stale/invented protections, and seven paraphrases. The
+unsupported-furniture clarifications, negated transitions, and nine paraphrases including
+`baby-bed` and `baby cot`. The
 runner now exits nonzero when a required candidate or selected result fails; isolated rejected
 candidate evidence is still retained. The stage-validated built-in default remains selected when it
 passes the full gate.
 
 | Exact candidate | Task | Device / EP | Cached size | Load | Warm median / max | Attempts / failures | Peak process RSS | Result |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| `qwen3-0.6b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 529 MB | 3,608 ms | 6,022 / 9,944 ms | 30 / 0 | 9,974 MB | **Selected; required gate pass, 16/16** |
+| `qwen3-0.6b-generic-gpu:2` | `chat-completion` | GPU / WebGPU | 529 MB | 3,783 ms | 5,711 / 10,908 ms | 35 / 0 | 10,000 MB | **Selected; required gate pass, 18/18** |
 
 Peak RSS is whole-process mapped working-set evidence, not dedicated model or VRAM allocation. The
 other cached candidates were not rerun under this final corrected semantic gate, so prior quality
@@ -207,9 +225,9 @@ Catalog and measured comparison:
 
 | Candidate | Initial cache | Catalog size / device / EP | Measured load | Measured transcription |
 |---|---|---|---:|---:|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 1,807 ms current cached prepare | 211 ms, exact |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | 4,094 ms current cached prepare | 213 ms, exact |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | 1,441 ms | 362–427 ms, exact |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 3,100 ms current cached prepare | 31 live revisions; first 1,303 ms; final 100 ms after stop; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | 6,102 ms current cached prepare | 31 live revisions; first 1,304 ms; final 91 ms after stop; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached | 756 MB / CPU / CPU EP | Not run | Not run; multilingual/Chinese unclaimed |
 
 Nemotron English was downloaded once under the authorized under-1-GB policy and remains in the
@@ -229,13 +247,13 @@ Final real app-service Nemotron integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 3,100 ms, cached |
+| Prepare manager/catalog/model | 6,102 ms, cached |
 | Partial revisions | 31 |
-| First partial | “Can” at 1,303 ms |
+| First partial | “Can” at 1,304 ms |
 | Final transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door” |
 | Key-word recall | 7/7 (100%) |
-| Stop-to-final | 100 ms |
-| Total paced stream | 6,176 ms |
+| Stop-to-final | 91 ms |
+| Total paced stream | 6,083 ms |
 | Endpoint | in-process SDK only |
 
 Final real app-service Whisper fallback integration:
@@ -244,10 +262,10 @@ Final real app-service Whisper fallback integration:
 |---|---|
 | Fixture | `tests/fixtures/queen-desk.wav`, offline deterministic English, 177,006 bytes |
 | Duration | 5,530 ms |
-| Prepare manager/catalog/model | 1,807 ms, cached |
+| Prepare manager/catalog/model | 4,094 ms, cached |
 | Transcript | “Can a queen size bed and a desk fit here without blocking the closet or the door?” |
 | Key-word recall | 7/7 (100%) |
-| Transcription | 211 ms |
+| Transcription | 213 ms |
 | Temporary files | none before, none after |
 | Endpoint | in-process SDK only |
 
@@ -279,6 +297,8 @@ Final real app-service Whisper fallback integration:
 - Foundry Local reports that a minimal `ProcessInfo` event may still upload.
 - The network adapter was not disabled during development; the exact manual full-offline procedure
   is in `DEMO-RUNBOOK.md`.
+- The deterministic Nemotron/Whisper fixture remains the honest Queen + desk recording. It was not
+  regenerated or relabeled for this change.
 - Electron `webContents.capturePage()` returned `UnknownVizError` in this host. The actual Electron
   app was smoke-launched separately; the committed screenshot comes from the same renderer in an
   explicitly labeled browser preview.
@@ -289,7 +309,9 @@ Final real app-service Whisper fallback integration:
   performance are not validated.
 - A physical network-disconnect rehearsal still requires Wayne's manual adapter action.
 - Real microphone permission and human-spoken acceptance still require one Wayne interaction:
-  **Prepare Nemotron live -> Start recording -> speak the Queen + desk request while confirming
-  partial revisions -> Stop -> verify/edit final transcript -> Send**.
+  **Prepare Nemotron live -> Start recording -> say “Keep the Queen bed. Add a baby bed. Use a
+  compact desk. Keep the closet clear.” -> confirm partial revisions -> Stop -> verify the raw trace,
+  visible suggestion label if present, and editable draft -> Send -> confirm
+  `queen-crib-compact-v1`**.
 - The local CLI is `0.11.0` while current public CLI is `0.12.1 Preview`; the app does not depend on
   the CLI.

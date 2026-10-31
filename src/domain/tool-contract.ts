@@ -207,7 +207,7 @@ export const layoutIntentDeltaJsonSchema = {
       type: "string",
       enum: cribIntentValues,
       description:
-        "Use add when the request adds or brings in a crib, remove when it removes one, and keep when unmentioned, retained, or explicitly not removed.",
+        "Use add when the request adds or brings in a baby bed/crib, remove when it removes one, and keep when unmentioned, retained, or explicitly not removed.",
     },
     clarification: {
       type: "string",
@@ -229,7 +229,7 @@ export function createIntentDeltaJsonSchema(
 const supportedFurniturePatterns = [
   /^queen(?:[-\s]?size(?:d)?)?(?:\s+bed)?$/,
   /^king(?:[-\s]?size(?:d)?)?(?:\s+bed)?$/,
-  /^(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?|compact|small|smaller|flexible)?\s*(?:desk|workstation)$/,
+  /^(?:standard|regular(?:[-\s]?size(?:d)?)?|full[-\s]?size(?:d)?|compact|small|smaller|flexible)?\s*(?:desk|workstation)(?:\s+if\s+needed)?$/,
   /^crib$/,
 ] as const;
 
@@ -500,13 +500,16 @@ const tableIndirectObjectPattern =
 const tableDimensionPattern = /\b\d+(?:\.\d+)?\s*(?:mm|cm|m|inch|inches|ft|foot|feet)\b/;
 
 function normalizePromptText(value: string): string {
-  return value
+  const normalized = value
     .toLowerCase()
     .replaceAll(/[’‘]/g, "'")
     .replaceAll(/[–—]/g, "-")
     .replaceAll(/[()[\]{}]/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
+  return normalized
+    .replaceAll(/\bbaby(?:[-\s]+|'s\s+)(?:bed|cot)\b/g, "crib")
+    .replaceAll(/\b(?:a\s+)?cot\s+for\s+(?:the\s+)?baby\b/g, "crib");
 }
 
 interface TableReferenceContext {

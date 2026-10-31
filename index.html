@@ -52,6 +52,16 @@
 
           <div id="messages" class="messages" aria-live="polite"></div>
 
+          <section id="recoveryActions" class="recovery-actions" hidden aria-live="polite">
+            <div>
+              <strong>Choose the changed preference</strong>
+              <span>Keep Queen; allow a compact desk; add a baby bed. Door, closet, window, and 250 mm clearance stay locked.</span>
+            </div>
+            <button id="recoveryPrimaryButton" class="button button-primary" type="button">
+              Run recovery choice
+            </button>
+          </section>
+
           <form id="promptForm" class="prompt-form">
             <div class="prompt-heading-row">
               <label for="promptInput">Manual prompt</label>
@@ -98,6 +108,15 @@
               <strong id="liveTranscriptLabel">Live draft — not sent</strong>
               <span id="liveTranscriptText"></span>
             </div>
+            <div id="speechSuggestionPanel" class="speech-suggestion-panel" hidden>
+              <div>
+                <strong>Speech suggestion applied — review before Send</strong>
+                <span id="speechSuggestionText"></span>
+              </div>
+              <button id="speechUseOriginalButton" class="button button-ghost" type="button">
+                Use original transcript
+              </button>
+            </div>
             <p class="input-note">
               Every submitted turn uses the existing validated text pipeline. No cloud fallback.
             </p>
@@ -114,24 +133,48 @@
           </div>
 
           <div class="layout-content">
-            <div class="room-card">
+            <fieldset
+              class="room-card"
+              aria-label="Interactive bedroom layout diagram. Accepted furniture can be adjusted with arrow keys."
+            >
               <svg
                 id="roomSvg"
                 class="room-svg"
                 viewBox="-180 -260 4560 4140"
-                role="img"
-                aria-label="Bedroom layout diagram"
-              ></svg>
+              >
+                <title>Interactive bedroom layout</title>
+              </svg>
               <div id="layoutNotice" class="layout-notice">
                 Verified dimensions only. Select the first scripted turn to begin.
               </div>
-            </div>
+            </fieldset>
 
             <aside class="evidence-column">
               <div class="evidence-card">
                 <p class="evidence-label">Deterministic verdict</p>
                 <h3 id="verdictTitle">No layout evaluated</h3>
                 <p id="verdictSummary">The model has not proposed a tool call yet.</p>
+              </div>
+
+              <div class="evidence-card requirements-card">
+                <p class="evidence-label">Requirements / Measurements</p>
+                <div id="requirementSummary" class="requirement-summary"></div>
+                <div id="measurementList" class="measurement-list"></div>
+              </div>
+
+              <div id="manualPlacementCard" class="evidence-card manual-placement-card">
+                <p class="evidence-label">D · App-owned manual adjustment</p>
+                <p id="manualPlacementStatus">
+                  Drag accepted furniture, or focus it and use the arrow keys. Movement snaps to a 50 mm grid.
+                </p>
+                <div class="manual-placement-actions">
+                  <button id="manualApplyButton" class="button button-primary" type="button" disabled>
+                    Apply
+                  </button>
+                  <button id="manualRevertButton" class="button button-ghost" type="button" disabled>
+                    Revert
+                  </button>
+                </div>
               </div>
 
               <div class="evidence-card">
@@ -149,7 +192,7 @@
               <div class="legend">
                 <span><i class="legend-swatch bed"></i> Bed</span>
                 <span><i class="legend-swatch desk"></i> Desk</span>
-                <span><i class="legend-swatch crib"></i> Crib</span>
+                <span><i class="legend-swatch crib"></i> Baby bed</span>
                 <span><i class="legend-swatch reserved"></i> Reserved zone</span>
               </div>
             </aside>

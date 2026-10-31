@@ -75,6 +75,54 @@ describe("deterministic geometry fixtures", () => {
         .some((conflict) => conflict.code === "FURNITURE_CLEARANCE"),
     ).toBe(true);
   });
+
+  it("reports exact accepted and rejected furniture clearance measurements", () => {
+    const accepted = evaluateLayoutOption(
+      option("queen-crib-compact-v1"),
+      roomPlan,
+      furnitureCatalog,
+      clearanceRuleSet,
+    );
+    expect(accepted.measurements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          labels: ["Queen bed", "Compact desk"],
+          actualDistanceMm: 476,
+          requiredDistanceMm: 250,
+          passed: true,
+        }),
+        expect.objectContaining({
+          labels: ["Queen bed", "Baby bed"],
+          actualDistanceMm: 576,
+          requiredDistanceMm: 250,
+          passed: true,
+        }),
+      ]),
+    );
+
+    const rejected = evaluateLayoutOption(
+      option("king-crib-compact-east-v1"),
+      roomPlan,
+      furnitureCatalog,
+      clearanceRuleSet,
+    );
+    expect(rejected.measurements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          labels: ["King bed", "Compact desk"],
+          actualDistanceMm: 70,
+          requiredDistanceMm: 250,
+          passed: false,
+        }),
+        expect.objectContaining({
+          labels: ["King bed", "Baby bed"],
+          actualDistanceMm: 170,
+          requiredDistanceMm: 250,
+          passed: false,
+        }),
+      ]),
+    );
+  });
 });
 
 describe("geometry boundaries", () => {

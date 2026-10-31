@@ -13,8 +13,8 @@ export const CLEARANCE_RULE_SET_ID = "ignite-demo-clearance";
 export const CLEARANCE_RULE_SET_VERSION = "1.0.0";
 export const LOCKED_CONSTRAINT_SET_ID = "verified-bedroom-locks-v1";
 export const REQUIRED_ROOM_STATE_SET_ID = "all-required-room-states-v1";
-export const FURNITURE_CATALOG_VERSION = "2026-10-27.1";
-export const GEOMETRY_ENGINE_VERSION = "1.0.0";
+export const FURNITURE_CATALOG_VERSION = "2026-10-30.1";
+export const GEOMETRY_ENGINE_VERSION = "1.1.0";
 
 export const lockedConstraints: LockedConstraints = {
   verifiedMeasurementsOnly: true,
@@ -119,7 +119,7 @@ export const furnitureCatalog: Readonly<Record<FurnitureId, FurnitureDefinition>
   },
   "crib-standard": {
     id: "crib-standard",
-    label: "Crib footprint",
+    label: "Baby bed",
     category: "crib",
     widthMm: 1320,
     depthMm: 740,
@@ -175,9 +175,9 @@ export const knownLayoutOptions: readonly LayoutOption[] = [
   },
   {
     id: "queen-crib-compact-v1",
-    label: "Queen + crib + rotated compact desk",
+    label: "Queen + baby bed + rotated compact desk",
     furnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
-    rationale: "The compact rotated desk preserves the Queen bed and opens a verified crib footprint.",
+    rationale: "The compact rotated desk preserves the Queen bed and opens a verified baby-bed footprint.",
     placements: [
       {
         instanceId: "bed-main",
@@ -206,7 +206,7 @@ export const knownLayoutOptions: readonly LayoutOption[] = [
     id: "queen-compact-desk-v1",
     label: "Queen + compact desk",
     furnitureIds: ["bed-queen", "desk-compact"],
-    rationale: "Retains the revised compact desk after removing the crib.",
+    rationale: "Retains the revised compact desk after removing the baby bed.",
     placements: [
       {
         instanceId: "bed-main",
@@ -226,7 +226,7 @@ export const knownLayoutOptions: readonly LayoutOption[] = [
   },
   {
     id: "king-crib-compact-east-v1",
-    label: "King + crib + compact desk (east)",
+    label: "King + baby bed + compact desk (east)",
     furnitureIds: ["bed-king", "desk-compact", "crib-standard"],
     rationale: "The King footprint removes the required furniture gaps in the known east-side arrangement.",
     placements: [
@@ -255,7 +255,7 @@ export const knownLayoutOptions: readonly LayoutOption[] = [
   },
   {
     id: "king-crib-compact-south-v1",
-    label: "King + crib + compact desk (south)",
+    label: "King + baby bed + compact desk (south)",
     furnitureIds: ["bed-king", "desk-compact", "crib-standard"],
     rationale: "Moving the desk south enters the door swing and still misses required furniture clearance.",
     placements: [

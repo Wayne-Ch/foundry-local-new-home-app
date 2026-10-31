@@ -16,12 +16,22 @@ import {
   type AudioRecorderState,
   type LiveTranscriptDraft,
 } from "../audio/audio-types";
+import { clearanceRuleSet, furnitureCatalog } from "../domain/fixture";
+import { rectangleSeparation } from "../domain/geometry";
+import {
+  evaluateManualPlacement,
+  type ManualPlacementOutcome,
+  type ManualPlacementRequest,
+} from "../domain/manual-placement";
 import type {
   CheckedRoomState,
+  DemoState,
   EvaluatedLayoutOption,
   LayoutConflict,
   LayoutToolResult,
+  Point,
   Rectangle,
+  ResolvedPlacement,
   RuntimeReadiness,
 } from "../domain/types";
 import type {
@@ -43,6 +53,11 @@ import {
 } from "./audio-capture";
 import { createLayoutPresentation } from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
+import {
+  clientPointToRoomPoint,
+  keyboardPlacementOrigin,
+  snappedPlacementOrigin,
+} from "./placement-interaction";
 import { createPreviewApi } from "./preview-api";
 import {
   beginAudioModePreparation,
@@ -52,6 +67,7 @@ import {
   submitTranscriptDraft,
 } from "./renderer-lifecycle";
 import { runtimeBadgeLabel } from "./runtime-presentation";
+import { applySpeechCorrectionSuggestions, type SpeechCorrectionResult } from "./speech-correction";
 import "./styles.css";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -76,6 +92,22 @@ const operationBarrier = new RendererOperationBarrier();
 const audioPreparation = new SingleFlightOperation();
 let audioOperationId = 0;
 let resetRecoveryMonitor: Promise<void> | null = null;
+let manualPreview: ManualPlacementOutcome | null = null;
+let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
+let speechCorrection:
+  | (SpeechCorrectionResult & {
+      readonly originalDraftValue: string;
+      readonly correctedDraftValue: string;
+    })
+  | null = null;
+
+interface PlacementDragState {
+  readonly pointerId: number;
+  readonly instanceId: string;
+  readonly grabOffset: Point;
+}
+
+let placementDrag: PlacementDragState | null = null;
 
 const runtimeBadge = requiredElement("runtimeBadge");
 const runtimeLabel = requiredElement("runtimeLabel");
@@ -91,10 +123,15 @@ const recordingTimer = requiredElement("recordingTimer");
 const liveTranscriptPanel = requiredElement("liveTranscriptPanel");
 const liveTranscriptLabel = requiredElement("liveTranscriptLabel");
 const liveTranscriptText = requiredElement("liveTranscriptText");
+const speechSuggestionPanel = requiredElement("speechSuggestionPanel");
+const speechSuggestionText = requiredElement("speechSuggestionText");
+const speechUseOriginalButton = requiredButton("speechUseOriginalButton");
 const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
 const nextTurnButton = requiredButton("nextTurnButton");
+const recoveryActions = requiredElement("recoveryActions");
+const recoveryPrimaryButton = requiredButton("recoveryPrimaryButton");
 const messagesElement = requiredElement("messages");
 const promptForm = requiredForm("promptForm");
 const promptInput = requiredTextArea("promptInput");
@@ -107,6 +144,12 @@ const layoutNotice = requiredElement("layoutNotice");
 const roomSvg = requiredSvg("roomSvg");
 const verdictTitle = requiredElement("verdictTitle");
 const verdictSummary = requiredElement("verdictSummary");
+const requirementSummary = requiredElement("requirementSummary");
+const measurementList = requiredElement("measurementList");
+const manualPlacementCard = requiredElement("manualPlacementCard");
+const manualPlacementStatus = requiredElement("manualPlacementStatus");
+const manualApplyButton = requiredButton("manualApplyButton");
+const manualRevertButton = requiredButton("manualRevertButton");
 const checksLabel = requiredElement("checksLabel");
 const constraintChecks = requiredElement("constraintChecks");
 const conflictsLabel = requiredElement("conflictsLabel");
@@ -290,6 +333,9 @@ resetButton.addEventListener("click", async () => {
     }
     viewState = bootstrap;
     latestToolResult = null;
+    manualPreview = null;
+    manualPreviewOrigin = null;
+    speechCorrection = null;
     audioNotice = "Editable draft only; click Send to submit.";
     renderAll();
   } catch (error) {
@@ -321,11 +367,55 @@ resetButton.addEventListener("click", async () => {
 });
 
 nextTurnButton.addEventListener("click", () => {
-  const index = Math.min(viewState.state.version, viewState.stageTurns.length - 1);
+  const index = nextStageTurnIndex();
   const turn = viewState.stageTurns[index];
   if (turn !== undefined) {
     void runTurn(turn.prompt, turn.id);
   }
+});
+
+recoveryPrimaryButton.addEventListener("click", () => {
+  const recoveryTurn = viewState.stageTurns.find((turn) => turn.id === "turn-c");
+  if (recoveryTurn !== undefined) {
+    void runTurn(recoveryTurn.prompt, recoveryTurn.id);
+  }
+});
+
+speechUseOriginalButton.addEventListener("click", () => {
+  if (speechCorrection === null) {
+    return;
+  }
+  promptInput.value = speechCorrection.originalDraftValue;
+  promptInput.focus();
+  speechCorrection = null;
+  renderSpeechSuggestion();
+});
+
+promptInput.addEventListener("input", () => {
+  if (speechCorrection !== null && promptInput.value !== speechCorrection.correctedDraftValue) {
+    speechCorrection = null;
+    renderSpeechSuggestion();
+  }
+});
+
+manualApplyButton.addEventListener("click", () => {
+  void applyManualPreview();
+});
+
+manualRevertButton.addEventListener("click", () => {
+  revertManualPreview();
+});
+
+roomSvg.addEventListener("pointermove", (event) => {
+  updatePlacementDrag(event);
+});
+
+roomSvg.addEventListener("pointerup", (event) => {
+  finishPlacementDrag(event);
+});
+
+roomSvg.addEventListener("pointercancel", (event) => {
+  finishPlacementDrag(event);
 });
 
 promptForm.addEventListener("submit", (event) => {
@@ -348,6 +438,7 @@ promptForm.addEventListener("submit", (event) => {
   if (transcriptSubmission.notice !== null) {
     audioNotice = transcriptSubmission.notice;
   }
+  speechCorrection = null;
   promptInput.value = "";
   void runTurn(prompt);
 });
@@ -362,6 +453,8 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     return;
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
+  manualPreview = null;
+  manualPreviewOrigin = null;
   setBusy(true);
   try {
     if (demoApi === null) {
@@ -396,6 +489,8 @@ function applyTurnResponse(response: RunTurnResponse): void {
     ...viewState,
     state: response.state,
     selectedLayout: response.selectedLayout,
+    completedStageTurnIds: response.completedStageTurnIds,
+    lastInteraction: response.lastInteraction,
     messages: response.messages,
     trace: response.trace,
     readiness: response.readiness,
@@ -408,19 +503,22 @@ function renderAll(): void {
   renderAudio();
   renderStageSteps(viewState.stageTurns);
   renderMessages(viewState.messages);
+  renderRecoveryActions();
   renderLayout();
+  renderSpeechSuggestion();
   renderTrace();
   turnCounter.textContent = `State v${viewState.state.version}`;
-  const nextIndex = viewState.state.version;
+  const nextIndex = nextStageTurnIndex();
   nextTurnButton.textContent =
-    nextIndex < viewState.stageTurns.length
+    nextIndex >= 0
       ? `Run next: ${viewState.stageTurns[nextIndex]?.label ?? "scripted turn"}`
       : "Scripted story complete";
   nextTurnButton.disabled =
-    isBusy ||
-    operationBarrier.operationsBlocked ||
-    !viewState.readiness.localInferenceReady ||
-    nextIndex >= viewState.stageTurns.length;
+    isBusy || operationBarrier.operationsBlocked || !viewState.readiness.localInferenceReady || nextIndex < 0;
+}
+
+function nextStageTurnIndex(): number {
+  return viewState.stageTurns.findIndex((turn) => !viewState.completedStageTurnIds.includes(turn.id));
 }
 
 function renderRuntime(readiness: RuntimeReadiness): void {
@@ -545,13 +643,14 @@ function renderAudio(): void {
 
 function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
   stageSteps.replaceChildren();
+  const nextIndex = nextStageTurnIndex();
   turns.forEach((turn, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "stage-step";
-    if (index < viewState.state.version) {
+    if (viewState.completedStageTurnIds.includes(turn.id)) {
       button.classList.add("is-complete");
-    } else if (index === viewState.state.version) {
+    } else if (index === nextIndex) {
       button.classList.add("is-current");
     }
     button.innerHTML = `<span>${index + 1}</span><strong>${escapeHtml(turn.label)}</strong>`;
@@ -587,23 +686,98 @@ function renderMessages(messages: readonly ConversationMessage[]): void {
   messagesElement.scrollTop = messagesElement.scrollHeight;
 }
 
-function renderLayout(): void {
-  const presentation = createLayoutPresentation(latestToolResult, viewState.selectedLayout);
-  renderRoomSvg(presentation.displayLayout, presentation.conflicts);
-  resultBadge.className = presentation.resultBadgeClass;
-  resultBadge.textContent = presentation.resultBadgeText;
-  layoutTitle.textContent = presentation.layoutTitle;
-  layoutNotice.textContent = presentation.layoutNotice;
-  verdictTitle.textContent = presentation.verdictTitle;
-  verdictSummary.textContent = latestToolResult?.summary ?? "The model has not proposed a tool call yet.";
-  checksLabel.textContent = presentation.checksLabel;
-  conflictsLabel.textContent = presentation.conflictsLabel;
-  renderChecks(presentation.checks);
-  renderConflicts(presentation.conflicts);
+function renderRecoveryActions(): void {
+  const recoveryPending =
+    latestToolResult?.status === "no_feasible_option" &&
+    viewState.completedStageTurnIds.includes("turn-b") &&
+    !viewState.completedStageTurnIds.includes("turn-c");
+  recoveryActions.hidden = !recoveryPending;
+  recoveryPrimaryButton.disabled =
+    !recoveryPending ||
+    isBusy ||
+    isAudioBusy() ||
+    operationBarrier.operationsBlocked ||
+    !viewState.readiness.localInferenceReady;
 }
 
-function renderRoomSvg(layout: EvaluatedLayoutOption | null, conflicts: readonly LayoutConflict[]): void {
+function renderSpeechSuggestion(): void {
+  speechSuggestionPanel.hidden = speechCorrection === null;
+  if (speechCorrection === null) {
+    speechSuggestionText.textContent = "";
+    return;
+  }
+  speechSuggestionText.textContent = speechCorrection.corrections
+    .map((correction) => `“${correction.original}” → “${correction.replacement}”`)
+    .join(" · ");
+}
+
+function renderLayout(): void {
+  const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout);
+  let displayLayout = base.displayLayout;
+  let displayConflicts = base.conflicts;
+  let displayChecks = base.checks;
+  let badgeClass = base.resultBadgeClass;
+  let badgeText = base.resultBadgeText;
+  let title = base.layoutTitle;
+  let notice = base.layoutNotice;
+  let verdict = base.verdictTitle;
+  let summary = latestToolResult?.summary ?? "The model has not proposed a tool call yet.";
+  let displayChecksLabel = base.checksLabel;
+  let displayConflictsLabel = base.conflictsLabel;
+
+  if (manualPreview?.preview !== null && manualPreview?.preview !== undefined) {
+    displayLayout = manualPreview.preview;
+    displayConflicts = manualPreview.preview.conflicts;
+    displayChecks = manualPreview.preview.checkedStates;
+    badgeClass = manualPreview.accepted ? "result-badge is-success" : "result-badge is-error";
+    badgeText = manualPreview.accepted ? "Valid manual preview" : "Rejected manual preview";
+    title = `${manualPreview.preview.label} · ${manualPreview.accepted ? "ready to apply" : "rejected"}`;
+    notice = manualPreview.accepted
+      ? "App-owned preview passes every locked check. Apply creates a new accepted application layout version; Revert preserves the prior layout."
+      : "App-owned preview failed deterministic validation and has not replaced the accepted layout. Revert to discard it.";
+    verdict = manualPreview.accepted ? "Manual placement is valid" : "Manual placement rejected";
+    summary = manualPreview.reason;
+    displayChecksLabel = "Manual preview checks";
+    displayConflictsLabel = "Manual preview conflicts";
+  } else if (viewState.lastInteraction === "manual" && viewState.selectedLayout !== null) {
+    displayLayout = viewState.selectedLayout;
+    displayConflicts = viewState.selectedLayout.conflicts;
+    displayChecks = viewState.selectedLayout.checkedStates;
+    badgeClass = "result-badge is-success";
+    badgeText = "Manual adjustment accepted";
+    title = viewState.selectedLayout.label;
+    notice =
+      "This accepted layout version came from app-owned direct manipulation and was revalidated without model-generated geometry.";
+    verdict = "All locked checks pass";
+    summary = viewState.state.lastChangedPreference ?? "Manual placement accepted.";
+    displayChecksLabel = "Accepted manual checks";
+    displayConflictsLabel = "Accepted manual conflicts";
+  }
+
+  renderRoomSvg(displayLayout, displayConflicts, manualPreview !== null);
+  resultBadge.className = badgeClass;
+  resultBadge.textContent = badgeText;
+  layoutTitle.textContent = title;
+  layoutNotice.textContent = notice;
+  verdictTitle.textContent = verdict;
+  verdictSummary.textContent = summary;
+  checksLabel.textContent = displayChecksLabel;
+  conflictsLabel.textContent = displayConflictsLabel;
+  renderRequirements(displayLayout);
+  renderManualPlacement();
+  renderChecks(displayChecks);
+  renderConflicts(displayConflicts);
+}
+
+function renderRoomSvg(
+  layout: EvaluatedLayoutOption | null,
+  conflicts: readonly LayoutConflict[],
+  isManualPreview: boolean,
+): void {
   roomSvg.replaceChildren();
+  const title = svgElement("title");
+  title.textContent = "Interactive bedroom layout";
+  roomSvg.append(title);
   const defs = svgElement("defs");
   const pattern = svgElement("pattern", {
     id: "reservedPattern",
@@ -639,16 +813,24 @@ function renderRoomSvg(layout: EvaluatedLayoutOption | null, conflicts: readonly
     }),
   );
 
+  const conflictZoneIds = new Set(
+    conflicts.flatMap((conflict) => (conflict.zoneId === undefined ? [] : [conflict.zoneId])),
+  );
   for (const zone of viewState.roomPlan.reservedZones) {
+    const conflicted = conflictZoneIds.has(zone.id);
     roomSvg.append(
       svgElement("rect", {
         x: String(zone.rect.xMm),
         y: String(zone.rect.yMm),
         width: String(zone.rect.widthMm),
         height: String(zone.rect.depthMm),
-        fill: zone.kind === "closet-access" ? "url(#reservedPattern)" : "#2D9CDB33",
-        stroke: zone.kind === "closet-access" ? "#F5A524" : "#56CCF2",
-        "stroke-width": "24",
+        fill: conflicted
+          ? "#D92D3B66"
+          : zone.kind === "closet-access"
+            ? "url(#reservedPattern)"
+            : "#2D9CDB33",
+        stroke: conflicted ? "#FF4054" : zone.kind === "closet-access" ? "#F5A524" : "#56CCF2",
+        "stroke-width": conflicted ? "34" : "24",
         "stroke-dasharray": "45 28",
       }),
     );
@@ -660,32 +842,71 @@ function renderRoomSvg(layout: EvaluatedLayoutOption | null, conflicts: readonly
     );
   }
 
+  const doorConflicted = conflictZoneIds.has(viewState.roomPlan.doorSwing.id);
   roomSvg.append(
     svgElement("path", {
       d: "M 0 3600 L 0 2700 A 900 900 0 0 1 900 3600 Z",
-      fill: "#EB575733",
-      stroke: "#EB5757",
-      "stroke-width": "24",
+      fill: doorConflicted ? "#D92D3B66" : "#EB575733",
+      stroke: doorConflicted ? "#FF4054" : "#EB5757",
+      "stroke-width": doorConflicted ? "34" : "24",
       "stroke-dasharray": "40 25",
     }),
   );
   appendSvgLabel("Door swing", 430, 3290, "#FFD6D6");
 
+  renderSvgMeasurements(layout);
+
+  if (isManualPreview && manualPreviewOrigin !== null) {
+    roomSvg.append(
+      svgElement("rect", {
+        x: String(manualPreviewOrigin.rect.xMm),
+        y: String(manualPreviewOrigin.rect.yMm),
+        width: String(manualPreviewOrigin.rect.widthMm),
+        height: String(manualPreviewOrigin.rect.depthMm),
+        rx: "38",
+        fill: "#6EA8FE1A",
+        stroke: "#6EA8FE",
+        "stroke-width": "18",
+        "stroke-dasharray": "35 24",
+        "pointer-events": "none",
+      }),
+    );
+  }
+
   const conflictObjects = new Set(conflicts.flatMap((conflict) => conflict.objectIds));
   for (const placement of layout?.placements ?? []) {
     const conflicted = conflictObjects.has(placement.instanceId);
-    roomSvg.append(
-      svgElement("rect", {
-        x: String(placement.rect.xMm),
-        y: String(placement.rect.yMm),
-        width: String(placement.rect.widthMm),
-        height: String(placement.rect.depthMm),
-        rx: "38",
-        fill: conflicted ? "#D92D3B99" : placement.color,
-        stroke: conflicted ? "#FF4054" : "#F8FAFC",
-        "stroke-width": conflicted ? "34" : "22",
-      }),
-    );
+    const placementRect = svgElement("rect", {
+      x: String(placement.rect.xMm),
+      y: String(placement.rect.yMm),
+      width: String(placement.rect.widthMm),
+      height: String(placement.rect.depthMm),
+      rx: "38",
+      fill: conflicted ? "#D92D3B99" : placement.color,
+      stroke: conflicted ? "#FF4054" : "#F8FAFC",
+      "stroke-width": conflicted ? "34" : "22",
+      opacity: isManualPreview ? "0.82" : "1",
+    });
+    if (placementIsAdjustable(layout, placement)) {
+      placementRect.classList.add("draggable-placement");
+      if (placementDrag?.instanceId === placement.instanceId) {
+        placementRect.classList.add("is-dragging");
+      }
+      placementRect.setAttribute("tabindex", "0");
+      placementRect.setAttribute("role", "button");
+      placementRect.setAttribute("data-placement-id", placement.instanceId);
+      placementRect.setAttribute(
+        "aria-label",
+        `${placement.label}, draggable. Use arrow keys for ${50} millimetre adjustments.`,
+      );
+      placementRect.addEventListener("pointerdown", (event) => {
+        beginPlacementDrag(event, placement);
+      });
+      placementRect.addEventListener("keydown", (event) => {
+        handlePlacementKey(event, placement);
+      });
+    }
+    roomSvg.append(placementRect);
     appendSvgLabel(
       `${placement.label}\n${placement.rect.widthMm} x ${placement.rect.depthMm} mm`,
       placement.rect.xMm + placement.rect.widthMm / 2,
@@ -706,6 +927,372 @@ function renderRoomSvg(layout: EvaluatedLayoutOption | null, conflicts: readonly
   });
   depth.textContent = `${viewState.roomPlan.depthMm} mm`;
   roomSvg.append(depth);
+}
+
+function renderSvgMeasurements(layout: EvaluatedLayoutOption | null): void {
+  if (layout === null) {
+    return;
+  }
+  const placements = new Map(layout.placements.map((placement) => [placement.instanceId, placement]));
+  for (const measurement of layout.measurements) {
+    const left = placements.get(measurement.objectIds[0]);
+    const right = placements.get(measurement.objectIds[1]);
+    if (left === undefined || right === undefined) {
+      continue;
+    }
+    const separation = rectangleSeparation(left.rect, right.rect);
+    let from = separation.from;
+    let to = separation.to;
+    if (from.xMm === to.xMm && from.yMm === to.yMm) {
+      from = placementCenter(left);
+      to = placementCenter(right);
+    }
+    const color = measurement.passed ? "#35C68A" : "#FF5263";
+    roomSvg.append(
+      svgElement("line", {
+        x1: String(from.xMm),
+        y1: String(from.yMm),
+        x2: String(to.xMm),
+        y2: String(to.yMm),
+        stroke: color,
+        "stroke-width": measurement.passed ? "16" : "28",
+        "stroke-dasharray": measurement.passed ? "24 18" : "none",
+      }),
+    );
+    for (const point of [from, to]) {
+      roomSvg.append(
+        svgElement("circle", {
+          cx: String(point.xMm),
+          cy: String(point.yMm),
+          r: measurement.passed ? "24" : "32",
+          fill: color,
+        }),
+      );
+    }
+    const shortfall = Math.max(0, measurement.requiredDistanceMm - measurement.actualDistanceMm);
+    appendSvgCallout(
+      `${measurement.actualDistanceMm} / ${measurement.requiredDistanceMm} mm${
+        shortfall > 0 ? ` · ${shortfall} short` : ""
+      }`,
+      (from.xMm + to.xMm) / 2,
+      (from.yMm + to.yMm) / 2 - 46,
+      color,
+    );
+  }
+}
+
+function placementCenter(placement: ResolvedPlacement): Point {
+  return {
+    xMm: placement.rect.xMm + placement.rect.widthMm / 2,
+    yMm: placement.rect.yMm + placement.rect.depthMm / 2,
+  };
+}
+
+function renderRequirements(layout: EvaluatedLayoutOption | null): void {
+  requirementSummary.replaceChildren();
+  const acceptedFurniture = viewState.state.activeFurnitureIds
+    .map((id) => furnitureCatalog[id].label)
+    .join(", ");
+  const displayFurniture = layout?.placements.map((placement) => placement.label).join(", ") ?? "None";
+  const closet = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "closet-access");
+  const windowZone = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
+  const requirements = [
+    `<strong>Furniture clearance:</strong> ${clearanceRuleSet.minimumFurnitureGapMm} mm minimum`,
+    `<strong>Door swing:</strong> keep ${viewState.roomPlan.doorSwing.radiusMm} mm verified swing clear`,
+    `<strong>Closet access:</strong> keep ${closet?.rect.widthMm ?? 0} x ${closet?.rect.depthMm ?? 0} mm zone clear`,
+    `<strong>Window clearance:</strong> keep ${windowZone?.rect.widthMm ?? 0} x ${windowZone?.rect.depthMm ?? 0} mm zone clear`,
+    `<strong>Accepted state:</strong> ${escapeHtml(acceptedFurniture || "No furniture accepted yet")}`,
+    `<strong>${layout?.status === "rejected" ? "Preview" : "Displayed"} furniture:</strong> ${escapeHtml(displayFurniture)}`,
+  ];
+  const changedPreference =
+    viewState.lastInteraction === "manual"
+      ? viewState.state.lastChangedPreference
+      : (latestToolResult?.changedPreference ?? viewState.state.lastChangedPreference);
+  if (changedPreference !== null && changedPreference !== undefined) {
+    requirements.push(`<strong>Changed this turn:</strong> ${escapeHtml(changedPreference)}`);
+  }
+  for (const value of requirements) {
+    const item = document.createElement("div");
+    item.className = "requirement-item";
+    item.innerHTML = value;
+    requirementSummary.append(item);
+  }
+
+  measurementList.replaceChildren();
+  if (layout === null || layout.measurements.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "measurement-item";
+    empty.textContent = "No furniture-pair measurements yet.";
+    measurementList.append(empty);
+    return;
+  }
+  for (const measurement of layout.measurements) {
+    const item = document.createElement("div");
+    item.className = `measurement-item ${measurement.passed ? "is-pass" : "is-fail"}`;
+    const shortfall = Math.max(0, measurement.requiredDistanceMm - measurement.actualDistanceMm);
+    item.innerHTML = `<strong>${escapeHtml(measurement.labels[0])} ↔ ${escapeHtml(
+      measurement.labels[1],
+    )}:</strong> ${measurement.actualDistanceMm} mm / required ${measurement.requiredDistanceMm} mm${
+      shortfall > 0 ? ` · ${shortfall} mm short` : ""
+    }`;
+    measurementList.append(item);
+  }
+}
+
+function renderManualPlacement(): void {
+  manualPlacementCard.classList.remove("is-valid", "is-invalid");
+  if (manualPreview !== null) {
+    manualPlacementCard.classList.add(manualPreview.accepted ? "is-valid" : "is-invalid");
+    manualPlacementStatus.textContent = manualPreview.accepted
+      ? `${manualPreview.reason} Apply to create a new accepted application layout version, or Revert.`
+      : `${manualPreview.reason} This rejected preview has not changed the accepted layout.`;
+  } else if (viewState.lastInteraction === "manual") {
+    manualPlacementCard.classList.add("is-valid");
+    manualPlacementStatus.textContent =
+      viewState.state.lastChangedPreference ?? "The accepted manual placement passes all locked checks.";
+  } else if (viewState.selectedLayout === null) {
+    manualPlacementStatus.textContent = "Accept a feasible layout before using direct manipulation.";
+  } else if (latestToolResult?.status === "no_feasible_option") {
+    manualPlacementStatus.textContent =
+      "The screen is showing a rejected option preview. Return to the accepted layout before dragging.";
+  } else {
+    manualPlacementStatus.textContent =
+      "Drag accepted furniture, or focus it and use the arrow keys. Movement snaps to a 50 mm grid.";
+  }
+  manualApplyButton.disabled =
+    manualPreview?.accepted !== true || isBusy || operationBarrier.operationsBlocked;
+  manualRevertButton.disabled = manualPreview === null || isBusy || operationBarrier.operationsBlocked;
+}
+
+function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: ResolvedPlacement): boolean {
+  if (
+    layout === null ||
+    viewState.selectedLayout === null ||
+    isBusy ||
+    isAudioBusy() ||
+    operationBarrier.operationsBlocked ||
+    !viewState.readiness.localInferenceReady
+  ) {
+    return false;
+  }
+  const displaysAcceptedLayout = layout.id === viewState.selectedLayout.id;
+  const displaysManualPreview = manualPreview?.preview?.id === layout.id;
+  if (!displaysAcceptedLayout && !displaysManualPreview) {
+    return false;
+  }
+  if (latestToolResult?.status === "no_feasible_option" && !displaysManualPreview) {
+    return false;
+  }
+  if (manualPreview !== null && manualPreview.request.instanceId !== placement.instanceId) {
+    return false;
+  }
+  return viewState.selectedLayout.placements.some(
+    (candidate) => candidate.instanceId === placement.instanceId,
+  );
+}
+
+function currentDemoState(): DemoState {
+  return {
+    ...viewState.state,
+    lastToolResult: latestToolResult,
+  };
+}
+
+function manualRequest(instanceId: string, origin: Point): ManualPlacementRequest | null {
+  if (viewState.selectedLayout === null) {
+    return null;
+  }
+  return {
+    priorStateRef: viewState.state.stateRef,
+    sourceLayoutId: viewState.selectedLayout.id,
+    instanceId,
+    xMm: origin.xMm,
+    yMm: origin.yMm,
+  };
+}
+
+function evaluateManualPreview(request: ManualPlacementRequest, focusInstanceId?: string): void {
+  manualPreview = evaluateManualPlacement(currentDemoState(), viewState.selectedLayout, request);
+  renderLayout();
+  if (focusInstanceId !== undefined) {
+    focusPlacement(focusInstanceId);
+  }
+}
+
+function focusPlacement(instanceId: string): void {
+  const placement = [...roomSvg.querySelectorAll<SVGRectElement>("[data-placement-id]")].find(
+    (element) => element.dataset.placementId === instanceId,
+  );
+  placement?.focus({ preventScroll: true });
+}
+
+function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): void {
+  if (!placementIsAdjustable(manualPreview?.preview ?? viewState.selectedLayout, placement)) {
+    return;
+  }
+  const point = pointerRoomPoint(event);
+  const acceptedPlacement = viewState.selectedLayout?.placements.find(
+    (candidate) => candidate.instanceId === placement.instanceId,
+  );
+  if (acceptedPlacement === undefined) {
+    return;
+  }
+  event.preventDefault();
+  manualPreviewOrigin = {
+    instanceId: placement.instanceId,
+    rect: acceptedPlacement.rect,
+  };
+  placementDrag = {
+    pointerId: event.pointerId,
+    instanceId: placement.instanceId,
+    grabOffset: {
+      xMm: point.xMm - placement.rect.xMm,
+      yMm: point.yMm - placement.rect.yMm,
+    },
+  };
+  roomSvg.setPointerCapture(event.pointerId);
+  renderLayout();
+}
+
+function updatePlacementDrag(event: PointerEvent): void {
+  const drag = placementDrag;
+  if (drag === null || drag.pointerId !== event.pointerId || viewState.selectedLayout === null) {
+    return;
+  }
+  const placement = viewState.selectedLayout.placements.find(
+    (candidate) => candidate.instanceId === drag.instanceId,
+  );
+  if (placement === undefined) {
+    return;
+  }
+  event.preventDefault();
+  const origin = snappedPlacementOrigin(
+    pointerRoomPoint(event),
+    drag.grabOffset,
+    placement.rect,
+    viewState.roomPlan,
+  );
+  const request = manualRequest(drag.instanceId, origin);
+  if (request !== null) {
+    evaluateManualPreview(request);
+  }
+}
+
+function finishPlacementDrag(event: PointerEvent): void {
+  if (placementDrag?.pointerId !== event.pointerId) {
+    return;
+  }
+  if (roomSvg.hasPointerCapture(event.pointerId)) {
+    roomSvg.releasePointerCapture(event.pointerId);
+  }
+  placementDrag = null;
+  if (manualPreview === null) {
+    manualPreviewOrigin = null;
+  }
+  renderLayout();
+}
+
+function pointerRoomPoint(event: PointerEvent): Point {
+  const clientRect = roomSvg.getBoundingClientRect();
+  const viewBox = roomSvg.viewBox.baseVal;
+  return clientPointToRoomPoint(
+    { x: event.clientX, y: event.clientY },
+    {
+      left: clientRect.left,
+      top: clientRect.top,
+      width: clientRect.width,
+      height: clientRect.height,
+    },
+    {
+      x: viewBox.x,
+      y: viewBox.y,
+      width: viewBox.width,
+      height: viewBox.height,
+    },
+  );
+}
+
+function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement): void {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    revertManualPreview();
+    return;
+  }
+  if (event.key === "Enter" && manualPreview?.accepted === true) {
+    event.preventDefault();
+    void applyManualPreview();
+    return;
+  }
+  if (
+    event.key !== "ArrowUp" &&
+    event.key !== "ArrowDown" &&
+    event.key !== "ArrowLeft" &&
+    event.key !== "ArrowRight"
+  ) {
+    return;
+  }
+  const acceptedPlacement = viewState.selectedLayout?.placements.find(
+    (candidate) => candidate.instanceId === placement.instanceId,
+  );
+  if (acceptedPlacement === undefined) {
+    return;
+  }
+  event.preventDefault();
+  manualPreviewOrigin ??= {
+    instanceId: placement.instanceId,
+    rect: acceptedPlacement.rect,
+  };
+  const origin = keyboardPlacementOrigin(
+    placement.rect,
+    event.key,
+    viewState.roomPlan,
+    event.shiftKey ? 100 : 50,
+  );
+  const request = manualRequest(placement.instanceId, origin);
+  if (request !== null) {
+    evaluateManualPreview(request, placement.instanceId);
+  }
+}
+
+async function applyManualPreview(): Promise<void> {
+  if (manualPreview?.accepted !== true || demoApi === null || isBusy || operationBarrier.operationsBlocked) {
+    return;
+  }
+  const lifecycleGeneration = operationBarrier.beginOperation();
+  setBusy(true);
+  try {
+    const response = await demoApi.applyManualPlacement(manualPreview.request);
+    if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      return;
+    }
+    manualPreview = response.outcome.accepted ? null : response.outcome;
+    manualPreviewOrigin = response.outcome.accepted ? null : manualPreviewOrigin;
+    viewState = {
+      ...viewState,
+      state: response.outcome.state,
+      selectedLayout: response.outcome.selectedLayout,
+      completedStageTurnIds: response.completedStageTurnIds,
+      lastInteraction: response.lastInteraction,
+      messages: response.messages,
+      trace: response.trace,
+    };
+    renderAll();
+  } catch (error) {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      showRuntimeError(error);
+    }
+  } finally {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
+  }
+}
+
+function revertManualPreview(): void {
+  placementDrag = null;
+  manualPreview = null;
+  manualPreviewOrigin = null;
+  renderLayout();
 }
 
 function renderChecks(checks: readonly CheckedRoomState[]): void {
@@ -768,6 +1355,7 @@ function renderTrace(): void {
   geometryTrace.textContent = pretty({
     validation: lastTracePayload("validation") ?? "No validation yet.",
     geometry: lastTracePayload("geometry") ?? "No geometry result yet.",
+    manualPlacement: lastTracePayload("manual-placement") ?? "No manual placement yet.",
   });
 }
 
@@ -1064,8 +1652,18 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
       audioReadiness: response.audioReadiness,
       trace: response.trace,
     };
-    const draft = createTranscriptDraftUpdate(promptInput.value, response.result.transcript);
-    promptInput.value = draft.value;
+    const correction = applySpeechCorrectionSuggestions(response.result.transcript);
+    const originalDraft = createTranscriptDraftUpdate(promptInput.value, correction.rawTranscript);
+    const correctedDraft = createTranscriptDraftUpdate(promptInput.value, correction.correctedTranscript);
+    promptInput.value = correctedDraft.value;
+    speechCorrection =
+      correction.corrections.length === 0
+        ? null
+        : {
+            ...correction,
+            originalDraftValue: originalDraft.value,
+            correctedDraftValue: correctedDraft.value,
+          };
     promptInput.focus();
     audioRecorderState = reduceAudioRecorderState(audioRecorderState, { type: "COMPLETE" });
     liveTranscriptDraft = {
@@ -1075,9 +1673,12 @@ async function stopAndTranscribe(operation: VoiceCaptureOperation | null = voice
       isFinal: true,
     };
     liveTranscriptPhase = "draft";
-    audioNotice = `${
-      response.result.mode === "nemotron_streaming" ? "Nemotron final" : "Whisper fallback"
-    } transcript added. Review it, then click Send.`;
+    audioNotice =
+      correction.corrections.length > 0
+        ? "Visible speech suggestions were applied to the editable draft. Review them, then click Send."
+        : `${
+            response.result.mode === "nemotron_streaming" ? "Nemotron final" : "Whisper fallback"
+          } transcript added. Review it, then click Send.`;
     completed = true;
     renderAll();
   } catch (error) {
@@ -1300,6 +1901,21 @@ function formatElapsedTime(elapsedMs: number): string {
 window.addEventListener("beforeunload", () => {
   void discardRecording(false);
 });
+
+function appendSvgCallout(text: string, x: number, y: number, color: string): void {
+  const label = svgElement("text", {
+    x: String(x),
+    y: String(y),
+    fill: color,
+    "font-size": "82",
+    "font-weight": "800",
+    "text-anchor": "middle",
+    "dominant-baseline": "middle",
+    style: "paint-order:stroke;stroke:#07111f;stroke-width:18px;stroke-linejoin:round",
+  });
+  label.textContent = text;
+  roomSvg.append(label);
+}
 
 function appendSvgLabel(text: string, x: number, y: number, color: string): void {
   const label = svgElement("text", {

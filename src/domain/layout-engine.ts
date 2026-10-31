@@ -12,7 +12,13 @@ import {
 } from "./fixture";
 import { evaluateLayoutOption } from "./geometry";
 import { type CompareLayoutOptionsInput, expandCandidateFurnitureIds } from "./tool-contract";
-import type { DemoStateSnapshot, EvaluatedLayoutOption, LayoutConflict, LayoutToolResult } from "./types";
+import type {
+  DemoStateSnapshot,
+  EvaluatedLayoutOption,
+  LayoutConflict,
+  LayoutOption,
+  LayoutToolResult,
+} from "./types";
 
 function evidenceOption(
   selected: EvaluatedLayoutOption | undefined,
@@ -50,9 +56,44 @@ function noFeasibleSummary(hasKnownOptions: boolean, hasAcceptedLayout: boolean)
     : "No geometry was fabricated for an unknown furniture combination; no layout has been accepted.";
 }
 
+function furnitureSetKey(ids: readonly string[]): string {
+  return [...ids].sort().join("|");
+}
+
+function retainedManualOption(
+  input: CompareLayoutOptionsInput,
+  state: DemoStateSnapshot,
+  currentAcceptedLayout: EvaluatedLayoutOption | null,
+): LayoutOption | null {
+  if (
+    currentAcceptedLayout?.placementSource !== "manual-adjustment" ||
+    state.currentLayoutSource !== "manual-adjustment" ||
+    state.currentLayoutId !== currentAcceptedLayout.id ||
+    furnitureSetKey(currentAcceptedLayout.placements.map((placement) => placement.furnitureId)) !==
+      furnitureSetKey(expandCandidateFurnitureIds(input.candidateFurnitureIds))
+  ) {
+    return null;
+  }
+  return {
+    id: currentAcceptedLayout.id,
+    label: currentAcceptedLayout.label,
+    furnitureIds: currentAcceptedLayout.placements.map((placement) => placement.furnitureId),
+    placements: currentAcceptedLayout.placements.map((placement) => ({
+      instanceId: placement.instanceId,
+      furnitureId: placement.furnitureId,
+      xMm: placement.xMm,
+      yMm: placement.yMm,
+      orientation: placement.orientation,
+    })),
+    rationale:
+      "Preserves the accepted application-owned manual coordinates because the resulting furniture set is unchanged.",
+  };
+}
+
 export function compareKnownLayoutOptions(
   input: CompareLayoutOptionsInput,
   state: DemoStateSnapshot,
+  currentAcceptedLayout: EvaluatedLayoutOption | null = null,
 ): LayoutToolResult {
   const provenance = {
     roomPlanId: ROOM_PLAN_ID,
@@ -85,9 +126,19 @@ export function compareKnownLayoutOptions(
     };
   }
 
-  const options = getKnownLayoutOptions(expandCandidateFurnitureIds(input.candidateFurnitureIds));
+  const retainedManual = retainedManualOption(input, state, currentAcceptedLayout);
+  const options = [
+    ...(retainedManual === null ? [] : [retainedManual]),
+    ...getKnownLayoutOptions(expandCandidateFurnitureIds(input.candidateFurnitureIds)),
+  ];
   const evaluated = options.map((option) =>
-    evaluateLayoutOption(option, roomPlan, furnitureCatalog, clearanceRuleSet),
+    evaluateLayoutOption(
+      option,
+      roomPlan,
+      furnitureCatalog,
+      clearanceRuleSet,
+      option === retainedManual ? "manual-adjustment" : "known-option",
+    ),
   );
   provenance.evaluatedLayoutIds.push(...evaluated.map((option) => option.id));
 
@@ -136,7 +187,7 @@ export function compareKnownLayoutOptions(
       message: hasKnownOptions
         ? `None of the ${evaluated.length} bounded known options passes the locked constraints.`
         : "The application has no verified known option set for that exact furniture combination.",
-      preferencesThatMayChange: ["bed size", "desk footprint or orientation", "crib requirement"],
+      preferencesThatMayChange: ["bed size", "desk footprint or orientation", "baby bed requirement"],
     },
     summary: noFeasibleSummary(hasKnownOptions, state.currentLayoutId !== null),
     provenance,

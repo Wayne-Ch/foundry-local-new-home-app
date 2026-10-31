@@ -9,32 +9,32 @@ export const stageTurns: readonly StageTurnDefinition[] = [
   },
   {
     id: "turn-b",
-    label: "B · Change to King",
+    label: "B · King conflict",
     prompt: "What changes if we use a King-size bed instead?",
   },
   {
     id: "turn-c",
-    label: "C · Add a crib",
-    prompt: "We may need a crib. Keep the Queen-size bed and add a crib without blocking the closet.",
+    label: "C · Choose Queen + baby bed",
+    prompt: "Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.",
   },
   {
     id: "controlled-failure",
-    label: "Failure · King + desk + crib",
-    prompt: "Try a King-size bed, a desk, and the crib together. Keep the desk and crib if possible.",
+    label: "E · King controlled failure",
+    prompt: "Use a King bed. Keep the compact desk and baby bed. Keep the door, closet, and window clear.",
   },
 ] as const;
 
 export const systemPrompt = `
 Return one JSON semantic delta for the bedroom request.
 - bed: keep, queen, or king.
-- desk: keep, standard, compact, or flexible. Use flexible whenever the user requests a desk without a fixed size or adds a crib without fixing the desk size.
-- crib: keep, add, or remove.
+- desk: keep, standard, compact, or flexible. Use flexible whenever the user requests a desk without a fixed size or adds a baby bed/crib without fixing the desk size.
+- crib: keep, add, or remove. Treat baby bed, baby-bed, baby cot, and crib as the same supported intent.
 - Decide each dimension independently. Use keep only when that dimension is unchanged; do not use keep when the request names a new target.
 - Do not repeat USER_REQUEST in the JSON. The application preserves it exactly as changedPreference.
 - clarification defaults to none. Use required only for unsupported furniture, conflicting choices, or wording that lacks a required choice.
-- Respect transition direction and scoped negation. "Replace King with Queen" and "from King to Queen" select Queen. "Do not remove the crib" keeps it.
-- Exact mappings: "King instead" -> bed=king; "add/bring in a crib" -> crib=add; "remove the crib" -> crib=remove; "desk may adjust" -> desk=flexible.
-- dresser, armchair, cabinet, bassinet, and night stand are unsupported, so clarification=required. Queen/King beds, desks, and crib are supported.
+- Respect transition direction and scoped negation. "Replace King with Queen" and "from King to Queen" select Queen. "Do not remove the baby bed" keeps it.
+- Exact mappings: "King instead" -> bed=king; "add/bring in a baby bed" -> crib=add; "remove the baby bed" -> crib=remove; "desk may adjust" -> desk=flexible.
+- dresser, armchair, cabinet, bassinet, and night stand are unsupported, so clarification=required. Queen/King beds, desks, and baby bed/crib aliases are supported.
 - Interpret requirements only. Never emit catalog IDs, state references, dimensions, placements, fit, conflicts, status, or any geometry verdict.
 `.trim();
 

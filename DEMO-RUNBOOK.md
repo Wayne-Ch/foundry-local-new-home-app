@@ -7,6 +7,8 @@ Run while connected:
 ```powershell
 cd C:\Users\waynechuang\Projects\foundry-local-ignite-new-home-demo
 npm install --no-audit --no-fund
+npm install-scripts approve electron esbuild foundry-local-sdk
+npm rebuild electron esbuild foundry-local-sdk
 npm run probe:foundry
 npm run typecheck
 npm run lint
@@ -56,18 +58,36 @@ In the app:
    exceeds the reset bound, the UI stays quarantined until automatic session replacement succeeds
    or a later explicit Reset succeeds.
 7. Close the trace for the opening shot.
+8. Run one focused real-microphone recovery gate with:
 
-Observed corrected selected-default integration timings on the validated laptop were 4.630–11.163
-seconds per turn, including bounded application-validation correction when needed. The unrestricted
-semantic benchmark measured 6.022 seconds median and 9.944 seconds maximum. Do not start the first
+   > Keep the Queen bed. Add a baby bed. Use a compact desk. Keep the closet clear.
+
+   Confirm the raw transcript remains in Developer trace. If the observed demo vocabulary is
+   misheard, confirm the visible suggestion label, editable corrected Manual prompt, and the same
+   feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate or
+   relabel the committed Queen + desk WAV fixture as baby-bed evidence.
+
+Observed selected-default integration timings on the validated laptop were 2.451–8.924 seconds per
+turn, including bounded application-validation correction when needed. The unrestricted semantic
+benchmark measured 5.711 seconds median and 10.908 seconds maximum. Do not start the first
 inference while still delivering setup remarks.
 
-The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,303 ms,
-stop-to-final at 100 ms, and 3,100 ms cached preparation. The explicit Whisper fallback prepared in
-1,807 ms and transcribed the same fixture in 211 ms. Treat these as machine-specific preflight
+The current deterministic audio checkpoints are 31 Nemotron revisions, first partial at 1,304 ms,
+stop-to-final at 91 ms, and 6,102 ms cached preparation. The explicit Whisper fallback prepared in
+4,094 ms and transcribed the same fixture in 213 ms. Treat these as machine-specific preflight
 evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow
+
+The hands-on story is intentionally explicit:
+
+| Beat | Action | Expected evidence |
+|---|---|---|
+| A | Queen + desk | Feasible accepted layout |
+| B | Change to King | Closet conflict; app asks which preference may change |
+| C | Select the recovery action or say “Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.” | Queen + compact desk + baby bed is feasible; the changed preference is visible while door, closet, window, and 250 mm clearance remain locked |
+| D | Optionally drag accepted furniture, then Apply or Revert | App-owned 50 mm-grid preview with live deterministic measurements; no Qwen geometry |
+| E | Use King while retaining compact desk + baby bed | Controlled failure with exact 70 / 250 mm and 170 / 250 mm gap callouts |
 
 ### Before 0:00 — Prepare real, pre-run state
 
@@ -132,9 +152,10 @@ Then switch to clearly labeled pre-run evidence:
    - The prior Queen layout remained accepted.
 2. Show the recorded Turn C room state.
    - Queen retained.
-   - Crib added.
+   - Baby bed added.
    - Desk changed to compact/rotated.
    - All five deterministic checks passed.
+   - The visible recovery action states exactly what changed and what stayed locked.
 
 Say explicitly for Turn B/C:
 
@@ -144,7 +165,7 @@ Say explicitly for Turn B/C:
 Keep the remaining exact staged dialogue visible:
 
 - “What changes if we use a King-size bed instead?”
-- “We may need a crib. Keep the Queen-size bed and add a crib without blocking the closet.”
+- “Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.”
 
 ### 3:30–4:00 — Map the UI to architecture and code
 
@@ -159,9 +180,9 @@ Open **Developer trace** and point left-to-right:
 
 Say:
 
-> The next seven and a half minutes show exactly how to build this boundary with Foundry Local.
+> The next seven and a quarter minutes show exactly how to build this boundary with Foundry Local.
 
-### 4:00–11:30 — Developer guide and real code walkthrough
+### 4:00–11:15 — Developer guide and real code walkthrough
 
 Follow [CODE-WALKTHROUGH.md](CODE-WALKTHROUGH.md) in its timed order:
 
@@ -178,7 +199,23 @@ Spend the majority of the talk here. Explain the native `ToolCallItem` evidence 
 milestone uses the explicit bounded structured-output escalation rather than hiding an unreliable
 function-call path.
 
-### 11:30–13:30 — Fresh offline input and controlled failure
+### 11:15–11:45 — Optional app-owned manual adjustment
+
+Starting from the accepted recovery layout:
+
+1. Drag one accepted furniture footprint a single 50 mm grid step, or focus it and use an arrow key.
+2. Point to the original-position ghost, live pair measurements, and deterministic checks.
+3. If the preview is valid, select **Apply** and show the new application layout version plus
+   `application-owned direct manipulation` provenance in Developer trace.
+4. Demonstrate **Revert** for a rejected preview if time permits. An invalid drop never replaces the
+   accepted model-generated layout.
+
+Say:
+
+> This adjustment is ordinary application interaction. The same geometry validator runs again, but
+> the model does not generate or approve the coordinates.
+
+### 11:45–13:30 — Fresh offline input and controlled failure
 
 This is the second live model operation, but it is **typed**, not voice. Keep exactly one voice turn
 in the talk.
@@ -189,23 +226,25 @@ performed during rehearsal.
 
 Starting from the pre-run Turn C state, select:
 
-**Run next: Failure · King + desk + crib**
+**Run next: E · King controlled failure**
 
 Exact fresh input:
 
-> Try a King-size bed, a desk, and the crib together. Keep the desk and crib if possible.
+> Use a King bed. Keep the compact desk and baby bed. Keep the door, closet, and window clear.
 
 Expected live result:
 
 - King requested;
-- compact desk and crib retained;
+- compact desk and baby bed retained;
 - two bounded alternatives evaluated;
 - no feasible option;
+- the visible east option shows `King bed ↔ Compact desk: 70 mm / required 250 mm` and
+  `King bed ↔ Baby bed: 170 mm / required 250 mm`, with dimension lines at the exact gaps;
 - the visible east-option preview shows only its own furniture-clearance failures and keeps the
   door-open check at `PASS`;
 - Developer trace separately labels aggregate reasons across both rejected alternatives, including
   the south option's door-swing conflict;
-- prior accepted Queen + compact desk + crib layout remains active;
+- prior accepted Queen + compact desk + baby bed layout remains active;
 - response asks which preference may change.
 
 Observed selected-default latency for this controlled failure was 3.467 seconds in the real app
@@ -269,14 +308,15 @@ alone—is the offline readiness gate.
 |---|---|
 | Model unavailable | Show the red runtime state; select **Load local model** once. If still unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
 | Invalid intent delta | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
-| No feasible layout | This is the controlled story. Ask which preference may change. |
+| No feasible layout in Beat E | This is the controlled failure. Point to the exact shortfall callouts and retained accepted layout; do not fabricate a fit. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |
 | GPU/EP issue | Only use a pretested alternate by setting both exact `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`. The badge will identify it as an override and, unless it is the exact default pair, as not stage-validated. Do not improvise a new target on stage. |
 | Microphone permission denied / no mic | State the error shown by the app and use the existing typed Turn A prompt. Never bypass transcript review or switch to an online speech service. |
 | Nemotron unavailable or live stream fails | If the labeled **Whisper Tiny fallback (record then transcribe)** action is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
 | Whisper fallback unavailable | Keep typed input. The voice badge must not claim fallback readiness. |
-| Empty/incorrect transcript | Edit the draft or replace it with typed text, then click Send. The app never auto-submits ASR output. |
+| No feasible layout after Turn B | Select the visible recovery action: keep Queen, allow the compact desk, add a baby bed, and keep door/closet/window/250 mm clearance locked. The action enters the same Qwen/app validation pipeline as typed input. |
+| Empty/incorrect transcript | Review the visible suggestion label, edit the draft or restore/replace it with typed text, then click Send. The raw ASR transcript remains in Developer trace and the app never auto-submits it. |
 
 There is no canned natural-language fallback. The visible response is explicitly labeled
 **Application evidence**.

@@ -26,6 +26,11 @@ export interface Rectangle {
   readonly depthMm: number;
 }
 
+export interface Point {
+  readonly xMm: number;
+  readonly yMm: number;
+}
+
 export interface DoorSwing {
   readonly id: string;
   readonly label: string;
@@ -119,12 +124,24 @@ export interface ResolvedPlacement extends FurniturePlacement {
   readonly color: string;
 }
 
+export interface ClearanceMeasurement {
+  readonly id: string;
+  readonly kind: "furniture-clearance";
+  readonly objectIds: readonly [string, string];
+  readonly labels: readonly [string, string];
+  readonly actualDistanceMm: number;
+  readonly requiredDistanceMm: number;
+  readonly passed: boolean;
+}
+
 export interface EvaluatedLayoutOption {
   readonly id: string;
   readonly label: string;
   readonly status: "feasible" | "rejected";
+  readonly placementSource: "known-option" | "manual-adjustment";
   readonly rationale: string;
   readonly placements: readonly ResolvedPlacement[];
+  readonly measurements: readonly ClearanceMeasurement[];
   readonly conflicts: readonly LayoutConflict[];
   readonly checkedStates: readonly CheckedRoomState[];
 }
@@ -176,6 +193,7 @@ export interface DemoStateSnapshot {
   readonly stateRef: string;
   readonly version: number;
   readonly currentLayoutId: string | null;
+  readonly currentLayoutSource: EvaluatedLayoutOption["placementSource"] | null;
   readonly activeFurnitureIds: readonly FurnitureId[];
   readonly lockedConstraints: LockedConstraints;
   readonly requiredRoomStates: readonly RoomStateId[];

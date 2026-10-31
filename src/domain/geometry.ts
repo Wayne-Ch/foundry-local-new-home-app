@@ -6,6 +6,7 @@ import type {
   FurniturePlacement,
   LayoutConflict,
   LayoutOption,
+  Point,
   Rectangle,
   ReservedZone,
   RoomPlan,
@@ -28,11 +29,43 @@ export function rectanglesOverlap(left: Rectangle, right: Rectangle): boolean {
 }
 
 export function rectangleDistanceMm(left: Rectangle, right: Rectangle): number {
+  return rectangleSeparation(left, right).distanceMm;
+}
+
+export interface RectangleSeparation {
+  readonly from: Point;
+  readonly to: Point;
+  readonly distanceMm: number;
+}
+
+function nearestAxisPoints(
+  leftStart: number,
+  leftEnd: number,
+  rightStart: number,
+  rightEnd: number,
+): readonly [number, number] {
+  if (leftEnd < rightStart) {
+    return [leftEnd, rightStart];
+  }
+  if (rightEnd < leftStart) {
+    return [leftStart, rightEnd];
+  }
+  const overlapStart = Math.max(leftStart, rightStart);
+  const overlapEnd = Math.min(leftEnd, rightEnd);
+  const midpoint = (overlapStart + overlapEnd) / 2;
+  return [midpoint, midpoint];
+}
+
+export function rectangleSeparation(left: Rectangle, right: Rectangle): RectangleSeparation {
   const a = rectangleEdges(left);
   const b = rectangleEdges(right);
-  const xGap = Math.max(0, Math.max(a.left, b.left) - Math.min(a.right, b.right));
-  const yGap = Math.max(0, Math.max(a.top, b.top) - Math.min(a.bottom, b.bottom));
-  return Math.hypot(xGap, yGap);
+  const [fromX, toX] = nearestAxisPoints(a.left, a.right, b.left, b.right);
+  const [fromY, toY] = nearestAxisPoints(a.top, a.bottom, b.top, b.bottom);
+  return {
+    from: { xMm: fromX, yMm: fromY },
+    to: { xMm: toX, yMm: toY },
+    distanceMm: Math.hypot(toX - fromX, toY - fromY),
+  };
 }
 
 export function rectangleIntersectsDoorSwing(rect: Rectangle, room: RoomPlan): boolean {
@@ -95,9 +128,11 @@ export function evaluateLayoutOption(
   room: RoomPlan,
   catalog: Readonly<Record<string, FurnitureDefinition>>,
   rules: ClearanceRuleSet,
+  placementSource: EvaluatedLayoutOption["placementSource"] = "known-option",
 ): EvaluatedLayoutOption {
   const placements = option.placements.map((placement) => resolvePlacement(placement, catalog));
   const conflicts: LayoutConflict[] = [];
+  const measurements: EvaluatedLayoutOption["measurements"][number][] = [];
 
   for (const placement of placements) {
     const edges = rectangleEdges(placement.rect);
@@ -144,6 +179,18 @@ export function evaluateLayoutOption(
         continue;
       }
 
+      const separation = rectangleSeparation(left.rect, right.rect);
+      const actualDistanceMm = Math.round(separation.distanceMm);
+      measurements.push({
+        id: `${left.instanceId}--${right.instanceId}`,
+        kind: "furniture-clearance",
+        objectIds: [left.instanceId, right.instanceId],
+        labels: [left.label, right.label],
+        actualDistanceMm,
+        requiredDistanceMm: rules.minimumFurnitureGapMm,
+        passed: actualDistanceMm >= rules.minimumFurnitureGapMm && !rectanglesOverlap(left.rect, right.rect),
+      });
+
       if (rectanglesOverlap(left.rect, right.rect)) {
         conflicts.push({
           code: "FURNITURE_COLLISION",
@@ -156,14 +203,13 @@ export function evaluateLayoutOption(
         continue;
       }
 
-      const distance = rectangleDistanceMm(left.rect, right.rect);
-      if (distance < rules.minimumFurnitureGapMm) {
+      if (separation.distanceMm < rules.minimumFurnitureGapMm) {
         conflicts.push({
           code: "FURNITURE_CLEARANCE",
           ruleId: "minimum-furniture-gap",
-          message: `${left.label} and ${right.label} have ${Math.round(distance)} mm clearance; ${rules.minimumFurnitureGapMm} mm is required.`,
+          message: `${left.label} and ${right.label} have ${actualDistanceMm} mm clearance; ${rules.minimumFurnitureGapMm} mm is required.`,
           objectIds: [left.instanceId, right.instanceId],
-          actualDistanceMm: Math.round(distance),
+          actualDistanceMm,
           requiredDistanceMm: rules.minimumFurnitureGapMm,
         });
       }
@@ -229,8 +275,10 @@ export function evaluateLayoutOption(
     id: option.id,
     label: option.label,
     status: conflicts.length === 0 ? "feasible" : "rejected",
+    placementSource,
     rationale: option.rationale,
     placements,
+    measurements,
     conflicts,
     checkedStates,
   };

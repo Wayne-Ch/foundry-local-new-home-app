@@ -243,7 +243,7 @@ h3 {
 
 .conversation-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(120px, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(120px, 1fr) auto auto;
   overflow: hidden;
 }
 
@@ -351,6 +351,39 @@ h3 {
   flex-direction: column;
   gap: 11px;
   overflow-y: auto;
+}
+
+.recovery-actions {
+  margin: 0 14px 10px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgb(53 198 138 / 55%);
+  border-radius: 12px;
+  background: rgb(18 89 65 / 30%);
+}
+
+.recovery-actions[hidden] {
+  display: none;
+}
+
+.recovery-actions strong,
+.recovery-actions span {
+  display: block;
+}
+
+.recovery-actions strong {
+  color: #bdf6dd;
+  font-size: 13px;
+}
+
+.recovery-actions span {
+  margin-top: 3px;
+  color: #a9cdbd;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .message {
@@ -532,6 +565,47 @@ h3 {
   line-height: 1.35;
 }
 
+.speech-suggestion-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgb(245 165 36 / 55%);
+  border-radius: 9px;
+  background: rgb(116 78 17 / 25%);
+  color: #ffe2aa;
+}
+
+.speech-suggestion-panel[hidden] {
+  display: none;
+}
+
+.speech-suggestion-panel strong,
+.speech-suggestion-panel span {
+  display: block;
+}
+
+.speech-suggestion-panel strong {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.speech-suggestion-panel span {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.speech-suggestion-panel .button {
+  min-height: 30px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
 .live-transcript-panel strong {
   display: block;
   margin-bottom: 3px;
@@ -644,6 +718,9 @@ h3 {
 
 .room-card {
   min-height: 0;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
   position: relative;
   display: grid;
   place-items: center;
@@ -660,6 +737,13 @@ h3 {
   width: 96%;
   height: 93%;
   max-height: 720px;
+  touch-action: none;
+}
+
+.room-svg text,
+.room-svg line,
+.room-svg circle {
+  pointer-events: none;
 }
 
 .layout-notice {
@@ -701,6 +785,86 @@ h3 {
   color: #b7c8db;
   font-size: 14px;
   line-height: 1.4;
+}
+
+.requirement-summary,
+.measurement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.measurement-list {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #29435f;
+}
+
+.requirement-item,
+.measurement-item {
+  padding: 6px 7px;
+  border-radius: 7px;
+  background: #091a2c;
+  color: #b7c8db;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.requirement-item strong,
+.measurement-item strong {
+  color: #e6eef8;
+}
+
+.measurement-item.is-pass {
+  border-left: 3px solid var(--success);
+}
+
+.measurement-item.is-fail {
+  border-left: 3px solid var(--danger);
+  background: rgb(124 31 44 / 24%);
+  color: #f0c5ca;
+}
+
+.manual-placement-card {
+  border-color: rgb(110 168 254 / 45%);
+}
+
+.manual-placement-card.is-valid {
+  border-color: rgb(53 198 138 / 55%);
+}
+
+.manual-placement-card.is-invalid {
+  border-color: rgb(255 82 99 / 55%);
+}
+
+.manual-placement-card p:not(.evidence-label) {
+  font-size: 11px;
+}
+
+.manual-placement-actions {
+  margin-top: 9px;
+  display: flex;
+  gap: 8px;
+}
+
+.manual-placement-actions .button {
+  min-height: 32px;
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.draggable-placement {
+  cursor: grab;
+  outline: none;
+}
+
+.draggable-placement:focus {
+  filter: drop-shadow(0 0 22px rgb(110 168 254 / 80%));
+}
+
+.draggable-placement.is-dragging {
+  cursor: grabbing;
 }
 
 .constraint-checks,

@@ -111,6 +111,34 @@ const requestedNonPresentationTableOperationCases = [
   ["Use tables to organize.", "ambiguous"],
 ] as const;
 
+describe("baby-bed catalog aliases", () => {
+  it.each(["baby bed", "baby-bed", "baby cot", "baby's cot", "cot for the baby"])(
+    "maps %s to the stable crib-standard catalog intent",
+    (alias) => {
+      const state = stateWithQueenDesk();
+      const prompt = `Keep the Queen bed. Add a ${alias}. Use a compact desk if needed.`;
+      expect(detectUnsupportedCatalogTerms(prompt)).toEqual([]);
+      expect(preferredCandidateFurnitureIds(state, prompt)).toEqual({
+        bed: "bed-queen",
+        desk: "desk-compact",
+        crib: "crib-standard",
+      });
+      expect(analyzeLayoutPrompt(state, prompt)).toMatchObject({
+        preferred: {
+          bed: "queen",
+          desk: "compact",
+          crib: "add",
+        },
+        clarification: "none",
+      });
+    },
+  );
+
+  it("keeps an unrelated bare cot unsupported", () => {
+    expect(detectUnsupportedCatalogTerms("Add a cot beside the Queen bed.")).toEqual(["cot"]);
+  });
+});
+
 const negatedNonPresentationTableOperationCases = [
   ["Do not use two tables to compare lamps.", "physical"],
   ["Don't use tables to organize report binders.", "ambiguous"],

@@ -164,7 +164,7 @@ try {
   );
 
   const correctionPrompt =
-    "Correction: keep the Queen bed and compact desk. Remove the crib. Do not switch to a King.";
+    "Correction: keep the Queen bed and compact desk. Remove the baby bed. Do not switch to a King.";
   const correction = await runAndCommit(
     service,
     state,
@@ -186,8 +186,8 @@ try {
   };
   for (const [label, prompt] of [
     ["Replace transition", "Replace the King with a Queen."],
-    ["From/to transition", "Move from King to Queen and keep the crib."],
-    ["Scoped negation", "Do not keep the King; use the Queen and do not remove the crib."],
+    ["From/to transition", "Move from King to Queen and keep the baby bed."],
+    ["Scoped negation", "Do not keep the King; use the Queen and do not remove the baby bed."],
   ] as const) {
     const transition = await runAndCommit(
       service,
@@ -199,6 +199,23 @@ try {
     );
     turns.push(transition.evidence);
     assert.equal(transition.evidence.selectedOptionId, "queen-crib-compact-v1");
+  }
+
+  for (const [label, prompt] of [
+    ["Baby-bed alias", "Keep the Queen bed. Add a baby-bed. Use the compact desk. Keep the closet clear."],
+    ["Baby-cot alias", "Keep the Queen bed. Add a baby cot. Use the compact desk. Keep the closet clear."],
+  ] as const) {
+    await service.resetConversation();
+    const aliasTurn = await runAndCommit(
+      service,
+      state,
+      label,
+      prompt,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "feasible",
+    );
+    turns.push(aliasTurn.evidence);
+    assert.equal(aliasTurn.evidence.selectedOptionId, "queen-crib-compact-v1");
   }
 
   const semanticGuardState: DemoState = {

@@ -9,6 +9,7 @@ import {
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
+import { evaluateManualPlacement } from "../domain/manual-placement";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
 import type { DemoState, RuntimeReadiness } from "../domain/types";
 import { stageTurns } from "../foundry/prompt";
@@ -72,6 +73,7 @@ const audioReadiness: AudioReadiness = {
 };
 
 function buildPreview(): BootstrapPayload {
+  const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
   let state: DemoState = createInitialDemoState();
   const turnAInput = createToolInputForTests({
     state,
@@ -89,6 +91,7 @@ function buildPreview(): BootstrapPayload {
   });
   const turnB = compareKnownLayoutOptions(turnBInput, state);
   state = applyToolResult(state, turnB);
+  const afterBState = state;
 
   const turnCInput = createToolInputForTests({
     state,
@@ -98,6 +101,7 @@ function buildPreview(): BootstrapPayload {
   });
   const turnC = compareKnownLayoutOptions(turnCInput, state);
   state = applyToolResult(state, turnC);
+  const recoveryState = state;
   const selectedLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
   const failureInput = createToolInputForTests({
     state,
@@ -106,16 +110,21 @@ function buildPreview(): BootstrapPayload {
     changedPreference: stageTurns[3]?.prompt ?? "",
   });
   const controlledFailure = compareKnownLayoutOptions(failureInput, state);
-  state = applyToolResult(state, controlledFailure);
+  const failureState = applyToolResult(state, controlledFailure);
+  const evidenceInput = recoveryOnly ? turnCInput : failureInput;
+  const evidenceResult = recoveryOnly ? turnC : controlledFailure;
+  const evidencePrompt = stageTurns[recoveryOnly ? 2 : 3]?.prompt ?? "";
 
   return {
     roomPlan,
-    state,
+    state: recoveryOnly ? recoveryState : failureState,
     readiness,
     audioReadiness,
     stageTurns,
+    completedStageTurnIds: recoveryOnly ? ["turn-a", "turn-b", "turn-c"] : stageTurns.map((turn) => turn.id),
+    lastInteraction: "turn",
     selectedLayout,
-    lastToolResult: controlledFailure,
+    lastToolResult: evidenceResult,
     messages: [
       {
         id: "preview-system",
@@ -133,6 +142,16 @@ function buildPreview(): BootstrapPayload {
         text: "Application evidence: Queen + rotated standard desk passes every locked deterministic check.",
       },
       {
+        id: "preview-user-b",
+        role: "user",
+        text: stageTurns[1]?.prompt ?? "",
+      },
+      {
+        id: "preview-app-b",
+        role: "application",
+        text: "Application evidence: the King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+      },
+      {
         id: "preview-user-c",
         role: "user",
         text: stageTurns[2]?.prompt ?? "",
@@ -140,18 +159,22 @@ function buildPreview(): BootstrapPayload {
       {
         id: "preview-app-c",
         role: "application",
-        text: "Application evidence: Queen + crib + rotated compact desk passes every locked deterministic check.",
+        text: "Application evidence: Queen + baby bed + rotated compact desk passes every locked deterministic check.",
       },
-      {
-        id: "preview-user-failure",
-        role: "user",
-        text: stageTurns[3]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-failure",
-        role: "application",
-        text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
-      },
+      ...(recoveryOnly
+        ? []
+        : [
+            {
+              id: "preview-user-failure",
+              role: "user" as const,
+              text: stageTurns[3]?.prompt ?? "",
+            },
+            {
+              id: "preview-app-failure",
+              role: "application" as const,
+              text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
+            },
+          ]),
     ],
     trace: [
       {
@@ -166,27 +189,21 @@ function buildPreview(): BootstrapPayload {
         timestamp: new Date().toISOString(),
         kind: "model-tool-call",
         title: "Schema-guided model intent delta",
-        payload: preferredLayoutIntentDelta(
-          {
-            ...state,
-            activeFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
-          },
-          stageTurns[3]?.prompt ?? "",
-        ),
+        payload: preferredLayoutIntentDelta(recoveryOnly ? afterBState : recoveryState, evidencePrompt),
       },
       {
         id: "preview-validation",
         timestamp: new Date().toISOString(),
         kind: "validation",
         title: "Application-derived tool input accepted",
-        payload: { accepted: true, attempts: 1, input: failureInput },
+        payload: { accepted: true, attempts: 1, input: evidenceInput },
       },
       {
         id: "preview-geometry",
         timestamp: new Date().toISOString(),
         kind: "geometry",
         title: "Deterministic geometry result",
-        payload: controlledFailure,
+        payload: evidenceResult,
       },
     ],
   };
@@ -222,11 +239,53 @@ export function createPreviewApi(): DemoApi {
       state: bootstrap.state,
       toolResult: bootstrap.lastToolResult,
       selectedLayout: bootstrap.selectedLayout,
+      completedStageTurnIds: bootstrap.completedStageTurnIds,
+      lastInteraction: "turn",
       assistantText: bootstrap.messages.at(-1)?.text ?? "",
       messages: bootstrap.messages,
       trace: bootstrap.trace,
       readiness,
     }),
+    applyManualPlacement: async (request) => {
+      const state: DemoState = {
+        ...bootstrap.state,
+        lastToolResult: bootstrap.lastToolResult,
+      };
+      const outcome = evaluateManualPlacement(state, bootstrap.selectedLayout, request);
+      if (outcome.accepted) {
+        bootstrap = {
+          ...bootstrap,
+          state: outcome.state,
+          selectedLayout: outcome.selectedLayout,
+          lastInteraction: "manual",
+          messages: [
+            ...bootstrap.messages,
+            {
+              id: `preview-manual-${outcome.state.version}`,
+              role: "application",
+              text: `App-owned manual placement accepted: ${outcome.reason}`,
+            },
+          ],
+          trace: [
+            ...bootstrap.trace,
+            {
+              id: `preview-manual-trace-${outcome.state.version}`,
+              timestamp: new Date().toISOString(),
+              kind: "manual-placement",
+              title: "Application-owned manual placement",
+              payload: outcome,
+            },
+          ],
+        };
+      }
+      return {
+        outcome,
+        completedStageTurnIds: bootstrap.completedStageTurnIds,
+        lastInteraction: bootstrap.lastInteraction,
+        messages: bootstrap.messages,
+        trace: bootstrap.trace,
+      };
+    },
     resetConversation: async () => {
       bootstrap = buildPreview();
       return bootstrap;

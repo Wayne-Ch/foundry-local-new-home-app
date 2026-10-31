@@ -1,6 +1,6 @@
 # Concise code walkthrough
 
-Use these snippets from **4:00–11:30**. The talk's core is how developers use Foundry Local, not the
+Use these snippets from **4:00–11:15**. The talk's core is how developers use Foundry Local, not the
 interior-design story.
 
 ## 4:00–4:35 — Orient from UI to process boundary
@@ -53,14 +53,16 @@ Put on screen:
   destruction, or window close and no partial forwarding to a replacement renderer;
 - partial hypothesis replacement in **Live draft — not sent**;
 - terminal `SpeechResult` insertion into Manual prompt with `shouldSubmit: false`;
+- raw ASR retention in Developer trace plus the narrow, visible `queen size bag` and `creep`
+  suggestion layer before Send;
 - Send transition to the exact edited submitted prompt and submitted/processing label;
 - explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
 
 Message:
 
 > Audio is an optional local input adapter. Nemotron partials are display-only. Stop produces one
-> final editable draft, and the user still clicks Send before it becomes an ordinary text turn; ASR
-> never calls geometry.
+> final editable draft; any demo-vocabulary suggestion is visible and reversible, and the user still
+> clicks Send before it becomes an ordinary text turn. ASR never calls geometry.
 
 ## 6:10–7:10 — Multi-turn local planning request
 
@@ -101,7 +103,9 @@ Message:
 
 Put on screen:
 
-- bed/desk/crib semantic changes and clarification;
+- bed/desk/internal-crib semantic changes and clarification;
+- `baby bed`, `baby-bed`, `baby cot`, and technical `crib` aliases mapped to stable
+  `crib-standard`;
 - application-derived fixed room/rule/state-set versions;
 - application-derived catalog slots, retained furniture, locked constraints, and millimetres;
 - stale-state rejection;
@@ -116,15 +120,18 @@ Message:
 
 ## 8:40–9:50 — Deterministic geometry and typed failure
 
-**Files:** `src/domain/geometry.ts`, `src/domain/layout-engine.ts`
+**Files:** `src/domain/geometry.ts`, `src/domain/layout-engine.ts`,
+`src/domain/manual-placement.ts`
 
-**Symbols:** `evaluateLayoutOption`, `compareKnownLayoutOptions`
+**Symbols:** `evaluateLayoutOption`, `compareKnownLayoutOptions`, `evaluateManualPlacement`
 
 Put on screen:
 
 - rectangle overlap;
 - quarter-circle door swing;
 - 250 mm pair clearance;
+- exact accepted/rejected pair measurements and nearest-point dimension segments;
+- stale-safe, 50 mm-grid manual placement preview and commit using the same validator;
 - `feasibleOptions`, `rejectedOptions`, `evidenceOptionId`, option-scoped `conflicts`,
   separately labeled `aggregateConflicts`, `noResultReason`, and `provenance`.
 
@@ -137,13 +144,16 @@ Message:
 
 **File:** `src/renderer/renderer.ts`
 
-**Symbols:** `renderLayout`, `renderRoomSvg`, `renderTrace`
+**Symbols:** `renderLayout`, `renderRoomSvg`, `renderRequirements`, `renderTrace`
 
 Put on screen:
 
 - rejected-option preview whose placements, checks, and conflicts all come from one exact option;
+- visible requirements/measurements and red/green SVG gap callouts from that same option;
 - retained accepted-layout labeling when no option was evaluated;
 - current accepted layout preservation;
+- pointer/keyboard drag preview with original-position ghost and explicit Apply/Revert;
+- manual-placement provenance separated from model/tool evidence;
 - structured tool plan;
 - separate ASR model/transcript evidence;
 - app validation;
@@ -155,31 +165,31 @@ Message:
 > The trace exposes structured inputs and outputs, never hidden reasoning. Free-form model prose is
 > not trusted for the verdict.
 
-## 10:50–11:30 — Acceptance proof and transition to live offline turn
+## 10:50–11:15 — Acceptance proof and transition to app-owned adjustment
 
 **Files:** `scripts/run-foundry-integration.ts`, `scripts/run-layout-model-benchmarks.mjs`,
 `scripts/run-nemotron-integration.ts`, `scripts/run-audio-integration.ts`
 
 Show only:
 
-- exact five turns;
+- explicit A/B/recovery/E story plus baby-bed alias turns;
 - expected furniture IDs;
 - closet conflict assertion;
 - no-feasible assertion;
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
 - corrected isolated benchmark with unrestricted intent enums, independently authored expectations,
-  A/B/C/failure/correction, four clarification cases, stale/invented guards, and seven paraphrases;
+  A/B/C/failure/correction, four clarification cases, stale/invented guards, and nine paraphrases;
 - exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
   recall;
 - explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-Current checkpoint: 15 test files / 178 tests pass. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,303 ms, stop-to-final 100 ms, 3,100 ms cached
-prepare) and the explicit Whisper fallback prepared in 1,807 ms and transcribed in 211 ms.
+The final checkpoint is recorded in `VALIDATION.md`. The real audio
+fixture produced 31 Nemotron revisions (first partial 1,304 ms, stop-to-final 91 ms, 6,102 ms cached
+prepare) and the explicit Whisper fallback prepared in 4,094 ms and transcribed in 213 ms.
 
 Then return to the app for the single fresh offline controlled-failure input. The corrected selected
-default measured 4.630–11.163 seconds in the eleven-turn real integration and 6.022 seconds median /
-9.944 seconds max in the unrestricted semantic benchmark.
+default measured 2.451–8.924 seconds in the thirteen-turn real integration and 5.711 seconds median /
+10.908 seconds max in the unrestricted semantic benchmark.

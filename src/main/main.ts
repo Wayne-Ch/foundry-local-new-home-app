@@ -18,6 +18,7 @@ import type {
   AudioStreamStartRequest,
   PrepareAudioRequest,
 } from "../audio/audio-types";
+import type { ManualPlacementRequest } from "../domain/manual-placement";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import { type AudioStreamOwnerIdentity, AudioStreamOwnership } from "./audio-stream-owner";
 import { DemoController } from "./demo-controller";
@@ -304,6 +305,10 @@ function registerIpc(): void {
     return controller.runTurn(request, (progress) => {
       sendToFrame(renderer.frame, ipcChannels.progress, progress);
     });
+  });
+  ipcMain.handle(ipcChannels.applyManualPlacement, (event, request: ManualPlacementRequest) => {
+    assertTrustedRendererIpc(event);
+    return controller.applyManualPlacement(request);
   });
   ipcMain.handle(ipcChannels.resetConversation, () => controller.reset());
 }

@@ -10,12 +10,14 @@ import type {
   AudioStreamStartResponse,
   PrepareAudioRequest,
 } from "../audio/audio-types";
+import type { ManualPlacementRequest } from "../domain/manual-placement";
 import type { RuntimeReadiness } from "../domain/types";
 import {
   type AudioTranscriptionResponse,
   type BootstrapPayload,
   type DemoApi,
   ipcChannels,
+  type ManualPlacementResponse,
   type MicrophoneAuthorizationRequest,
   type PrepareAudioResponse,
   type PrepareOfflineResponse,
@@ -48,6 +50,8 @@ const api: DemoApi = {
     ipcRenderer.invoke(ipcChannels.cancelAudioStream, request) as Promise<void>,
   runTurn: (request: RunTurnRequest) =>
     ipcRenderer.invoke(ipcChannels.runTurn, request) as Promise<RunTurnResponse>,
+  applyManualPlacement: (request: ManualPlacementRequest) =>
+    ipcRenderer.invoke(ipcChannels.applyManualPlacement, request) as Promise<ManualPlacementResponse>,
   resetConversation: () => ipcRenderer.invoke(ipcChannels.resetConversation) as Promise<BootstrapPayload>,
   onProgress: (callback: (event: ProgressEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ProgressEvent) => {

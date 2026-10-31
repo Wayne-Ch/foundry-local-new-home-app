@@ -28,7 +28,7 @@ flowchart LR
 - local English speech-to-text through a separate `AudioSession`, with exact Nemotron live
   streaming as the default and exact Whisper Tiny as an explicit fallback;
 - multi-turn language interpretation;
-- emitting only bed/desk/crib intent changes and clarification under runtime JSON Schema guidance;
+- emitting only bed/desk/internal-crib intent changes and clarification under runtime JSON Schema guidance;
 - preserving conversation history inside one `ChatSession`;
 - local model loading and hardware-accelerated inference.
 
@@ -36,18 +36,19 @@ flowchart LR
 
 - explicit microphone permission UX, 20-second capture bound, `AudioWorklet` PCM conversion,
   ordered typed IPC, renderer and native queue bounds, and transcript-as-draft behavior;
-- partial subtitle replacement for display only, final transcript insertion, and the explicit
-  Whisper fallback policy;
+- partial subtitle replacement for display only, raw final transcript retention, a visible narrow
+  speech-suggestion layer, and the explicit Whisper fallback policy;
 - owner-only temporary WAV lifecycle for Whisper fallback;
 - verified room, zone, rule, and furniture dimensions;
 - accepted state and stale-state references;
 - exact catalog-ID selection, retained furniture, versions, units, locked constraints, required
   room-state checks, and unsupported-term evidence;
 - strict schema and derived full-tool-input checks;
-- explicit Queen/King/crib negation and correction guards;
+- explicit Queen/King/baby-bed alias negation and correction guards;
 - bounded option enumeration;
-- geometry, collision, clearance, and no-result decisions;
-- the visible application-evidence response and SVG.
+- geometry, collision, exact clearance measurements, and no-result decisions;
+- app-owned snapped direct manipulation with stale-safe Apply/Revert;
+- the visible application-evidence response, requirements panel, dimension callouts, and SVG.
 
 The model never decides whether geometry is valid.
 
@@ -124,19 +125,20 @@ explicit recovery selection.
 
 | Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 1.807 s; transcription 211 ms |
+| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 4.094 s; transcription 213 ms |
 | `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.303 s; stop-to-final 100 ms; cached prepare 3.100 s; exact words |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.304 s; stop-to-final 91 ms; cached prepare 6.102 s; exact words |
 | `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
 visible fallback control. No code path silently substitutes it.
 
-Current validation covers 15 test files and 147 passing tests. The suite includes worklet startup
+Current validation covers 19 test files and 552 passing tests. The suite includes worklet startup
 cleanup, renderer reset concurrency, atomic failed-mode switching, renderer-owner reload/close
 cancellation, submitted-transcript state, bounded cancellation/reset recovery, stale chunk/partial
-rejection, and the complete-Qwen-response execution gate.
+rejection, context-bounded speech suggestions, manual placement/retention, and the
+complete-Qwen-response execution gate.
 
 ## One turn
 
@@ -206,7 +208,8 @@ The application rejects:
 - verified door/closet/window/catalog facts incorrectly marked unknown.
 
 Furniture recognition is fail-closed against the supported catalog vocabulary: Queen/King bed,
-standard/compact/flexible desk, and crib. Action-object parsing recognizes unsupported variants and
+standard/compact/flexible desk, and baby bed. `baby bed`, `baby-bed`, `baby cot`, and technical
+`crib` map to stable `crib-standard`. Action-object parsing recognizes unsupported variants and
 objects such as California King, twin bed, moon pod, `armchair`, `cabinet`, `bassinet`, `night
 stand`, or another likely furniture noun after add/use/replace/fit/put. These force clarification
 plus application-derived `unknowns` and `clarificationNeeded=true`; supported intent in the same
@@ -244,9 +247,9 @@ The app deliberately evaluates a small fixture set rather than claiming global o
 |---|---|---|
 | Queen + standard desk | Rotated standard desk | Feasible |
 | King + standard desk | Desk shifted east | Closet conflict |
-| Queen + compact desk + crib | Rotated compact desk | Feasible |
-| King + compact desk + crib | East and south alternatives | All rejected |
-| Queen + compact desk | Crib removed | Feasible |
+| Queen + compact desk + baby bed | Rotated compact desk | Feasible |
+| King + compact desk + baby bed | East and south alternatives | All rejected |
+| Queen + compact desk | Baby bed removed | Feasible |
 
 If the exact combination has no verified option set, the tool returns
 `NO_KNOWN_OPTION_SET`; it never invents coordinates. If an accepted layout already exists, the UI
@@ -268,8 +271,8 @@ The application first implemented the v2.2.1 native function-tool API:
 The full-input/native-call experiments were slow or unreliable because small models had to repeat
 state references, versions, catalog IDs, and constraint fields. The compact contract removes those
 application-owned fields from model generation. Under the corrected unrestricted-enum gate,
-`qwen3-0.6b-generic-gpu:2` passed all 16 required semantic scenarios, including negated transitions
-and unsupported California King, twin-bed, and moon-pod requests, and remains the stage-validated
+`qwen3-0.6b-generic-gpu:2` passed all 18 required semantic scenarios, including baby-bed aliases,
+negated transitions, and unsupported California King, twin-bed, and moon-pod requests, and remains the stage-validated
 built-in default. Other candidate claims were not carried forward without this final corrected-gate
 rerun.
 

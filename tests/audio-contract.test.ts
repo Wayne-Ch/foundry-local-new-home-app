@@ -399,6 +399,9 @@ describe("audio recorder state and draft behavior", () => {
     const html = await readFile(path.resolve("index.html"), "utf8");
     expect(html).toContain("Live draft — not sent");
     expect(html).toContain("Use Whisper Tiny fallback (record then transcribe)");
+    expect(html).toContain("<fieldset");
+    expect(html).toContain("Interactive bedroom layout diagram");
+    expect(html).not.toContain('role="img"');
   });
 
   it("stops every microphone track during cleanup", () => {

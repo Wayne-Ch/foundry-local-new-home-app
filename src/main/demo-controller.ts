@@ -20,6 +20,7 @@ import type {
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
+import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
 import type { DemoState, EvaluatedLayoutOption } from "../domain/types";
 import { FoundryLayoutService } from "../foundry/foundry-service";
 import { stageTurns } from "../foundry/prompt";
@@ -27,11 +28,13 @@ import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
   ConversationMessage,
+  ManualPlacementResponse,
   PrepareAudioResponse,
   PrepareOfflineResponse,
   ProgressEvent,
   RunTurnRequest,
   RunTurnResponse,
+  StageTurnId,
   TraceEntry,
 } from "../shared/contracts";
 
@@ -80,6 +83,8 @@ export class DemoController {
     ),
   ];
   #trace: TraceEntry[] = [];
+  #completedStageTurnIds: StageTurnId[] = [];
+  #lastInteraction: BootstrapPayload["lastInteraction"] = null;
   #operationGeneration = 0;
   #resetPromise: Promise<BootstrapPayload> | null = null;
 
@@ -94,6 +99,8 @@ export class DemoController {
       readiness: this.#foundry.readiness,
       audioReadiness: this.#foundry.audioReadiness,
       stageTurns,
+      completedStageTurnIds: this.#completedStageTurnIds,
+      lastInteraction: this.#lastInteraction,
       selectedLayout: this.#selectedLayout,
       lastToolResult: this.#state.lastToolResult,
       messages: this.#messages,
@@ -256,22 +263,27 @@ export class DemoController {
     this.#pushTrace("user", request.scriptedTurnId ?? "Manual prompt", { prompt, state: this.#state });
 
     try {
-      const outcome = await this.#foundry.runTurn(prompt, this.#state, (phase, detail) => {
-        if (!this.#isOperationCurrent(generation)) {
-          return;
-        }
-        const progressPhase =
-          phase === "model-planning"
-            ? "model-planning"
-            : phase === "tool-validating"
-              ? "tool-validating"
-              : phase === "geometry-running"
-                ? "geometry-running"
-                : phase === "model-summarizing"
-                  ? "model-summarizing"
-                  : "model-planning";
-        onProgress?.({ phase: progressPhase, detail });
-      });
+      const outcome = await this.#foundry.runTurn(
+        prompt,
+        this.#state,
+        (phase, detail) => {
+          if (!this.#isOperationCurrent(generation)) {
+            return;
+          }
+          const progressPhase =
+            phase === "model-planning"
+              ? "model-planning"
+              : phase === "tool-validating"
+                ? "tool-validating"
+                : phase === "geometry-running"
+                  ? "geometry-running"
+                  : phase === "model-summarizing"
+                    ? "model-summarizing"
+                    : "model-planning";
+          onProgress?.({ phase: progressPhase, detail });
+        },
+        this.#selectedLayout,
+      );
       this.#assertOperationCurrent(generation);
 
       this.#pushTrace("model-tool-call", "Model-proposed intent delta", outcome.modelIntent);
@@ -292,6 +304,13 @@ export class DemoController {
             (option) => option.id === outcome.toolResult.selectedOptionId,
           ) ?? null;
       }
+      if (
+        request.scriptedTurnId !== undefined &&
+        !this.#completedStageTurnIds.includes(request.scriptedTurnId)
+      ) {
+        this.#completedStageTurnIds.push(request.scriptedTurnId);
+      }
+      this.#lastInteraction = "turn";
 
       this.#messages.push(message("application", outcome.assistantText));
       this.#pushTrace("application-response", "Application rendering of typed evidence", {
@@ -318,6 +337,42 @@ export class DemoController {
     }
   }
 
+  applyManualPlacement(request: ManualPlacementRequest): ManualPlacementResponse {
+    this.#beginOperation();
+    const outcome = evaluateManualPlacement(this.#state, this.#selectedLayout, request);
+    this.#pushTrace("manual-placement", "Application-owned manual placement", {
+      provenance: "application-owned direct manipulation",
+      accepted: outcome.accepted,
+      rejectionCode: outcome.rejectionCode,
+      reason: outcome.reason,
+      request: outcome.request,
+      preview: outcome.preview,
+      priorAcceptedLayoutId: this.#selectedLayout?.id ?? null,
+    });
+    if (outcome.accepted) {
+      this.#state = outcome.state;
+      this.#selectedLayout = outcome.selectedLayout;
+      this.#lastInteraction = "manual";
+      this.#messages.push(
+        message(
+          "application",
+          `App-owned manual placement accepted: ${outcome.reason} No model geometry was used.`,
+        ),
+      );
+    }
+    return {
+      outcome: {
+        ...outcome,
+        state: this.#state,
+        selectedLayout: this.#selectedLayout,
+      },
+      completedStageTurnIds: this.#completedStageTurnIds,
+      lastInteraction: this.#lastInteraction,
+      messages: this.#messages,
+      trace: this.#trace,
+    };
+  }
+
   reset(): Promise<BootstrapPayload> {
     if (this.#resetPromise !== null) {
       return this.#resetPromise;
@@ -341,6 +396,8 @@ export class DemoController {
       message("system", "Conversation reset. Verified dimensions and locked room constraints remain loaded."),
     ];
     this.#trace = [];
+    this.#completedStageTurnIds = [];
+    this.#lastInteraction = null;
     return this.bootstrap();
   }
 
@@ -371,6 +428,8 @@ export class DemoController {
       state: this.#state,
       toolResult,
       selectedLayout: this.#selectedLayout,
+      completedStageTurnIds: this.#completedStageTurnIds,
+      lastInteraction: "turn",
       assistantText,
       messages: this.#messages,
       trace: this.#trace,

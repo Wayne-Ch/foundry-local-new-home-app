@@ -31,9 +31,14 @@ room plan.
   silently.
 - **Transcript review:** speech text is placed into the editable Manual prompt. It is never
   auto-submitted and never bypasses the existing structured planning/tool pipeline. On Send, the
-  display transitions from `Live draft — not sent` to the exact edited submitted prompt.
+  display transitions from `Live draft — not sent` to the exact edited submitted prompt. The raw ASR
+  transcript remains in Developer trace. A narrow, visible suggestion layer can correct the observed
+  demo-context phrases `queen size bag` -> `queen-size bed` and `creep` -> `baby bed`; the corrected
+  draft is editable, can be restored to the original transcript, and is never silently submitted.
 - **Structured planning:** Foundry Local runtime-enforced JSON Schema output contains only a compact
-  semantic intent delta (`bed`, `desk`, `crib`, and clarification). Every supported compact intent
+  semantic intent delta (`bed`, `desk`, internal `crib`, and clarification). Audience prompts use
+  **baby bed**; `baby bed`, `baby-bed`, `baby cot`, and `crib` map to the stable
+  `crib-standard` catalog intent. Every supported compact intent
   value remains available in the runtime schema; application code injects the exact submitted prompt
   as `changedPreference` and validates the model choice against explicit wording and accepted state,
   including directional replacements, scoped negation, ambiguity, and fail-closed unsupported
@@ -45,8 +50,14 @@ room plan.
   `compare_layout_options`. Length-truncated or otherwise partial JSON is rejected and never
   executed.
 - **Geometry:** application-owned room bounds, door swing, reserved-zone overlap, furniture
-  collision, and 250 mm furniture-clearance checks.
-- **Rendering:** Electron renderer with an SVG room plan and an inspectable structured trace.
+  collision, 250 mm furniture-clearance checks, and exact pair measurements for accepted or rejected
+  options.
+- **Direct manipulation:** accepted SVG furniture is pointer- and keyboard-adjustable on a bounded
+  50 mm grid. Dragging shows an app-owned ghost preview; Apply revalidates and creates a new accepted
+  application layout version, while invalid placement remains a labeled rejected preview until
+  Revert.
+- **Rendering:** Electron renderer with an SVG room plan, visible requirements/measurements,
+  dimension callouts for exact gaps or shortfalls, and an inspectable structured trace.
 - **Failure evidence:** one rejected preview is always rendered with checks and conflicts from that
   same option. Cross-option rejection reasons are separate in the typed result and developer trace.
 
@@ -62,21 +73,23 @@ five-turn baseline took 23.955–38.893 seconds and four turns needed a correcti
 The corrected compact contract keeps all semantic enums available and emits accepted JSON of roughly
 143–205 bytes while application code derives the unchanged full tool input and enforces stale state,
 retained state, unsupported furniture, transition direction, scoped negation, ambiguity, and
-invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 16 fixed-gate scenarios,
+invented-ID protections. Exact `qwen3-0.6b-generic-gpu:2` passed all 18 fixed-gate scenarios,
 including negated bed/desk transitions and unsupported California King, twin-bed, and moon-pod
-requests. It loaded in 3.608 seconds and measured 6.022 seconds warm median / 9.944 seconds warm
+requests plus `baby-bed` and `baby cot` aliases. It loaded in 3.783 seconds and measured 5.711 seconds
+warm median / 10.908 seconds warm
 maximum. Other candidates were not rerun for this final semantic gate.
 
 ## Audio model decision
 
 Nemotron English streaming is the stage default because the UI now uses its actual advantage:
 revising local captions while the user is still speaking. The same deterministic 5.53-second phrase
-produced 31 display revisions, first text at **1.303 s**, and the final aggregate transcript **100 ms**
-after input ended. Cached model preparation took **3.100 s** on the validated machine. The exact
+produced 31 display revisions, first text at **1.304 s**, and the final aggregate transcript **91 ms**
+after input ended. Cached model preparation took **6.102 s** on the validated machine. The exact
 model is 696 MB on CPU/`CPUExecutionProvider`.
 
-Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **1.807 s** cached preparation,
-and **211 ms** record-then-transcribe time for the same phrase. It does not emit live subtitles.
+Whisper Tiny remains the explicit smaller fallback: 131 MB on CPU, **4.094 s** cached preparation,
+and **213 ms** record-then-transcribe time for the same phrase in the October 30 rerun. It does not
+emit live subtitles.
 Choosing it requires the labeled fallback action; no error path rewrites the model selection.
 
 The live subtitle stream is display-only evidence. On **Stop**, the app waits for Nemotron's final
@@ -121,8 +134,8 @@ Prerequisites:
 
 ```powershell
 npm install --no-audit --no-fund
-npm install-scripts approve esbuild foundry-local-sdk
-npm rebuild esbuild foundry-local-sdk
+npm install-scripts approve electron esbuild foundry-local-sdk
+npm rebuild electron esbuild foundry-local-sdk
 npm run build
 npm run start:built
 ```
@@ -137,13 +150,16 @@ In the app:
 4. Select **Start recording** and speak for at most 20 seconds. The **Live draft — not sent** panel
    revises while speech is arriving and the timer remains visible.
 5. Select **Stop**. The final aggregate transcript is placed into **Manual prompt**.
-6. Review or edit the transcript, then select **Send**. Stop never submits automatically; Send
-   changes the draft label to submitted/processing and shows the exact edited prompt.
+6. Review the visible speech suggestions, if any, or restore the original transcript. Edit as
+   needed, then select **Send**. Stop never submits automatically; Send changes the draft label to
+   submitted/processing and shows the exact edited prompt.
 7. If Nemotron deterministically fails, the UI exposes
    **Whisper Tiny fallback (record then transcribe)**. Selecting it is an explicit model switch;
    record again, wait for the final Whisper transcript, then review and click **Send**.
-8. Existing typed and scripted controls remain available as the stage fallback.
-9. Open **Developer trace** to distinguish the display-only ASR stream/final transcript from the
+8. Existing typed and scripted controls remain available as the stage fallback. After a feasible
+   result, drag furniture in the SVG or use its arrow-key controls; Apply/Revert remains app-owned
+   and does not invoke Qwen.
+9. Open **Developer trace** to distinguish the raw ASR transcript and visible suggestion layer from the
    complete layout-model plan, validation, and geometry evidence.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
@@ -185,17 +201,27 @@ npm run probe:microphone-permission
 npm run capture:ui
 ```
 
-`npm run test:integration` performs five real local turns:
+`npm run test:integration` performs the explicit recovery story plus semantic guards:
 
 1. Queen + standard desk: feasible.
-2. King replaces Queen while retaining desk: closet conflict.
-3. Keep Queen, add crib, revise to compact desk: feasible.
-4. King + compact desk + crib: no bounded feasible option.
-5. Adversarial correction: do not use King, remove crib, retain Queen + compact desk.
+2. King replaces Queen while retaining desk: closet conflict and preference-change question.
+3. Recovery choice: keep Queen, allow compact desk, add a baby bed, and keep the closet clear:
+   feasible.
+4. King + compact desk + baby bed: no bounded feasible option with exact 70 mm and 170 mm gaps
+   against the required 250 mm.
+5. Adversarial correction plus `baby-bed` and `baby cot` alias turns: all reach the expected stable
+   catalog intent through the real Qwen/app validation path.
 
 `npm run test:nemotron-integration` loads exact Nemotron, streams deterministic PCM in ordered
 100 ms chunks, requires multiple changing partials, captures first-partial and stop-to-final timing,
 checks the exact CPU model identity, and verifies the final transcript with no external endpoint.
+The committed deterministic fixture remains the honest Queen + desk recording. The focused real-mic
+gate for this change is:
+
+> Keep the Queen bed. Add a baby bed. Use a compact desk. Keep the closet clear.
+
+Confirm the editable draft, any visible suggestion label, and the same feasible
+`queen-crib-compact-v1` result before stage use.
 
 `npm run test:audio-integration` explicitly selects Whisper Tiny, transcribes
 `tests/fixtures/queen-desk.wav`, requires at least 85% key-word recall, asserts no external endpoint,
@@ -203,10 +229,10 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The corrected October 29 selected-default integration completed eleven real Qwen turns—including
-affirmative and negated transitions plus unsupported variants—in **4.630–11.163 s**. The
-unrestricted-schema benchmark measured **6.022 s median / 9.944 s max** for exact
-`qwen3-0.6b-generic-gpu:2`; every one of its 16 semantic scenarios passed. The legacy full-input
+The October 30 selected-default integration completed 13 real Qwen turns—including explicit
+recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants—in
+**2.451–8.924 s**. The unrestricted-schema benchmark measured **5.711 s median / 10.908 s max** for
+exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed. The legacy full-input
 Qwen2.5 path measured **23.955–38.893 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
@@ -279,8 +305,11 @@ did not globally disable the machine network.
 | `src/domain/tool-contract.ts` | strict schema, stale-state checks, explicit intent/retention guards |
 | `src/domain/layout-engine.ts` | bounded option enumeration and typed tool result |
 | `src/domain/geometry.ts` | deterministic collision, boundary, door-swing, and clearance checks |
+| `src/domain/manual-placement.ts` | stale-safe manual preview validation and accepted application layout versions |
 | `src/domain/fixture.ts` | verified demo room, catalog dimensions, and known options |
 | `src/renderer/renderer.ts` | stage UI, SVG layout, evidence cards, developer trace |
+| `src/renderer/placement-interaction.ts` | SVG coordinate conversion, snapping, bounds, and keyboard movement |
+| `src/renderer/speech-correction.ts` | narrow visible ASR correction suggestions |
 | `scripts/run-foundry-integration.ts` | real-model staged and adversarial acceptance |
 | `scripts/run-layout-model-benchmarks.mjs` | isolated exact-candidate latency and quality suite |
 | `scripts/run-nemotron-integration.ts` | real Nemotron partial/final streaming and timing acceptance |
@@ -299,4 +328,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [DEMO-RUNBOOK.md](DEMO-RUNBOOK.md), and
 - Audio is English only. Nemotron provides display-only live captions; Whisper Tiny is an explicit
   record-then-transcribe fallback. There is no Chinese/multilingual claim or TTS.
 - The committed deterministic WAV validates ASR, not real microphone permission or human speech.
+- The internal catalog ID remains `crib-standard`; audience-facing prompts and labels use
+  **baby bed** for speech reliability.
 - Windows was validated. Apple-silicon macOS remains a documented validation blocker.
