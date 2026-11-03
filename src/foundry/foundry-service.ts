@@ -2872,21 +2872,20 @@ export class FoundryLayoutService {
   }
 }
 
-function renderApplicationEvidence(
+export function renderApplicationEvidence(
   result: LayoutToolResult,
   currentAcceptedLayout: EvaluatedLayoutOption | null,
 ): string {
   if (result.status === "feasible") {
     const selected = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
     return [
-      "Application evidence:",
       selected?.label ?? "The selected known option",
       "passes every locked deterministic check.",
-      `Preference interpreted: ${result.changedPreference}`,
+      `User request: ${result.changedPreference}`,
     ].join(" ");
   }
   if (result.status === "clarification_required") {
-    return `Application evidence: geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}.`;
+    return `Geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}. User request: ${result.changedPreference}`;
   }
   const evidenceOption = result.rejectedOptions.find((option) => option.id === result.evidenceOptionId);
   const conflictText =
@@ -2904,7 +2903,7 @@ function renderApplicationEvidence(
         }`
       : (result.noResultReason?.message ?? "No bounded known option is feasible.");
   const choices = result.noResultReason?.preferencesThatMayChange.join(", ") ?? "a locked preference";
-  return `Application evidence: no feasible known option. ${conflictText} Which preference may change: ${choices}?`;
+  return `No feasible known option. ${conflictText} Which preference may change: ${choices}? User request: ${result.changedPreference}`;
 }
 
 export function summarizeModelInfo(info: ModelInfo): string {
