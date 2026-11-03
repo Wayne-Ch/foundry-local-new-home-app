@@ -30,7 +30,7 @@ import {
   requireActiveRoomSession,
   resetRoomSessionState,
 } from "../domain/room-session";
-import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
+import type { EvaluatedLayoutOption } from "../domain/types";
 import {
   FoundryFloorPlanVisionError,
   FoundryLayoutService,
@@ -572,11 +572,7 @@ export class DemoController {
       }
       const completedStageTurnId =
         request.scriptedTurnId ??
-        manuallyCompletedStageTurn(
-          stageTurnsForMode(this.#planningFixture.mode),
-          this.#completedStageTurnIds,
-          outcome,
-        );
+        manuallyCompletedStageTurn(stageTurnsForMode(activeRoom.mode), this.#completedStageTurnIds, outcome);
       if (completedStageTurnId !== undefined && !this.#completedStageTurnIds.includes(completedStageTurnId)) {
         this.#completedStageTurnIds.push(completedStageTurnId);
       }

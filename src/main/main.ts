@@ -149,7 +149,7 @@ let microphonePermissionProbeRequest:
     }
   | undefined;
 
-if (process.env.DEMO_CAPTURE_PATH?.trim() || floorPlanUiProbeEnabled) {
+if (process.env.DEMO_CAPTURE_PATH?.trim()) {
   app.disableHardwareAcceleration();
 }
 if (microphonePermissionProbeEnabled) {
