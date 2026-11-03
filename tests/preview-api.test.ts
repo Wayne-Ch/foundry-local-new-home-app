@@ -133,9 +133,7 @@ describe("renderer preview scenarios", () => {
           measurement.requiredDistanceMm,
         ]),
       ).toEqual(measurements);
-      expect(bootstrap.messages.at(-1)?.text).toBe(
-        `${evidenceVerdict} User request: ${expectedPrompt}`,
-      );
+      expect(bootstrap.messages.at(-1)?.text).toBe(`${evidenceVerdict} User request: ${expectedPrompt}`);
     },
   );
 });
