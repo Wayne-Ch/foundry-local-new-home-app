@@ -30,8 +30,15 @@ function selectedLayout(result: ReturnType<typeof compareKnownLayoutOptions>): E
   return result.feasibleOptions.find((option) => option.id === result.selectedOptionId) ?? null;
 }
 
+function expectConclusionOnly(text: string, prompt: string): void {
+  expect(text).not.toContain(prompt);
+  expect(text).not.toContain("User request");
+  expect(text).not.toContain("Preference interpreted");
+  expect(text).not.toContain("Application evidence");
+}
+
 describe.each(scenarios)("application evidence copy for $label", ({ fixture, turns }) => {
-  it("keeps the deterministic feasible verdict first and labels the exact user request", () => {
+  it("renders only the deterministic feasible conclusion", () => {
     const state = createInitialDemoState(fixture.roomPlan);
     const prompt = turns[0]?.prompt ?? "";
     const result = compareKnownLayoutOptions(
@@ -48,14 +55,11 @@ describe.each(scenarios)("application evidence copy for $label", ({ fixture, tur
 
     const text = renderApplicationEvidence(result, null);
 
-    expect(text).toBe(
-      `${selectedLayout(result)?.label} passes every locked deterministic check. User request: ${prompt}`,
-    );
-    expect(text).not.toContain("Application evidence:");
-    expect(text).not.toContain("Preference interpreted:");
+    expect(text).toBe(`${selectedLayout(result)?.label} passes every locked deterministic check.`);
+    expectConclusionOnly(text, prompt);
   });
 
-  it("keeps the deterministic rejected verdict first and labels the exact user request", () => {
+  it("renders only the deterministic rejected conclusion", () => {
     let state = createInitialDemoState(fixture.roomPlan);
     const accepted = compareKnownLayoutOptions(
       createToolInputForTests({
@@ -87,9 +91,30 @@ describe.each(scenarios)("application evidence copy for $label", ({ fixture, tur
     const text = renderApplicationEvidence(rejected, acceptedLayout);
 
     expect(text).toMatch(/^No feasible known option\./);
-    expect(text).toContain(`User request: ${prompt}`);
-    expect(text.endsWith(`User request: ${prompt}`)).toBe(true);
-    expect(text).not.toContain("Application evidence:");
-    expect(text).not.toContain("Preference interpreted:");
+    expect(text).toContain("Which preference may change:");
+    expectConclusionOnly(text, prompt);
+  });
+
+  it("keeps clarification evidence conclusion-only", () => {
+    const state = createInitialDemoState(fixture.roomPlan);
+    const prompt = "Please add a sofa.";
+    const result = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state,
+        planningFixture: fixture,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: prompt,
+        unknowns: ["unsupported furniture: sofa"],
+        clarificationNeeded: true,
+      }),
+      state,
+      null,
+      fixture,
+    );
+
+    const text = renderApplicationEvidence(result, null);
+
+    expect(text).toBe("Geometry did not run. Missing verified facts: unsupported furniture: sofa.");
+    expectConclusionOnly(text, prompt);
   });
 });

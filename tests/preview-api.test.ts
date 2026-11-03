@@ -36,25 +36,45 @@ describe("renderer preview scenarios", () => {
     ["imported feasible", "?preview=1&room=imported&step=queen", "imported", 0],
     ["imported rejected", "?preview=1&room=imported&step=failure", "imported", 3],
   ] as const)(
-    "uses unambiguous application-evidence copy for %s without changing trace prompt provenance",
+    "keeps Buyer prompts separate from Application evidence for %s without changing trace provenance",
     async (_label, search, roomMode, turnIndex) => {
       vi.stubGlobal("window", { location: { search } });
       const expectedPrompt = stageTurnsForMode(roomMode)[turnIndex]?.prompt ?? "";
 
       const bootstrap = await createPreviewApi().getBootstrap();
       const applicationMessage = bootstrap.messages.at(-1);
+      const buyerMessage = bootstrap.messages.at(-2);
       const validationTrace = bootstrap.trace.find((entry) => entry.kind === "validation");
+      const geometryTrace = bootstrap.trace.find((entry) => entry.kind === "geometry");
+      const buyerMessages = bootstrap.messages.filter((message) => message.role === "user");
+      const applicationMessages = bootstrap.messages.filter((message) => message.role === "application");
 
       expect(applicationMessage).toMatchObject({
         role: "application",
-        text: expect.stringContaining(`User request: ${expectedPrompt}`),
       });
-      expect(applicationMessage?.text).not.toContain("Application evidence:");
-      expect(applicationMessage?.text).not.toContain("Preference interpreted:");
+      expect(buyerMessage).toMatchObject({
+        role: "user",
+        text: expectedPrompt,
+      });
+      expect(buyerMessages).toHaveLength(applicationMessages.length);
+      for (const [index, visibleBuyer] of buyerMessages.entries()) {
+        const visibleEvidence = applicationMessages[index];
+        expect(visibleEvidence).toBeDefined();
+        expect(visibleEvidence?.text).not.toContain(visibleBuyer.text);
+        expect(visibleEvidence?.text).not.toContain("User request");
+        expect(visibleEvidence?.text).not.toContain("Preference interpreted");
+        expect(visibleEvidence?.text).not.toContain("Application evidence");
+        expect(bootstrap.messages.filter((message) => message.text.includes(visibleBuyer.text))).toEqual([
+          visibleBuyer,
+        ]);
+      }
       expect(validationTrace?.payload).toMatchObject({
         input: {
           changedPreference: expectedPrompt,
         },
+      });
+      expect(geometryTrace?.payload).toMatchObject({
+        changedPreference: expectedPrompt,
       });
     },
   );
@@ -107,6 +127,7 @@ describe("renderer preview scenarios", () => {
       const evidenceLayout = bootstrap.lastToolResult?.rejectedOptions.find(
         (option) => option.id === bootstrap.lastToolResult?.evidenceOptionId,
       );
+      const validationTrace = bootstrap.trace.find((entry) => entry.kind === "validation");
 
       expect(bootstrap.state).toMatchObject({
         version: stateVersion,
@@ -133,7 +154,19 @@ describe("renderer preview scenarios", () => {
           measurement.requiredDistanceMm,
         ]),
       ).toEqual(measurements);
-      expect(bootstrap.messages.at(-1)?.text).toBe(`${evidenceVerdict} User request: ${expectedPrompt}`);
+      expect(bootstrap.messages.at(-2)).toMatchObject({
+        role: "user",
+        text: expectedPrompt,
+      });
+      expect(bootstrap.messages.at(-1)).toMatchObject({
+        role: "application",
+        text: evidenceVerdict,
+      });
+      expect(validationTrace?.payload).toMatchObject({
+        input: {
+          changedPreference: expectedPrompt,
+        },
+      });
     },
   );
 });

@@ -2878,14 +2878,10 @@ export function renderApplicationEvidence(
 ): string {
   if (result.status === "feasible") {
     const selected = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
-    return [
-      selected?.label ?? "The selected known option",
-      "passes every locked deterministic check.",
-      `User request: ${result.changedPreference}`,
-    ].join(" ");
+    return `${selected?.label ?? "The selected known option"} passes every locked deterministic check.`;
   }
   if (result.status === "clarification_required") {
-    return `Geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}. User request: ${result.changedPreference}`;
+    return `Geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}.`;
   }
   const evidenceOption = result.rejectedOptions.find((option) => option.id === result.evidenceOptionId);
   const conflictText =
@@ -2903,7 +2899,7 @@ export function renderApplicationEvidence(
         }`
       : (result.noResultReason?.message ?? "No bounded known option is feasible.");
   const choices = result.noResultReason?.preferencesThatMayChange.join(", ") ?? "a locked preference";
-  return `No feasible known option. ${conflictText} Which preference may change: ${choices}? User request: ${result.changedPreference}`;
+  return `No feasible known option. ${conflictText} Which preference may change: ${choices}?`;
 }
 
 export function summarizeModelInfo(info: ModelInfo): string {
