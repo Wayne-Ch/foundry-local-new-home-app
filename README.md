@@ -7,6 +7,10 @@ room plan.
 
 ![Stage UI](docs/screenshots/stage-ui.png)
 
+> **Playtest the Enhanced New Home flow:** use the concise, tester-ready
+> [PLAYTEST.md](PLAYTEST.md). It identifies the required feature branch, exact fixture boundary,
+> A/B/C/E story, visible pass evidence, and stop conditions. `main` is not the enhanced flow.
+
 ## What is real
 
 - **Inference:** `foundry-local-sdk@2.2.1`, in-process through `ChatSession`.
@@ -442,8 +446,8 @@ did not globally disable the machine network.
 | `scripts/run-audio-integration.ts` | explicit Whisper Tiny fallback and cleanup acceptance |
 | `tests/` | geometry, schema, state, fixture, and semantic tests |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [DEMO-RUNBOOK.md](DEMO-RUNBOOK.md), and
-[CODE-WALKTHROUGH.md](CODE-WALKTHROUGH.md).
+See [PLAYTEST.md](PLAYTEST.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+[DEMO-RUNBOOK.md](DEMO-RUNBOOK.md), and [CODE-WALKTHROUGH.md](CODE-WALKTHROUGH.md).
 
 ## Scope and limitations
 
