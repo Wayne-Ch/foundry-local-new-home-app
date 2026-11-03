@@ -7,7 +7,7 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
-import { defaultPlanningFixture, roomPlan } from "../domain/fixture";
+import { defaultPlanningFixture } from "../domain/fixture";
 import {
   createImportedPlanningFixture,
   FLOOR_PLAN_SAMPLE_ASSET_PATH,
@@ -17,7 +17,7 @@ import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import { evaluateManualPlacement } from "../domain/manual-placement";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
 import type { DemoState, FloorPlanVisionReadiness, PlanningFixture, RuntimeReadiness } from "../domain/types";
-import { stageTurns } from "../foundry/prompt";
+import { stageTurnsForMode } from "../foundry/prompt";
 import type { BootstrapPayload, DemoApi, PrepareOfflineResponse, RunTurnResponse } from "../shared/contracts";
 
 const readiness: RuntimeReadiness = {
@@ -102,15 +102,25 @@ const previewRecognition: FloorPlanRecognition = {
   windowOpening: "present",
 };
 
+function previewPlanningFixture(): PlanningFixture {
+  const scenario = new URLSearchParams(window.location.search).get("scenario");
+  return scenario === "imported-retained"
+    ? createImportedPlanningFixture(previewRecognition)
+    : defaultPlanningFixture;
+}
+
 function buildPreview(conversationGeneration: number): BootstrapPayload {
   const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
-  let state: DemoState = createInitialDemoState();
+  const planningFixture = previewPlanningFixture();
+  const stageTurns = stageTurnsForMode(planningFixture.mode);
+  let state: DemoState = createInitialDemoState(planningFixture.roomPlan);
   const turnAInput = createToolInputForTests({
     state,
     candidateFurnitureIds: ["bed-queen", "desk-standard"],
     changedPreference: stageTurns[0]?.prompt ?? "",
   });
-  const turnA = compareKnownLayoutOptions(turnAInput, state);
+  const turnA = compareKnownLayoutOptions(turnAInput, state, null, planningFixture);
+  const turnALayout = turnA.feasibleOptions.find((option) => option.id === turnA.selectedOptionId) ?? null;
   state = applyToolResult(state, turnA);
 
   const turnBInput = createToolInputForTests({
@@ -119,7 +129,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
     retainFurnitureIds: ["desk-standard"],
     changedPreference: stageTurns[1]?.prompt ?? "",
   });
-  const turnB = compareKnownLayoutOptions(turnBInput, state);
+  const turnB = compareKnownLayoutOptions(turnBInput, state, turnALayout, planningFixture);
   state = applyToolResult(state, turnB);
   const afterBState = state;
 
@@ -129,7 +139,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
     retainFurnitureIds: ["bed-queen"],
     changedPreference: stageTurns[2]?.prompt ?? "",
   });
-  const turnC = compareKnownLayoutOptions(turnCInput, state);
+  const turnC = compareKnownLayoutOptions(turnCInput, state, turnALayout, planningFixture);
   state = applyToolResult(state, turnC);
   const recoveryState = state;
   const selectedLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
@@ -139,7 +149,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
     retainFurnitureIds: ["desk-compact", "crib-standard"],
     changedPreference: stageTurns[3]?.prompt ?? "",
   });
-  const controlledFailure = compareKnownLayoutOptions(failureInput, state);
+  const controlledFailure = compareKnownLayoutOptions(failureInput, state, selectedLayout, planningFixture);
   const failureState = applyToolResult(state, controlledFailure);
   const evidenceInput = recoveryOnly ? turnCInput : failureInput;
   const evidenceResult = recoveryOnly ? turnC : controlledFailure;
@@ -147,17 +157,45 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
 
   return {
     conversationGeneration,
-    roomMode: "default",
-    roomPlan,
+    roomMode: planningFixture.mode,
+    roomPlan: planningFixture.roomPlan,
     state: recoveryOnly ? recoveryState : failureState,
     readiness,
     audioReadiness,
     visionReadiness,
     floorPlanImport: {
-      status: "idle",
-      preview: null,
-      recognition: null,
-      recognizedFacts: [],
+      status: planningFixture.mode === "imported" ? "imported" : "idle",
+      preview:
+        planningFixture.mode === "imported"
+          ? {
+              source: "sample",
+              displayName: "Packaged NARA master-bedroom crop",
+              dataUrl: `./${FLOOR_PLAN_SAMPLE_ASSET_PATH}`,
+              format: "png",
+              mimeType: "image/png",
+              width: 1020,
+              height: 1080,
+              byteLength: 194_686,
+              pixelCount: 1020 * 1080,
+              sourceFormat: "png",
+              sourceByteLength: 194_686,
+              inferenceFormat: "png",
+              inferenceWidth: 1020,
+              inferenceHeight: 1080,
+              inferenceByteLength: 194_686,
+            }
+          : null,
+      recognition: planningFixture.mode === "imported" ? previewRecognition : null,
+      recognizedFacts:
+        planningFixture.mode === "imported"
+          ? [
+              "Room shape: rectangle.",
+              "Room label: present.",
+              "Door opening: present.",
+              "Window opening: present.",
+              "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
+            ]
+          : [],
       error: null,
     },
     stageTurns,
@@ -212,7 +250,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
             {
               id: "preview-app-failure",
               role: "application" as const,
-              text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
+              text: "Application evidence: no feasible known option. The prior accepted layout remains active on the main canvas. Exact rejected-option evidence remains visible, and Inspect rejected option opens its preview without accepting it.",
             },
           ]),
     ],
@@ -249,23 +287,35 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
   };
 }
 
-function buildResetPreview(conversationGeneration: number): BootstrapPayload {
+function buildResetPreview(
+  conversationGeneration: number,
+  planningFixture: PlanningFixture,
+): BootstrapPayload {
+  const imported = planningFixture.mode === "imported";
   return {
     conversationGeneration,
-    roomMode: "default",
-    roomPlan,
-    state: createInitialDemoState(),
+    roomMode: planningFixture.mode,
+    roomPlan: planningFixture.roomPlan,
+    state: createInitialDemoState(planningFixture.roomPlan),
     readiness,
     audioReadiness,
     visionReadiness,
     floorPlanImport: {
-      status: "idle",
+      status: imported ? "imported" : "idle",
       preview: null,
-      recognition: null,
-      recognizedFacts: [],
+      recognition: imported ? previewRecognition : null,
+      recognizedFacts: imported
+        ? [
+            "Room shape: rectangle.",
+            "Room label: present.",
+            "Door opening: present.",
+            "Window opening: present.",
+            "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
+          ]
+        : [],
       error: null,
     },
-    stageTurns,
+    stageTurns: stageTurnsForMode(planningFixture.mode),
     completedStageTurnIds: [],
     lastInteraction: null,
     selectedLayout: null,
@@ -283,7 +333,7 @@ function buildResetPreview(conversationGeneration: number): BootstrapPayload {
 
 export function createPreviewApi(): DemoApi {
   let bootstrap = buildPreview(0);
-  let planningFixture: PlanningFixture = defaultPlanningFixture;
+  let planningFixture: PlanningFixture = previewPlanningFixture();
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
@@ -311,7 +361,7 @@ export function createPreviewApi(): DemoApi {
     loadSampleFloorPlan: async () => {
       planningFixture = defaultPlanningFixture;
       bootstrap = {
-        ...buildResetPreview(bootstrap.conversationGeneration + 1),
+        ...buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture),
         floorPlanImport: {
           status: "image_ready",
           preview: {
@@ -342,7 +392,7 @@ export function createPreviewApi(): DemoApi {
     analyzeFloorPlan: async () => {
       planningFixture = createImportedPlanningFixture(previewRecognition);
       bootstrap = {
-        ...buildResetPreview(bootstrap.conversationGeneration + 1),
+        ...buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture),
         roomMode: "imported",
         roomPlan: planningFixture.roomPlan,
         state: createInitialDemoState(planningFixture.roomPlan),
@@ -364,7 +414,7 @@ export function createPreviewApi(): DemoApi {
     },
     useDefaultRoom: async () => {
       planningFixture = defaultPlanningFixture;
-      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1);
+      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
       return bootstrap;
     },
     runTurn: async (): Promise<RunTurnResponse> => ({
@@ -421,7 +471,7 @@ export function createPreviewApi(): DemoApi {
       };
     },
     resetConversation: async () => {
-      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1);
+      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
       return bootstrap;
     },
     onProgress: () => () => {},

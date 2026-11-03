@@ -827,6 +827,59 @@ h3 {
   background-size: 30px 30px;
 }
 
+.layout-view-actions {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgb(89 124 163 / 48%);
+  border-radius: 10px;
+  background: rgb(6 17 30 / 90%);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 25%);
+  backdrop-filter: blur(10px);
+}
+
+.layout-view-actions[hidden] {
+  display: none;
+}
+
+.layout-view-button {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #34516f;
+  border-radius: 7px;
+  background: #10243a;
+  color: #cfe0f3;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.layout-view-button:hover:not(:disabled) {
+  border-color: #6ea8fe;
+}
+
+.layout-view-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.layout-view-button[aria-pressed="true"] {
+  border-color: rgb(53 198 138 / 80%);
+  background: rgb(23 104 76 / 48%);
+  color: #d3f8e7;
+}
+
+.layout-view-button.is-rejected[aria-pressed="true"] {
+  border-color: rgb(255 82 99 / 82%);
+  background: rgb(127 34 47 / 58%);
+  color: #ffd0d5;
+}
+
 .room-svg {
   width: 96%;
   height: 93%;
@@ -881,6 +934,19 @@ h3 {
   line-height: 1.4;
 }
 
+.requirements-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.requirement-summary {
+  order: 1;
+}
+
+.measurement-list {
+  order: 2;
+}
+
 .requirement-summary,
 .measurement-list {
   display: flex;
@@ -892,6 +958,20 @@ h3 {
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid #29435f;
+}
+
+.requirements-card.is-rejected-evidence .measurement-list {
+  order: 1;
+  margin-top: 0;
+  margin-bottom: 9px;
+  padding-top: 0;
+  padding-bottom: 9px;
+  border-top: 0;
+  border-bottom: 1px solid #29435f;
+}
+
+.requirements-card.is-rejected-evidence .requirement-summary {
+  order: 2;
 }
 
 .requirement-item,

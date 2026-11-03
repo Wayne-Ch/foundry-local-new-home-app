@@ -333,11 +333,14 @@ The app deliberately evaluates a small fixture set rather than claiming global o
 
 If the exact combination has no verified option set, the tool returns
 `NO_KNOWN_OPTION_SET`; it never invents coordinates. If an accepted layout already exists, the UI
-labels it as the retained accepted layout rather than misrepresenting it as a rejected option.
+keeps that layout on the main canvas and labels it as retained rather than misrepresenting a
+rejected option as accepted.
 
 For rejected alternatives, top-level checks and conflicts are tied to `evidenceOptionId`, the exact
-option rendered in the SVG. Deduplicated reasons across all rejected alternatives live in
-`aggregateConflicts` and are labeled as aggregate evidence in the trace and application response.
+option represented in the evidence column. The user can explicitly inspect that rejected option in
+the SVG, then return to the accepted layout without rerunning a turn. Deduplicated reasons across
+all rejected alternatives live in `aggregateConflicts` and are labeled as aggregate evidence in
+the trace and application response.
 
 ## Why not native `ToolCallItem` for this milestone
 

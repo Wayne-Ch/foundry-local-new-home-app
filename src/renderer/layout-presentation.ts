@@ -10,10 +10,16 @@ export interface LayoutPresentation {
     | "waiting"
     | "feasible"
     | "rejected_option"
+    | "accepted_after_rejection"
     | "retained_accepted"
     | "no_preview"
     | "clarification";
+  readonly activeView: LayoutEvidenceView | null;
+  readonly canShowAcceptedLayout: boolean;
+  readonly canShowRejectedOption: boolean;
   readonly displayLayout: EvaluatedLayoutOption | null;
+  readonly evidenceLayout: EvaluatedLayoutOption | null;
+  readonly roomConflicts: readonly LayoutConflict[];
   readonly resultBadgeClass: string;
   readonly resultBadgeText: string;
   readonly layoutTitle: string;
@@ -25,6 +31,8 @@ export interface LayoutPresentation {
   readonly conflicts: readonly LayoutConflict[];
 }
 
+export type LayoutEvidenceView = "accepted" | "rejected";
+
 function optionById(
   options: readonly EvaluatedLayoutOption[],
   optionId: string | null,
@@ -35,11 +43,17 @@ function optionById(
 export function createLayoutPresentation(
   result: LayoutToolResult | null,
   selectedLayout: EvaluatedLayoutOption | null,
+  requestedView: LayoutEvidenceView = "accepted",
 ): LayoutPresentation {
   if (result === null) {
     return {
       mode: "waiting",
+      activeView: selectedLayout === null ? null : "accepted",
+      canShowAcceptedLayout: false,
+      canShowRejectedOption: false,
       displayLayout: selectedLayout,
+      evidenceLayout: selectedLayout,
+      roomConflicts: selectedLayout?.conflicts ?? [],
       resultBadgeClass: "result-badge is-neutral",
       resultBadgeText: "Waiting for a request",
       layoutTitle: "Verified room plan",
@@ -59,7 +73,12 @@ export function createLayoutPresentation(
       selectedLayout;
     return {
       mode: "feasible",
+      activeView: "accepted",
+      canShowAcceptedLayout: false,
+      canShowRejectedOption: false,
       displayLayout: option,
+      evidenceLayout: option,
+      roomConflicts: option?.conflicts ?? result.conflicts,
       resultBadgeClass: "result-badge is-success",
       resultBadgeText: "Feasible known option",
       layoutTitle: option?.label ?? "Verified feasible layout",
@@ -75,7 +94,12 @@ export function createLayoutPresentation(
   if (result.status === "clarification_required") {
     return {
       mode: "clarification",
+      activeView: selectedLayout === null ? null : "accepted",
+      canShowAcceptedLayout: false,
+      canShowRejectedOption: false,
       displayLayout: selectedLayout,
+      evidenceLayout: null,
+      roomConflicts: selectedLayout?.conflicts ?? [],
       resultBadgeClass: "result-badge is-warning",
       resultBadgeText: "Verified input missing",
       layoutTitle: "Clarification required",
@@ -94,13 +118,39 @@ export function createLayoutPresentation(
       result.rejectedOptions.length > 1
         ? ` Aggregate reasons across ${result.rejectedOptions.length} rejected options are labeled separately in Developer trace.`
         : "";
+    if (selectedLayout !== null && requestedView === "accepted") {
+      return {
+        mode: "accepted_after_rejection",
+        activeView: "accepted",
+        canShowAcceptedLayout: true,
+        canShowRejectedOption: true,
+        displayLayout: selectedLayout,
+        evidenceLayout: rejectedOption,
+        roomConflicts: selectedLayout.conflicts,
+        resultBadgeClass: "result-badge is-warning",
+        resultBadgeText: "Request rejected · accepted retained",
+        layoutTitle: `${selectedLayout.label} · accepted layout retained`,
+        layoutNotice:
+          'Showing the prior accepted layout. The rejected request did not replace it; exact rejected-option checks, measurements, and conflicts remain visible at right. Select "Inspect rejected option" for its visual preview.',
+        verdictTitle: "Requested option rejected",
+        checksLabel: "Rejected option checks",
+        conflictsLabel: "Rejected option conflicts",
+        checks: rejectedOption.checkedStates,
+        conflicts: rejectedOption.conflicts,
+      };
+    }
     const acceptedLayoutNote =
       selectedLayout === null
         ? " No layout has been accepted."
-        : " The prior accepted layout remains active.";
+        : ' The prior accepted layout remains active; select "Show accepted layout" to return to it.';
     return {
       mode: "rejected_option",
+      activeView: "rejected",
+      canShowAcceptedLayout: selectedLayout !== null,
+      canShowRejectedOption: selectedLayout !== null,
       displayLayout: rejectedOption,
+      evidenceLayout: rejectedOption,
+      roomConflicts: rejectedOption.conflicts,
       resultBadgeClass: "result-badge is-error",
       resultBadgeText: "No feasible known option",
       layoutTitle: `${rejectedOption.label} · rejected option preview`,
@@ -116,7 +166,12 @@ export function createLayoutPresentation(
   if (selectedLayout !== null) {
     return {
       mode: "retained_accepted",
+      activeView: "accepted",
+      canShowAcceptedLayout: false,
+      canShowRejectedOption: false,
       displayLayout: selectedLayout,
+      evidenceLayout: null,
+      roomConflicts: selectedLayout.conflicts,
       resultBadgeClass: "result-badge is-error",
       resultBadgeText: "No known option set",
       layoutTitle: `${selectedLayout.label} · retained accepted layout`,
@@ -132,7 +187,12 @@ export function createLayoutPresentation(
 
   return {
     mode: "no_preview",
+    activeView: null,
+    canShowAcceptedLayout: false,
+    canShowRejectedOption: false,
     displayLayout: null,
+    evidenceLayout: null,
+    roomConflicts: [],
     resultBadgeClass: "result-badge is-error",
     resultBadgeText: "No known option set",
     layoutTitle: "No rejected option preview",

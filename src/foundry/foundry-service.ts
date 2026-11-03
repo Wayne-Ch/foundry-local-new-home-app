@@ -1957,7 +1957,7 @@ export class FoundryLayoutService {
     );
     const geometryMs = performance.now() - geometryStarted;
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
-    const assistantText = renderApplicationEvidence(toolResult);
+    const assistantText = renderApplicationEvidence(toolResult, currentAcceptedLayout);
 
     return {
       modelIntent: {
@@ -2872,7 +2872,10 @@ export class FoundryLayoutService {
   }
 }
 
-function renderApplicationEvidence(result: LayoutToolResult): string {
+function renderApplicationEvidence(
+  result: LayoutToolResult,
+  currentAcceptedLayout: EvaluatedLayoutOption | null,
+): string {
   if (result.status === "feasible") {
     const selected = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
     return [
@@ -2895,7 +2898,9 @@ function renderApplicationEvidence(result: LayoutToolResult): string {
           .join(" ")} ${
           evidenceOption === undefined
             ? ""
-            : `The UI preview is ${evidenceOption.label} and shows only that option's checks and conflicts.`
+            : currentAcceptedLayout === null
+              ? `The rejected preview is ${evidenceOption.label}; no layout has been accepted.`
+              : `The prior accepted layout remains active on the main canvas. Rejected evidence for ${evidenceOption.label} remains visible, and Inspect rejected option opens its exact preview without accepting it.`
         }`
       : (result.noResultReason?.message ?? "No bounded known option is feasible.");
   const choices = result.noResultReason?.preferencesThatMayChange.join(", ") ?? "a locked preference";

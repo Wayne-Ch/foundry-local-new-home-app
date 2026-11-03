@@ -3,8 +3,21 @@ import type { Response } from "foundry-local-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { AudioReadiness } from "../src/audio/audio-types";
 import type { FloorPlanRecognition } from "../src/domain/floor-plan-import";
-import type { FloorPlanVisionReadiness, RuntimeReadiness } from "../src/domain/types";
-import { type FoundryFloorPlanOutcome, FoundryFloorPlanVisionError } from "../src/foundry/foundry-service";
+import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
+import { createToolInputForTests, preferredLayoutIntentDelta } from "../src/domain/tool-contract";
+import type {
+  DemoStateSnapshot,
+  FloorPlanVisionReadiness,
+  FurnitureId,
+  PlanningFixture,
+  RuntimeReadiness,
+} from "../src/domain/types";
+import {
+  type FoundryFloorPlanOutcome,
+  FoundryFloorPlanVisionError,
+  type FoundryTurnOutcome,
+} from "../src/foundry/foundry-service";
+import { importedStageTurns } from "../src/foundry/prompt";
 import { DemoController, type DemoControllerOptions } from "../src/main/demo-controller";
 import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 
@@ -141,6 +154,100 @@ function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
   };
 }
 
+interface ImportedTurnSpec {
+  readonly candidateFurnitureIds: readonly FurnitureId[];
+  readonly retainFurnitureIds: readonly FurnitureId[];
+}
+
+const importedTurnSpecs: readonly ImportedTurnSpec[] = [
+  {
+    candidateFurnitureIds: ["bed-queen", "desk-standard"],
+    retainFurnitureIds: [],
+  },
+  {
+    candidateFurnitureIds: ["bed-king", "desk-standard"],
+    retainFurnitureIds: ["desk-standard"],
+  },
+  {
+    candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
+    retainFurnitureIds: ["bed-queen"],
+  },
+  {
+    candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+    retainFurnitureIds: ["desk-compact", "crib-standard"],
+  },
+];
+
+function importedTurnOutcome(
+  prompt: string,
+  state: DemoStateSnapshot,
+  currentAcceptedLayout: Parameters<TestFoundry["runTurn"]>[3],
+  planningFixture: PlanningFixture,
+  spec: ImportedTurnSpec,
+): FoundryTurnOutcome {
+  const parsed = preferredLayoutIntentDelta(state, prompt);
+  const validatedInput = createToolInputForTests({
+    state,
+    candidateFurnitureIds: spec.candidateFurnitureIds,
+    retainFurnitureIds: spec.retainFurnitureIds,
+    changedPreference: prompt,
+  });
+  const toolResult = compareKnownLayoutOptions(
+    validatedInput,
+    state,
+    currentAcceptedLayout ?? null,
+    planningFixture,
+  );
+  return {
+    modelIntent: {
+      callId: "test-intent",
+      name: "interpret_layout_intent",
+      arguments: JSON.stringify(parsed),
+      parsed,
+    },
+    toolCall: {
+      callId: "test-layout",
+      name: "compare_layout_options",
+      arguments: JSON.stringify(validatedInput),
+    },
+    validatedInput,
+    toolResult,
+    assistantText: toolResult.summary,
+    planningPreflight: {
+      fits: true,
+      promptTokens: 0,
+      outputReserveTokens: 0,
+      requiredTokens: 0,
+      contextLimitTokens: 4096,
+      deficitTokens: 0,
+    },
+    planningResponse: response,
+    summaryResponse: null,
+    validationAttempts: 1,
+    validationErrors: [],
+    performance: {
+      totalMs: 1,
+      geometryMs: 1,
+      attempts: [
+        {
+          attempt: 1,
+          promptBytes: prompt.length,
+          schemaBytes: 0,
+          outputBytes: 0,
+          preflightMs: 0,
+          generationMs: 0,
+          validationMs: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          finishReason: "stop",
+          accepted: true,
+        },
+      ],
+    },
+    planningMode: "json-schema-intent-delta",
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
@@ -208,6 +315,90 @@ describe("floor-plan controller lifecycle", () => {
     expect(imported.floorPlanImport.recognizedFacts).toHaveLength(5);
     expect(owned.every((value) => value === 0)).toBe(true);
     expect(() => store.borrowBytes()).toThrow("No floor-plan image is loaded");
+  });
+
+  it("keeps imported recovery C accepted after A->B->C->E while retaining E provenance", async () => {
+    let turnIndex = 0;
+    const acceptedLayoutIds: Array<string | null> = [];
+    const runTurn = vi.fn(
+      async (
+        prompt: string,
+        state: DemoStateSnapshot,
+        _onPhase: ((phase: string, detail: string) => void) | undefined,
+        currentAcceptedLayout: Parameters<TestFoundry["runTurn"]>[3],
+        planningFixture: PlanningFixture,
+      ) => {
+        const spec = importedTurnSpecs[turnIndex];
+        if (spec === undefined) {
+          throw new Error(`Unexpected turn ${turnIndex + 1}.`);
+        }
+        acceptedLayoutIds.push(currentAcceptedLayout?.id ?? null);
+        turnIndex += 1;
+        return importedTurnOutcome(prompt, state, currentAcceptedLayout, planningFixture, spec);
+      },
+    );
+    const controller = new DemoController({
+      foundry: createFoundry({ runTurn }),
+    });
+    await controller.loadFloorPlanImage(sample, "sample", "sample");
+    await controller.analyzeFloorPlan();
+
+    const responses = [];
+    for (const turn of importedStageTurns) {
+      responses.push(
+        await controller.runTurn({
+          prompt: turn.prompt,
+          scriptedTurnId: turn.id,
+        }),
+      );
+    }
+
+    expect(acceptedLayoutIds).toEqual([
+      null,
+      "imported-queen-desk-standard-v1",
+      "imported-queen-desk-standard-v1",
+      "imported-queen-crib-compact-v1",
+    ]);
+    expect(responses[1]?.selectedLayout?.id).toBe("imported-queen-desk-standard-v1");
+    expect(responses[2]?.selectedLayout?.id).toBe("imported-queen-crib-compact-v1");
+    expect(responses[3]).toMatchObject({
+      state: {
+        stateRef: "layout-state-v4",
+        version: 4,
+        currentLayoutId: "imported-queen-crib-compact-v1",
+        currentLayoutSource: "known-option",
+        activeFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
+        lastResultStatus: "no_feasible_option",
+      },
+      selectedLayout: {
+        id: "imported-queen-crib-compact-v1",
+        status: "feasible",
+        placementSource: "known-option",
+      },
+      toolResult: {
+        stateRef: "layout-state-v3",
+        selectedOptionId: null,
+        evidenceOptionId: "imported-king-crib-compact-east-v1",
+        provenance: {
+          roomPlanId: "imported-nara-master-bedroom",
+          evaluatedLayoutIds: ["imported-king-crib-compact-east-v1", "imported-king-crib-compact-door-v1"],
+        },
+      },
+    });
+    expect(
+      responses[3]?.toolResult?.rejectedOptions[0]?.measurements.map((measurement) => [
+        measurement.actualDistanceMm,
+        measurement.requiredDistanceMm,
+      ]),
+    ).toEqual([
+      [70, 250],
+      [170, 250],
+      [350, 250],
+    ]);
+    expect(controller.bootstrap().selectedLayout?.id).toBe("imported-queen-crib-compact-v1");
+    expect(controller.bootstrap().lastToolResult?.evidenceOptionId).toBe(
+      "imported-king-crib-compact-east-v1",
+    );
   });
 
   it("restores the default room and clears preview ownership without unloading stable main", async () => {

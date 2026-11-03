@@ -1,47 +1,110 @@
 import { describe, expect, it } from "vitest";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
+import { createImportedPlanningFixture } from "../src/domain/floor-plan-import";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { createToolInputForTests } from "../src/domain/tool-contract";
+import { importedStageTurns } from "../src/foundry/prompt";
 import { createLayoutPresentation } from "../src/renderer/layout-presentation";
 
 describe("layout evidence presentation", () => {
-  it("keeps the multi-rejected King, compact desk, and crib preview internally consistent", () => {
-    let state = createInitialDemoState();
-    const acceptedResult = compareKnownLayoutOptions(
+  it("defaults A->B->C->E to the retained C layout while keeping exact E evidence available", () => {
+    const fixture = createImportedPlanningFixture({
+      schema: "single-room-topology-v1",
+      roomShape: "rectangle",
+      roomLabel: "present",
+      doorOpening: "present",
+      windowOpening: "present",
+    });
+    let state = createInitialDemoState(fixture.roomPlan);
+    const turnA = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-queen", "desk-standard"],
+        changedPreference: importedStageTurns[0]?.prompt ?? "",
+      }),
+      state,
+      null,
+      fixture,
+    );
+    const turnALayout = turnA.feasibleOptions.find((option) => option.id === turnA.selectedOptionId) ?? null;
+    state = applyToolResult(state, turnA);
+
+    const turnB = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state,
+        candidateFurnitureIds: ["bed-king", "desk-standard"],
+        retainFurnitureIds: ["desk-standard"],
+        changedPreference: importedStageTurns[1]?.prompt ?? "",
+      }),
+      state,
+      turnALayout,
+      fixture,
+    );
+    state = applyToolResult(state, turnB);
+
+    const turnC = compareKnownLayoutOptions(
       createToolInputForTests({
         state,
         candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
-        changedPreference: "accepted Queen, compact desk, and crib",
+        retainFurnitureIds: ["bed-queen"],
+        changedPreference: importedStageTurns[2]?.prompt ?? "",
       }),
       state,
+      turnALayout,
+      fixture,
     );
     const acceptedLayout =
-      acceptedResult.feasibleOptions.find((option) => option.id === acceptedResult.selectedOptionId) ?? null;
-    state = applyToolResult(state, acceptedResult);
+      turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+    state = applyToolResult(state, turnC);
 
-    const rejectedResult = compareKnownLayoutOptions(
+    const turnE = compareKnownLayoutOptions(
       createToolInputForTests({
         state,
         candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
         retainFurnitureIds: ["desk-compact", "crib-standard"],
-        changedPreference: "replace Queen with King while retaining desk and crib",
+        changedPreference: importedStageTurns[3]?.prompt ?? "",
       }),
       state,
+      acceptedLayout,
+      fixture,
     );
-    const presentation = createLayoutPresentation(rejectedResult, acceptedLayout);
+    state = applyToolResult(state, turnE);
+    const presentation = createLayoutPresentation(turnE, acceptedLayout);
 
-    expect(presentation.mode).toBe("rejected_option");
-    expect(presentation.displayLayout?.id).toBe(rejectedResult.evidenceOptionId);
-    expect(presentation.conflicts).toEqual(presentation.displayLayout?.conflicts);
-    expect(presentation.checks).toEqual(presentation.displayLayout?.checkedStates);
+    expect(state.currentLayoutId).toBe("imported-queen-crib-compact-v1");
+    expect(presentation.mode).toBe("accepted_after_rejection");
+    expect(presentation.activeView).toBe("accepted");
+    expect(presentation.displayLayout?.id).toBe("imported-queen-crib-compact-v1");
+    expect(presentation.evidenceLayout?.id).toBe("imported-king-crib-compact-east-v1");
+    expect(presentation.roomConflicts).toEqual([]);
+    expect(presentation.conflicts).toEqual(presentation.evidenceLayout?.conflicts);
+    expect(presentation.checks).toEqual(presentation.evidenceLayout?.checkedStates);
+    expect(presentation.canShowAcceptedLayout).toBe(true);
+    expect(presentation.canShowRejectedOption).toBe(true);
     expect(presentation.conflicts.some((conflict) => conflict.code === "DOOR_SWING_OVERLAP")).toBe(false);
     expect(presentation.checks.find((check) => check.id === "door-open")?.passed).toBe(true);
-    expect(rejectedResult.aggregateConflicts.some((conflict) => conflict.code === "DOOR_SWING_OVERLAP")).toBe(
-      true,
-    );
-    expect(presentation.conflictsLabel).toBe("Preview option conflicts");
-    expect(presentation.layoutNotice).toContain("Aggregate reasons across 2 rejected options");
-    expect(presentation.layoutNotice).toContain("The prior accepted layout remains active");
+    expect(turnE.aggregateConflicts.some((conflict) => conflict.code === "DOOR_SWING_OVERLAP")).toBe(true);
+    expect(presentation.conflictsLabel).toBe("Rejected option conflicts");
+    expect(presentation.layoutTitle).toContain("accepted layout retained");
+    expect(presentation.layoutNotice).toContain("did not replace it");
+
+    const rejectedPreview = createLayoutPresentation(turnE, acceptedLayout, "rejected");
+    expect(rejectedPreview.mode).toBe("rejected_option");
+    expect(rejectedPreview.activeView).toBe("rejected");
+    expect(rejectedPreview.displayLayout?.id).toBe(turnE.evidenceOptionId);
+    expect(rejectedPreview.roomConflicts).toEqual(rejectedPreview.displayLayout?.conflicts);
+    expect(rejectedPreview.layoutNotice).toContain("Aggregate reasons across 2 rejected options");
+    expect(rejectedPreview.layoutNotice).toContain('select "Show accepted layout"');
+    expect(
+      rejectedPreview.evidenceLayout?.measurements.map((measurement) => [
+        measurement.actualDistanceMm,
+        measurement.requiredDistanceMm,
+      ]),
+    ).toEqual([
+      [70, 250],
+      [170, 250],
+      [350, 250],
+    ]);
   });
 
   it("states that no layout was accepted for a first-turn rejected option preview", () => {
