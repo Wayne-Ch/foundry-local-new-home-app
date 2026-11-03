@@ -51,7 +51,7 @@ import {
   releaseMediaStream,
   shouldOfferWhisperFallback,
 } from "./audio-capture";
-import { createLayoutPresentation } from "./layout-presentation";
+import { createLayoutPresentation, type LayoutEvidenceView } from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
 import {
   clientPointToRoomPoint,
@@ -87,7 +87,8 @@ import {
 import "./styles.css";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
-const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+const previewParameters = new URLSearchParams(window.location.search);
+const previewMode = previewParameters.get("preview") === "1";
 const demoApi = window.demoApi ?? (previewMode ? createPreviewApi() : null);
 
 let viewState: BootstrapPayload;
@@ -113,6 +114,8 @@ let resetRecoveryMonitor: {
 } | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
+let layoutEvidenceView: LayoutEvidenceView =
+  previewMode && previewParameters.get("layoutView") === "rejected" ? "rejected" : "accepted";
 let speechCorrection: SpeechSuggestionState | null = null;
 let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
 
@@ -159,9 +162,13 @@ const turnCounter = requiredElement("turnCounter");
 const resultBadge = requiredElement("resultBadge");
 const layoutTitle = requiredElement("layoutTitle");
 const layoutNotice = requiredElement("layoutNotice");
+const layoutViewActions = requiredElement("layoutViewActions");
+const showAcceptedLayoutButton = requiredButton("showAcceptedLayoutButton");
+const showRejectedLayoutButton = requiredButton("showRejectedLayoutButton");
 const roomSvg = requiredSvg("roomSvg");
 const verdictTitle = requiredElement("verdictTitle");
 const verdictSummary = requiredElement("verdictSummary");
+const requirementsCard = requiredElement("requirementsCard");
 const requirementSummary = requiredElement("requirementSummary");
 const measurementList = requiredElement("measurementList");
 const manualPlacementCard = requiredElement("manualPlacementCard");
@@ -440,6 +447,7 @@ resetButton.addEventListener("click", async () => {
   resetRecoveryMonitor = null;
   viewState = createAuthoritativeResetBootstrap(viewState, conversationGeneration);
   latestToolResult = null;
+  layoutEvidenceView = "accepted";
   resetRendererTransientUi();
   renderAll();
   setBusy(true);
@@ -456,6 +464,7 @@ resetButton.addEventListener("click", async () => {
     }
     viewState = bootstrap;
     latestToolResult = bootstrap.lastToolResult;
+    layoutEvidenceView = "accepted";
     resetRendererTransientUi();
     renderAll();
   } catch (error) {
@@ -470,6 +479,7 @@ resetButton.addEventListener("click", async () => {
       ) {
         viewState = bootstrap;
         latestToolResult = bootstrap.lastToolResult;
+        layoutEvidenceView = "accepted";
         renderAll();
       }
     } catch {
@@ -552,6 +562,16 @@ speechUndoButton.addEventListener("click", () => {
   renderSpeechSuggestion();
   renderAudio();
   renderTrace();
+});
+
+showAcceptedLayoutButton.addEventListener("click", () => {
+  layoutEvidenceView = "accepted";
+  renderLayout();
+});
+
+showRejectedLayoutButton.addEventListener("click", () => {
+  layoutEvidenceView = "rejected";
+  renderLayout();
 });
 
 promptInput.addEventListener("input", () => {
@@ -653,6 +673,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     ) {
       viewState = bootstrap;
       latestToolResult = bootstrap.lastToolResult;
+      layoutEvidenceView = "accepted";
       renderAll();
     }
   } finally {
@@ -664,6 +685,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
 
 function applyTurnResponse(response: RunTurnResponse): void {
   latestToolResult = response.toolResult;
+  layoutEvidenceView = "accepted";
   viewState = {
     ...viewState,
     state: response.state,
@@ -680,6 +702,7 @@ function applyTurnResponse(response: RunTurnResponse): void {
 function applyBootstrap(bootstrap: BootstrapPayload): void {
   viewState = bootstrap;
   latestToolResult = bootstrap.lastToolResult;
+  layoutEvidenceView = "accepted";
   manualPreview = null;
   manualPreviewOrigin = null;
   renderAll();
@@ -987,10 +1010,12 @@ function resetRendererTransientUi(): void {
 }
 
 function renderLayout(): void {
-  const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout);
+  const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout, layoutEvidenceView);
   let displayLayout = base.displayLayout;
-  let displayConflicts = base.conflicts;
-  let displayChecks = base.checks;
+  let evidenceLayout = base.evidenceLayout;
+  let roomConflicts = base.roomConflicts;
+  let evidenceConflicts = base.conflicts;
+  let evidenceChecks = base.checks;
   let badgeClass = base.resultBadgeClass;
   let badgeText = base.resultBadgeText;
   let title = base.layoutTitle;
@@ -1002,8 +1027,10 @@ function renderLayout(): void {
 
   if (manualPreview?.preview !== null && manualPreview?.preview !== undefined) {
     displayLayout = manualPreview.preview;
-    displayConflicts = manualPreview.preview.conflicts;
-    displayChecks = manualPreview.preview.checkedStates;
+    evidenceLayout = manualPreview.preview;
+    roomConflicts = manualPreview.preview.conflicts;
+    evidenceConflicts = manualPreview.preview.conflicts;
+    evidenceChecks = manualPreview.preview.checkedStates;
     badgeClass = manualPreview.accepted ? "result-badge is-success" : "result-badge is-error";
     badgeText = manualPreview.accepted ? "Valid manual preview" : "Rejected manual preview";
     title = `${manualPreview.preview.label} · ${manualPreview.accepted ? "ready to apply" : "rejected"}`;
@@ -1016,8 +1043,10 @@ function renderLayout(): void {
     displayConflictsLabel = "Manual preview conflicts";
   } else if (viewState.lastInteraction === "manual" && viewState.selectedLayout !== null) {
     displayLayout = viewState.selectedLayout;
-    displayConflicts = viewState.selectedLayout.conflicts;
-    displayChecks = viewState.selectedLayout.checkedStates;
+    evidenceLayout = viewState.selectedLayout;
+    roomConflicts = viewState.selectedLayout.conflicts;
+    evidenceConflicts = viewState.selectedLayout.conflicts;
+    evidenceChecks = viewState.selectedLayout.checkedStates;
     badgeClass = "result-badge is-success";
     badgeText = "Manual adjustment accepted";
     title = viewState.selectedLayout.label;
@@ -1029,7 +1058,24 @@ function renderLayout(): void {
     displayConflictsLabel = "Accepted manual conflicts";
   }
 
-  renderRoomSvg(displayLayout, displayConflicts, manualPreview !== null);
+  const layoutViewSwitchVisible =
+    manualPreview === null &&
+    viewState.lastInteraction === "turn" &&
+    base.canShowAcceptedLayout &&
+    base.canShowRejectedOption;
+  layoutViewActions.hidden = !layoutViewSwitchVisible;
+  showAcceptedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
+  showRejectedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
+  showAcceptedLayoutButton.setAttribute(
+    "aria-pressed",
+    String(layoutViewSwitchVisible && base.activeView === "accepted"),
+  );
+  showRejectedLayoutButton.setAttribute(
+    "aria-pressed",
+    String(layoutViewSwitchVisible && base.activeView === "rejected"),
+  );
+
+  renderRoomSvg(displayLayout, roomConflicts, manualPreview !== null);
   resultBadge.className = badgeClass;
   resultBadge.textContent = badgeText;
   layoutTitle.textContent = title;
@@ -1038,10 +1084,10 @@ function renderLayout(): void {
   verdictSummary.textContent = summary;
   checksLabel.textContent = displayChecksLabel;
   conflictsLabel.textContent = displayConflictsLabel;
-  renderRequirements(displayLayout);
+  renderRequirements(displayLayout, evidenceLayout);
   renderManualPlacement();
-  renderChecks(displayChecks);
-  renderConflicts(displayConflicts);
+  renderChecks(evidenceChecks);
+  renderConflicts(evidenceConflicts);
 }
 
 function renderRoomSvg(
@@ -1270,12 +1316,18 @@ function placementCenter(placement: ResolvedPlacement): Point {
   };
 }
 
-function renderRequirements(layout: EvaluatedLayoutOption | null): void {
+function renderRequirements(
+  layout: EvaluatedLayoutOption | null,
+  evidenceLayout: EvaluatedLayoutOption | null,
+): void {
+  requirementsCard.classList.toggle("is-rejected-evidence", evidenceLayout?.status === "rejected");
   requirementSummary.replaceChildren();
   const acceptedFurniture = viewState.state.activeFurnitureIds
     .map((id) => furnitureCatalog[id].label)
     .join(", ");
   const displayFurniture = layout?.placements.map((placement) => placement.label).join(", ") ?? "None";
+  const evidenceFurniture =
+    evidenceLayout?.placements.map((placement) => placement.label).join(", ") ?? "None";
   const closet = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "closet-access");
   const windowZone = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
   const requirements = [
@@ -1290,6 +1342,22 @@ function renderRequirements(layout: EvaluatedLayoutOption | null): void {
     `<strong>Accepted state:</strong> ${escapeHtml(acceptedFurniture || "No furniture accepted yet")}`,
     `<strong>${layout?.status === "rejected" ? "Preview" : "Displayed"} furniture:</strong> ${escapeHtml(displayFurniture)}`,
   ];
+  if (viewState.state.currentLayoutId !== null) {
+    requirements.push(
+      `<strong>Accepted provenance:</strong> ${escapeHtml(
+        viewState.state.currentLayoutSource?.replaceAll("-", " ") ?? "unknown source",
+      )} · ${escapeHtml(viewState.state.currentLayoutId)}`,
+    );
+  }
+  if (evidenceLayout?.status === "rejected") {
+    requirements.push(
+      `<strong>Rejected option:</strong> ${escapeHtml(evidenceLayout.label)} · ${escapeHtml(evidenceLayout.id)}`,
+      `<strong>Rejected option furniture:</strong> ${escapeHtml(evidenceFurniture)}`,
+      `<strong>Rejected provenance:</strong> deterministic ${escapeHtml(
+        evidenceLayout.placementSource.replaceAll("-", " "),
+      )}; not accepted`,
+    );
+  }
   const changedPreference =
     viewState.lastInteraction === "manual"
       ? viewState.state.lastChangedPreference
@@ -1305,18 +1373,20 @@ function renderRequirements(layout: EvaluatedLayoutOption | null): void {
   }
 
   measurementList.replaceChildren();
-  if (layout === null || layout.measurements.length === 0) {
+  const measurementLayout = evidenceLayout ?? layout;
+  if (measurementLayout === null || measurementLayout.measurements.length === 0) {
     const empty = document.createElement("div");
     empty.className = "measurement-item";
     empty.textContent = "No furniture-pair measurements yet.";
     measurementList.append(empty);
     return;
   }
-  for (const measurement of layout.measurements) {
+  for (const measurement of measurementLayout.measurements) {
     const item = document.createElement("div");
     item.className = `measurement-item ${measurement.passed ? "is-pass" : "is-fail"}`;
     const shortfall = Math.max(0, measurement.requiredDistanceMm - measurement.actualDistanceMm);
-    item.innerHTML = `<strong>${escapeHtml(measurement.labels[0])} ↔ ${escapeHtml(
+    const evidencePrefix = measurementLayout.status === "rejected" ? "Rejected evidence · " : "";
+    item.innerHTML = `<strong>${evidencePrefix}${escapeHtml(measurement.labels[0])} ↔ ${escapeHtml(
       measurement.labels[1],
     )}:</strong> ${measurement.actualDistanceMm} mm / required ${measurement.requiredDistanceMm} mm${
       shortfall > 0 ? ` · ${shortfall} mm short` : ""
@@ -1338,9 +1408,13 @@ function renderManualPlacement(): void {
       viewState.state.lastChangedPreference ?? "The accepted manual placement passes all locked checks.";
   } else if (viewState.selectedLayout === null) {
     manualPlacementStatus.textContent = "Accept a feasible layout before using direct manipulation.";
-  } else if (latestToolResult?.status === "no_feasible_option") {
+  } else if (latestToolResult?.status === "no_feasible_option" && layoutEvidenceView === "rejected") {
     manualPlacementStatus.textContent =
-      "The screen is showing a rejected option preview. Return to the accepted layout before dragging.";
+      'Rejected evidence is displayed and cannot be edited. Select "Show accepted layout" to return to the active layout.';
+  } else if (latestToolResult?.status === "no_feasible_option") {
+    manualPlacementCard.classList.add("is-valid");
+    manualPlacementStatus.textContent =
+      "The accepted layout remains active after the rejected request. Drag it, or focus furniture and use the arrow keys.";
   } else {
     manualPlacementStatus.textContent =
       "Drag accepted furniture, or focus it and use the arrow keys. Movement snaps to a 50 mm grid.";
@@ -1364,9 +1438,6 @@ function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: 
   const displaysAcceptedLayout = layout.id === viewState.selectedLayout.id;
   const displaysManualPreview = manualPreview?.preview?.id === layout.id;
   if (!displaysAcceptedLayout && !displaysManualPreview) {
-    return false;
-  }
-  if (latestToolResult?.status === "no_feasible_option" && !displaysManualPreview) {
     return false;
   }
   if (manualPreview !== null && manualPreview.request.instanceId !== placement.instanceId) {
@@ -2166,6 +2237,7 @@ async function monitorResetRecovery(conversationGeneration: number): Promise<voi
       }
       viewState = bootstrap;
       latestToolResult = bootstrap.lastToolResult;
+      layoutEvidenceView = "accepted";
       renderAll();
       if (
         bootstrap.readiness.status !== "recovering" &&
