@@ -551,7 +551,7 @@ export class DemoController {
       this.#state,
       this.#selectedLayout,
       request,
-      this.#planningFixture,
+      this.#planningFixture.roomPlan,
     );
     this.#pushTrace("manual-placement", "Application-owned manual placement", {
       provenance: "application-owned direct manipulation",

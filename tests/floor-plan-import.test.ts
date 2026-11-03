@@ -235,7 +235,7 @@ describe("imported deterministic planning chain", () => {
         xMm: 2850,
         yMm: 850,
       },
-      fixture,
+      fixture.roomPlan,
     );
     expect(manual).toMatchObject({
       accepted: true,
@@ -253,7 +253,7 @@ describe("imported deterministic planning chain", () => {
         xMm: 300,
         yMm: 800,
       },
-      fixture,
+      fixture.roomPlan,
     );
     expect(doorBlocked).toMatchObject({
       accepted: false,
@@ -273,7 +273,7 @@ describe("imported deterministic planning chain", () => {
         xMm: 1100,
         yMm: 1900,
       },
-      fixture,
+      fixture.roomPlan,
     );
     expect(windowBlocked).toMatchObject({
       accepted: false,
