@@ -226,7 +226,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     {
       id: "preview-app-a",
       role: "application" as const,
-      text: "Application evidence: Queen + rotated standard desk passes every locked deterministic check.",
+      text: `Queen + rotated standard desk passes every locked deterministic check. User request: ${stageTurns[0]?.prompt ?? ""}`,
     },
     {
       id: "preview-user-b",
@@ -236,7 +236,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     {
       id: "preview-app-b",
       role: "application" as const,
-      text: "Application evidence: the King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+      text: `The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement? User request: ${stageTurns[1]?.prompt ?? ""}`,
     },
     {
       id: "preview-user-c",
@@ -246,7 +246,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     {
       id: "preview-app-c",
       role: "application" as const,
-      text: "Application evidence: Queen + baby bed + rotated compact desk passes every locked deterministic check.",
+      text: `Queen + baby bed + rotated compact desk passes every locked deterministic check. User request: ${stageTurns[2]?.prompt ?? ""}`,
     },
     {
       id: "preview-user-failure",
@@ -256,7 +256,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     {
       id: "preview-app-failure",
       role: "application" as const,
-      text: "Application evidence: no feasible known option. The prior accepted layout remains active on the main canvas. Exact rejected-option evidence remains visible, and Inspect rejected option opens its preview without accepting it.",
+      text: `No feasible known option. The prior accepted layout remains active on the main canvas. Exact rejected-option evidence remains visible, and Inspect rejected option opens its preview without accepting it. User request: ${stageTurns[3]?.prompt ?? ""}`,
     },
   ];
   const messageCount = previewStep === "queen" ? 3 : previewStep === "recovery" ? 7 : messages.length;
