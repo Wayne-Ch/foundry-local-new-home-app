@@ -112,6 +112,7 @@ Remove-Item Env:LAYOUT_BENCHMARK_REQUIRED_MODELS
 npm run typecheck
 npm run lint
 npm test
+npm run probe:furniture-controls
 Remove-Item Env:FOUNDRY_MODEL_ALIAS -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_MODEL_ID -ErrorAction SilentlyContinue
 Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
@@ -134,7 +135,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 29 files / 714 tests pass |
+| Unit tests | 30 files / 724 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
@@ -149,7 +150,7 @@ npm run capture:ui
 | Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct candidate-local governing-action span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; additive/request/placement `creep` positives, keep/move/remove-person negatives, punctuated/adverb negation, exact `baby bed`, local luggage, and independent later clauses across `but`, `then`, commas, and subordinators are focused-tested |
 | Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main v0, clears accepted/transient evidence, rejects stale bootstrap/results, preserves v0 through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease |
 | Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
-| Renderer interaction | Pass in browser preview; keyboard focus survived repeated SVG redraws, the semantic fieldset exposed placement controls, valid preview -> Apply created state v4 while Beat E remained pending, invalid 226 / 250 mm preview disabled Apply, and Revert restored the accepted layout |
+| Renderer interaction | Pass in the headless-browser renderer probe for default/imported layouts A and C; standard/compact desks and baby beds stayed pointer-draggable while another preview was pending, pointer capture was acquired/released, accessible focus survived repeated SVG redraws, every Arrow key used the 50 mm grid, measurements updated, valid Apply advanced accepted state, and invalid 226 / 250 mm preview kept Apply disabled until Revert restored the accepted layout |
 | Requirements / measurements | Pass; accepted and rejected exact-option measurements share the same evaluated option as checks/conflicts |
 | Adversarial negation/correction | Feasible Queen + compact desk |
 | Exact default model/EP enforced | Pass; integration asserts exact ID and canonical WebGPU EP |

@@ -261,7 +261,7 @@ try {
       xMm: 2850,
       yMm: 850,
     },
-    planningFixture,
+    planningFixture.roomPlan,
   );
   assert(manual.accepted, `Imported manual placement failed: ${manual.reason}`);
 

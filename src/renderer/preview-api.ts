@@ -7,7 +7,7 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
-import { defaultPlanningFixture, roomPlan } from "../domain/fixture";
+import { defaultPlanningFixture } from "../domain/fixture";
 import {
   createImportedPlanningFixture,
   FLOOR_PLAN_SAMPLE_ASSET_PATH,
@@ -102,120 +102,167 @@ const previewRecognition: FloorPlanRecognition = {
   windowOpening: "present",
 };
 
-function buildPreview(conversationGeneration: number): BootstrapPayload {
-  const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
-  let state: DemoState = createInitialDemoState();
-  const turnAInput = createToolInputForTests({
-    state,
-    candidateFurnitureIds: ["bed-queen", "desk-standard"],
-    changedPreference: stageTurns[0]?.prompt ?? "",
-  });
-  const turnA = compareKnownLayoutOptions(turnAInput, state);
-  state = applyToolResult(state, turnA);
+type PreviewStep = "queen" | "recovery" | "failure";
 
-  const turnBInput = createToolInputForTests({
-    state,
-    candidateFurnitureIds: ["bed-king", "desk-standard"],
-    retainFurnitureIds: ["desk-standard"],
-    changedPreference: stageTurns[1]?.prompt ?? "",
-  });
-  const turnB = compareKnownLayoutOptions(turnBInput, state);
-  state = applyToolResult(state, turnB);
-  const afterBState = state;
+function requestedPreviewStep(): PreviewStep {
+  const step = new URLSearchParams(window.location.search).get("step");
+  return step === "queen" || step === "recovery" ? step : "failure";
+}
 
-  const turnCInput = createToolInputForTests({
-    state,
-    candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
-    retainFurnitureIds: ["bed-queen"],
-    changedPreference: stageTurns[2]?.prompt ?? "",
-  });
-  const turnC = compareKnownLayoutOptions(turnCInput, state);
-  state = applyToolResult(state, turnC);
-  const recoveryState = state;
-  const selectedLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
-  const failureInput = createToolInputForTests({
-    state,
-    candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
-    retainFurnitureIds: ["desk-compact", "crib-standard"],
-    changedPreference: stageTurns[3]?.prompt ?? "",
-  });
-  const controlledFailure = compareKnownLayoutOptions(failureInput, state);
-  const failureState = applyToolResult(state, controlledFailure);
-  const evidenceInput = recoveryOnly ? turnCInput : failureInput;
-  const evidenceResult = recoveryOnly ? turnC : controlledFailure;
-  const evidencePrompt = stageTurns[recoveryOnly ? 2 : 3]?.prompt ?? "";
+function requestedPlanningFixture(): PlanningFixture {
+  return new URLSearchParams(window.location.search).get("room") === "imported"
+    ? createImportedPlanningFixture(previewRecognition)
+    : defaultPlanningFixture;
+}
 
-  return {
-    conversationGeneration,
-    roomMode: "default",
-    roomPlan,
-    state: recoveryOnly ? recoveryState : failureState,
-    readiness,
-    audioReadiness,
-    visionReadiness,
-    floorPlanImport: {
+function previewFloorPlanImport(planningFixture: PlanningFixture): BootstrapPayload["floorPlanImport"] {
+  if (planningFixture.mode === "default") {
+    return {
       status: "idle",
       preview: null,
       recognition: null,
       recognizedFacts: [],
       error: null,
-    },
-    stageTurns,
-    completedStageTurnIds: recoveryOnly ? ["turn-a", "turn-b", "turn-c"] : stageTurns.map((turn) => turn.id),
-    lastInteraction: "turn",
-    selectedLayout,
-    lastToolResult: evidenceResult,
-    messages: [
-      {
-        id: "preview-system",
-        role: "system",
-        text: "Verified room plan loaded. Geometry remains application-owned.",
-      },
-      {
-        id: "preview-user-a",
-        role: "user",
-        text: stageTurns[0]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-a",
-        role: "application",
-        text: "Application evidence: Queen + rotated standard desk passes every locked deterministic check.",
-      },
-      {
-        id: "preview-user-b",
-        role: "user",
-        text: stageTurns[1]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-b",
-        role: "application",
-        text: "Application evidence: the King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
-      },
-      {
-        id: "preview-user-c",
-        role: "user",
-        text: stageTurns[2]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-c",
-        role: "application",
-        text: "Application evidence: Queen + baby bed + rotated compact desk passes every locked deterministic check.",
-      },
-      ...(recoveryOnly
-        ? []
-        : [
-            {
-              id: "preview-user-failure",
-              role: "user" as const,
-              text: stageTurns[3]?.prompt ?? "",
-            },
-            {
-              id: "preview-app-failure",
-              role: "application" as const,
-              text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
-            },
-          ]),
+    };
+  }
+  return {
+    status: "imported",
+    preview: null,
+    recognition: previewRecognition,
+    recognizedFacts: [
+      "Room shape: rectangle.",
+      "Room label: present.",
+      "Door opening: present.",
+      "Window opening: present.",
+      "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
     ],
+    error: null,
+  };
+}
+
+function buildPreview(conversationGeneration: number, planningFixture: PlanningFixture): BootstrapPayload {
+  const previewStep = requestedPreviewStep();
+  const initialState = createInitialDemoState(planningFixture.roomPlan);
+  let state: DemoState = initialState;
+  const turnAInput = createToolInputForTests({
+    state,
+    planningFixture,
+    candidateFurnitureIds: ["bed-queen", "desk-standard"],
+    changedPreference: stageTurns[0]?.prompt ?? "",
+  });
+  const turnA = compareKnownLayoutOptions(turnAInput, state, null, planningFixture);
+  state = applyToolResult(state, turnA);
+  const queenState = state;
+  const queenLayout = turnA.feasibleOptions.find((option) => option.id === turnA.selectedOptionId) ?? null;
+
+  const turnBInput = createToolInputForTests({
+    state,
+    planningFixture,
+    candidateFurnitureIds: ["bed-king", "desk-standard"],
+    retainFurnitureIds: ["desk-standard"],
+    changedPreference: stageTurns[1]?.prompt ?? "",
+  });
+  const turnB = compareKnownLayoutOptions(turnBInput, state, queenLayout, planningFixture);
+  state = applyToolResult(state, turnB);
+  const afterBState = state;
+
+  const turnCInput = createToolInputForTests({
+    state,
+    planningFixture,
+    candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
+    retainFurnitureIds: ["bed-queen"],
+    changedPreference: stageTurns[2]?.prompt ?? "",
+  });
+  const turnC = compareKnownLayoutOptions(turnCInput, state, queenLayout, planningFixture);
+  state = applyToolResult(state, turnC);
+  const recoveryState = state;
+  const recoveryLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+  const failureInput = createToolInputForTests({
+    state,
+    planningFixture,
+    candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+    retainFurnitureIds: ["desk-compact", "crib-standard"],
+    changedPreference: stageTurns[3]?.prompt ?? "",
+  });
+  const controlledFailure = compareKnownLayoutOptions(failureInput, state, recoveryLayout, planningFixture);
+  const failureState = applyToolResult(state, controlledFailure);
+  const evidenceInput =
+    previewStep === "queen" ? turnAInput : previewStep === "recovery" ? turnCInput : failureInput;
+  const evidenceResult =
+    previewStep === "queen" ? turnA : previewStep === "recovery" ? turnC : controlledFailure;
+  const evidencePrompt =
+    stageTurns[previewStep === "queen" ? 0 : previewStep === "recovery" ? 2 : 3]?.prompt ?? "";
+  const evidencePriorState =
+    previewStep === "queen" ? initialState : previewStep === "recovery" ? afterBState : recoveryState;
+  const messages = [
+    {
+      id: "preview-system",
+      role: "system" as const,
+      text: "Verified room plan loaded. Geometry remains application-owned.",
+    },
+    {
+      id: "preview-user-a",
+      role: "user" as const,
+      text: stageTurns[0]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-a",
+      role: "application" as const,
+      text: "Application evidence: Queen + rotated standard desk passes every locked deterministic check.",
+    },
+    {
+      id: "preview-user-b",
+      role: "user" as const,
+      text: stageTurns[1]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-b",
+      role: "application" as const,
+      text: "Application evidence: the King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+    },
+    {
+      id: "preview-user-c",
+      role: "user" as const,
+      text: stageTurns[2]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-c",
+      role: "application" as const,
+      text: "Application evidence: Queen + baby bed + rotated compact desk passes every locked deterministic check.",
+    },
+    {
+      id: "preview-user-failure",
+      role: "user" as const,
+      text: stageTurns[3]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-failure",
+      role: "application" as const,
+      text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
+    },
+  ];
+  const messageCount = previewStep === "queen" ? 3 : previewStep === "recovery" ? 7 : messages.length;
+
+  return {
+    conversationGeneration,
+    roomMode: planningFixture.mode,
+    roomPlan: planningFixture.roomPlan,
+    state: previewStep === "queen" ? queenState : previewStep === "recovery" ? recoveryState : failureState,
+    readiness,
+    audioReadiness,
+    visionReadiness,
+    floorPlanImport: previewFloorPlanImport(planningFixture),
+    stageTurns,
+    completedStageTurnIds:
+      previewStep === "queen"
+        ? ["turn-a"]
+        : previewStep === "recovery"
+          ? ["turn-a", "turn-b", "turn-c"]
+          : stageTurns.map((turn) => turn.id),
+    lastInteraction: "turn",
+    selectedLayout: previewStep === "queen" ? queenLayout : recoveryLayout,
+    lastToolResult: evidenceResult,
+    messages: messages.slice(0, messageCount),
     trace: [
       {
         id: "preview-runtime",
@@ -229,7 +276,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
         timestamp: new Date().toISOString(),
         kind: "model-tool-call",
         title: "Schema-guided model intent delta",
-        payload: preferredLayoutIntentDelta(recoveryOnly ? afterBState : recoveryState, evidencePrompt),
+        payload: preferredLayoutIntentDelta(evidencePriorState, evidencePrompt),
       },
       {
         id: "preview-validation",
@@ -253,8 +300,8 @@ function buildResetPreview(conversationGeneration: number): BootstrapPayload {
   return {
     conversationGeneration,
     roomMode: "default",
-    roomPlan,
-    state: createInitialDemoState(),
+    roomPlan: defaultPlanningFixture.roomPlan,
+    state: createInitialDemoState(defaultPlanningFixture.roomPlan),
     readiness,
     audioReadiness,
     visionReadiness,
@@ -282,8 +329,8 @@ function buildResetPreview(conversationGeneration: number): BootstrapPayload {
 }
 
 export function createPreviewApi(): DemoApi {
-  let bootstrap = buildPreview(0);
-  let planningFixture: PlanningFixture = defaultPlanningFixture;
+  let planningFixture = requestedPlanningFixture();
+  let bootstrap = buildPreview(0, planningFixture);
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
@@ -384,7 +431,12 @@ export function createPreviewApi(): DemoApi {
         ...bootstrap.state,
         lastToolResult: bootstrap.lastToolResult,
       };
-      const outcome = evaluateManualPlacement(state, bootstrap.selectedLayout, request, planningFixture);
+      const outcome = evaluateManualPlacement(
+        state,
+        bootstrap.selectedLayout,
+        request,
+        planningFixture.roomPlan,
+      );
       if (outcome.accepted) {
         bootstrap = {
           ...bootstrap,
@@ -421,6 +473,7 @@ export function createPreviewApi(): DemoApi {
       };
     },
     resetConversation: async () => {
+      planningFixture = defaultPlanningFixture;
       bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1);
       return bootstrap;
     },

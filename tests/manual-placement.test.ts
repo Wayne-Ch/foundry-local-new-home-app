@@ -1,33 +1,56 @@
 import { describe, expect, it } from "vitest";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
+import { defaultPlanningFixture } from "../src/domain/fixture";
+import { createImportedPlanningFixture } from "../src/domain/floor-plan-import";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
-import type { DemoState, EvaluatedLayoutOption } from "../src/domain/types";
+import type { DemoState, EvaluatedLayoutOption, FurnitureId, PlanningFixture } from "../src/domain/types";
 import {
   clientPointToRoomPoint,
   keyboardPlacementOrigin,
   snappedPlacementOrigin,
 } from "../src/renderer/placement-interaction";
 
+const importedPlanningFixture = createImportedPlanningFixture({
+  schema: "single-room-topology-v1",
+  roomShape: "rectangle",
+  roomLabel: "present",
+  doorOpening: "present",
+  windowOpening: "present",
+});
+
+function acceptedLayout(
+  planningFixture: PlanningFixture,
+  candidateFurnitureIds: readonly FurnitureId[],
+): {
+  readonly state: DemoState;
+  readonly layout: EvaluatedLayoutOption;
+} {
+  const initial = createInitialDemoState(planningFixture.roomPlan);
+  const result = compareKnownLayoutOptions(
+    createToolInputForTests({
+      state: initial,
+      planningFixture,
+      candidateFurnitureIds,
+      changedPreference: candidateFurnitureIds.join(", "),
+    }),
+    initial,
+    null,
+    planningFixture,
+  );
+  const layout = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
+  if (layout === undefined) {
+    throw new Error(`Missing accepted layout for ${candidateFurnitureIds.join(", ")}`);
+  }
+  return { state: applyToolResult(initial, result), layout };
+}
+
 function acceptedQueenDesk(): {
   readonly state: DemoState;
   readonly layout: EvaluatedLayoutOption;
 } {
-  const initial = createInitialDemoState();
-  const result = compareKnownLayoutOptions(
-    createToolInputForTests({
-      state: initial,
-      candidateFurnitureIds: ["bed-queen", "desk-standard"],
-      changedPreference: "Queen and desk",
-    }),
-    initial,
-  );
-  const layout = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
-  if (layout === undefined) {
-    throw new Error("Missing accepted Queen layout");
-  }
-  return { state: applyToolResult(initial, result), layout };
+  return acceptedLayout(defaultPlanningFixture, ["bed-queen", "desk-standard"]);
 }
 
 function request(
@@ -86,6 +109,65 @@ describe("manual placement coordinate conversion", () => {
       }),
     ).toEqual({ xMm: 2350, yMm: 500 });
   });
+
+  it.each([
+    ["default A desk", defaultPlanningFixture, ["bed-queen", "desk-standard"], "desk-main"],
+    [
+      "default C compact desk",
+      defaultPlanningFixture,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "desk-main",
+    ],
+    [
+      "default C baby bed",
+      defaultPlanningFixture,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "crib-main",
+    ],
+    ["imported A desk", importedPlanningFixture, ["bed-queen", "desk-standard"], "desk-main"],
+    [
+      "imported C compact desk",
+      importedPlanningFixture,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "desk-main",
+    ],
+    [
+      "imported C baby bed",
+      importedPlanningFixture,
+      ["bed-queen", "desk-compact", "crib-standard"],
+      "crib-main",
+    ],
+  ] as const)(
+    "supports a valid one-grid pointer preview for %s",
+    (_label, planningFixture, furnitureIds, instanceId) => {
+      const { state, layout } = acceptedLayout(planningFixture, furnitureIds);
+      const placement = layout.placements.find((candidate) => candidate.instanceId === instanceId);
+      if (placement === undefined) {
+        throw new Error(`Missing ${instanceId}`);
+      }
+
+      const origin = keyboardPlacementOrigin(placement.rect, "ArrowRight", planningFixture.roomPlan);
+      const outcome = evaluateManualPlacement(
+        state,
+        layout,
+        request(state, layout, {
+          instanceId,
+          xMm: origin.xMm,
+          yMm: origin.yMm,
+        }),
+        planningFixture.roomPlan,
+      );
+
+      expect(outcome.accepted).toBe(true);
+      expect(
+        outcome.preview?.placements.find((candidate) => candidate.instanceId === instanceId),
+      ).toMatchObject({
+        xMm: placement.xMm + 50,
+        yMm: placement.yMm,
+      });
+      expect(layout.placements.find((candidate) => candidate.instanceId === instanceId)).toBe(placement);
+    },
+  );
 });
 
 describe("manual placement validation and commit", () => {

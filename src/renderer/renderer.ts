@@ -19,6 +19,7 @@ import { clearanceRuleSet, furnitureCatalog } from "../domain/fixture";
 import { rectangleSeparation } from "../domain/geometry";
 import {
   evaluateManualPlacement,
+  MANUAL_PLACEMENT_GRID_MM,
   type ManualPlacementOutcome,
   type ManualPlacementRequest,
 } from "../domain/manual-placement";
@@ -113,6 +114,7 @@ let resetRecoveryMonitor: {
 } | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
+let focusedPlacementInstanceId: string | null = null;
 let speechCorrection: SpeechSuggestionState | null = null;
 let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
 
@@ -120,6 +122,7 @@ interface PlacementDragState {
   readonly pointerId: number;
   readonly instanceId: string;
   readonly grabOffset: Point;
+  readonly originRect: Rectangle;
 }
 
 let placementDrag: PlacementDragState | null = null;
@@ -574,6 +577,14 @@ manualRevertButton.addEventListener("click", () => {
   revertManualPreview();
 });
 
+document.addEventListener("focusin", (event) => {
+  const target = event.target;
+  focusedPlacementInstanceId =
+    target instanceof Element
+      ? (target.closest<SVGElement>("[data-placement-id]")?.dataset.placementId ?? null)
+      : null;
+});
+
 roomSvg.addEventListener("pointermove", (event) => {
   updatePlacementDrag(event);
 });
@@ -622,6 +633,8 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
   const conversationGeneration = viewState.conversationGeneration;
+  releasePlacementDrag();
+  focusedPlacementInstanceId = null;
   manualPreview = null;
   manualPreviewOrigin = null;
   setBusy(true);
@@ -678,6 +691,8 @@ function applyTurnResponse(response: RunTurnResponse): void {
 }
 
 function applyBootstrap(bootstrap: BootstrapPayload): void {
+  releasePlacementDrag();
+  focusedPlacementInstanceId = null;
   viewState = bootstrap;
   latestToolResult = bootstrap.lastToolResult;
   manualPreview = null;
@@ -969,9 +984,8 @@ function resetRendererTransientUi(): void {
     manualPreviewOrigin,
     placementDrag,
   });
-  if (placementDrag !== null && roomSvg.hasPointerCapture(placementDrag.pointerId)) {
-    roomSvg.releasePointerCapture(placementDrag.pointerId);
-  }
+  releasePlacementDrag();
+  focusedPlacementInstanceId = null;
   promptInput.blur();
   promptInput.value = resetState.promptValue;
   liveTranscriptDraft = resetState.liveTranscriptDraft;
@@ -1175,11 +1189,13 @@ function renderRoomSvg(
         placementRect.classList.add("is-dragging");
       }
       placementRect.setAttribute("tabindex", "0");
+      placementRect.setAttribute("focusable", "true");
       placementRect.setAttribute("role", "button");
       placementRect.setAttribute("data-placement-id", placement.instanceId);
+      placementRect.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Escape");
       placementRect.setAttribute(
         "aria-label",
-        `${placement.label}, draggable. Use arrow keys for ${50} millimetre adjustments.`,
+        `${placement.label}, draggable. Use arrow keys for ${MANUAL_PLACEMENT_GRID_MM} millimetre adjustments.`,
       );
       placementRect.addEventListener("pointerdown", (event) => {
         beginPlacementDrag(event, placement);
@@ -1209,6 +1225,7 @@ function renderRoomSvg(
   });
   depth.textContent = `${viewState.roomPlan.depthMm} mm`;
   roomSvg.append(depth);
+  focusPlacement(focusedPlacementInstanceId);
 }
 
 function renderSvgMeasurements(layout: EvaluatedLayoutOption | null): void {
@@ -1369,9 +1386,6 @@ function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: 
   if (latestToolResult?.status === "no_feasible_option" && !displaysManualPreview) {
     return false;
   }
-  if (manualPreview !== null && manualPreview.request.instanceId !== placement.instanceId) {
-    return false;
-  }
   return viewState.selectedLayout.placements.some(
     (candidate) => candidate.instanceId === placement.instanceId,
   );
@@ -1397,15 +1411,21 @@ function manualRequest(instanceId: string, origin: Point): ManualPlacementReques
   };
 }
 
-function evaluateManualPreview(request: ManualPlacementRequest, focusInstanceId?: string): void {
-  manualPreview = evaluateManualPlacement(currentDemoState(), viewState.selectedLayout, request);
+function evaluateManualPreview(request: ManualPlacementRequest): void {
+  focusedPlacementInstanceId = request.instanceId;
+  manualPreview = evaluateManualPlacement(
+    currentDemoState(),
+    viewState.selectedLayout,
+    request,
+    viewState.roomPlan,
+  );
   renderLayout();
-  if (focusInstanceId !== undefined) {
-    focusPlacement(focusInstanceId);
-  }
 }
 
-function focusPlacement(instanceId: string): void {
+function focusPlacement(instanceId: string | null): void {
+  if (instanceId === null) {
+    return;
+  }
   const placement = [...roomSvg.querySelectorAll<SVGRectElement>("[data-placement-id]")].find(
     (element) => element.dataset.placementId === instanceId,
   );
@@ -1424,10 +1444,11 @@ function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): 
     return;
   }
   event.preventDefault();
-  manualPreviewOrigin = {
-    instanceId: placement.instanceId,
-    rect: acceptedPlacement.rect,
-  };
+  focusedPlacementInstanceId = placement.instanceId;
+  if (event.currentTarget instanceof SVGElement) {
+    event.currentTarget.focus({ preventScroll: true });
+  }
+  releasePlacementDrag();
   placementDrag = {
     pointerId: event.pointerId,
     instanceId: placement.instanceId,
@@ -1435,6 +1456,7 @@ function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): 
       xMm: point.xMm - placement.rect.xMm,
       yMm: point.yMm - placement.rect.yMm,
     },
+    originRect: acceptedPlacement.rect,
   };
   roomSvg.setPointerCapture(event.pointerId);
   renderLayout();
@@ -1460,6 +1482,10 @@ function updatePlacementDrag(event: PointerEvent): void {
   );
   const request = manualRequest(drag.instanceId, origin);
   if (request !== null) {
+    manualPreviewOrigin = {
+      instanceId: drag.instanceId,
+      rect: drag.originRect,
+    };
     evaluateManualPreview(request);
   }
 }
@@ -1468,14 +1494,22 @@ function finishPlacementDrag(event: PointerEvent): void {
   if (placementDrag?.pointerId !== event.pointerId) {
     return;
   }
-  if (roomSvg.hasPointerCapture(event.pointerId)) {
-    roomSvg.releasePointerCapture(event.pointerId);
-  }
-  placementDrag = null;
+  releasePlacementDrag(event.pointerId);
   if (manualPreview === null) {
     manualPreviewOrigin = null;
   }
   renderLayout();
+}
+
+function releasePlacementDrag(pointerId?: number): void {
+  const drag = placementDrag;
+  if (drag === null || (pointerId !== undefined && drag.pointerId !== pointerId)) {
+    return;
+  }
+  if (roomSvg.hasPointerCapture(drag.pointerId)) {
+    roomSvg.releasePointerCapture(drag.pointerId);
+  }
+  placementDrag = null;
 }
 
 function pointerRoomPoint(event: PointerEvent): Point {
@@ -1524,7 +1558,8 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
     return;
   }
   event.preventDefault();
-  manualPreviewOrigin ??= {
+  focusedPlacementInstanceId = placement.instanceId;
+  manualPreviewOrigin = {
     instanceId: placement.instanceId,
     rect: acceptedPlacement.rect,
   };
@@ -1532,11 +1567,11 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
     placement.rect,
     event.key,
     viewState.roomPlan,
-    event.shiftKey ? 100 : 50,
+    MANUAL_PLACEMENT_GRID_MM,
   );
   const request = manualRequest(placement.instanceId, origin);
   if (request !== null) {
-    evaluateManualPreview(request, placement.instanceId);
+    evaluateManualPreview(request);
   }
 }
 
@@ -1579,7 +1614,7 @@ async function applyManualPreview(): Promise<void> {
 }
 
 function revertManualPreview(): void {
-  placementDrag = null;
+  releasePlacementDrag();
   manualPreview = null;
   manualPreviewOrigin = null;
   renderLayout();

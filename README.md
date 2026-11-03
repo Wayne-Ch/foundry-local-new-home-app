@@ -65,9 +65,11 @@ room plan.
   collision, 250 mm furniture-clearance checks, and exact pair measurements for accepted or rejected
   options.
 - **Direct manipulation:** accepted SVG furniture is pointer- and keyboard-adjustable on a bounded
-  50 mm grid. Dragging shows an app-owned ghost preview; Apply revalidates and creates a new accepted
-  application layout version, while invalid placement remains a labeled rejected preview until
-  Revert.
+  50 mm grid. Every displayed bed, standard/compact desk, and baby bed remains selectable while a
+  preview is pending. Clicking establishes accessible focus that survives SVG redraws, so arrow-key
+  previews continue updating geometry and measurements. Dragging shows an app-owned ghost preview;
+  Apply revalidates and creates a new accepted application layout version, while invalid placement
+  remains a labeled rejected preview until Revert.
 - **Rendering:** Electron renderer with an SVG room plan, visible requirements/measurements,
   dimension callouts for exact gaps or shortfalls, and an inspectable structured trace.
 - **Failure evidence:** one rejected preview is always rendered with checks and conflicts from that
