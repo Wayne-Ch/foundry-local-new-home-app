@@ -12,6 +12,7 @@ import {
   FoundryFloorPlanVisionError,
   FoundryLayoutService,
 } from "../src/foundry/foundry-service";
+import { importedStageTurns } from "../src/foundry/prompt";
 import {
   FLOOR_PLAN_FIXTURE_BYTE_LENGTH,
   FLOOR_PLAN_FIXTURE_HEIGHT,
@@ -197,8 +198,7 @@ try {
       state,
       planningFixture,
       candidateFurnitureIds: ["bed-queen", "desk-standard"],
-      changedPreference:
-        "In the imported bedroom, can a Queen-size bed and a desk fit while keeping the door, closet, and window clear?",
+      changedPreference: importedStageTurns[0]?.prompt ?? "",
     }),
     state,
     null,
@@ -215,7 +215,7 @@ try {
       planningFixture,
       candidateFurnitureIds: ["bed-king", "desk-standard"],
       retainFurnitureIds: ["desk-standard"],
-      changedPreference: "What changes in the imported room if we use a King-size bed instead?",
+      changedPreference: importedStageTurns[1]?.prompt ?? "",
     }),
     state,
     acceptedQueen,
@@ -232,31 +232,29 @@ try {
     "King conflict did not preserve the exact 70 / 250 mm evidence.",
   );
 
-  const recovery = compareKnownLayoutOptions(
+  const turnC = compareKnownLayoutOptions(
     createToolInputForTests({
       state,
       planningFixture,
       candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
       retainFurnitureIds: ["bed-queen"],
-      changedPreference:
-        "Keep the Queen bed in the imported bedroom. Add a baby bed. Use a compact desk if needed.",
+      changedPreference: importedStageTurns[2]?.prompt ?? "",
     }),
     state,
     acceptedQueen,
     planningFixture,
   );
-  assert(recovery.status === "feasible", `Imported recovery failed: ${recovery.summary}`);
-  state = applyToolResult(state, recovery);
-  const acceptedRecovery =
-    recovery.feasibleOptions.find((option) => option.id === recovery.selectedOptionId) ?? null;
-  assert(acceptedRecovery !== null, "Imported recovery did not select a layout.");
+  assert(turnC.status === "feasible", `Imported Turn C failed: ${turnC.summary}`);
+  state = applyToolResult(state, turnC);
+  const acceptedTurnC = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+  assert(acceptedTurnC !== null, "Imported Turn C did not select a layout.");
 
   const manual = evaluateManualPlacement(
     state,
-    acceptedRecovery,
+    acceptedTurnC,
     {
       priorStateRef: state.stateRef,
-      sourceLayoutId: acceptedRecovery.id,
+      sourceLayoutId: acceptedTurnC.id,
       instanceId: "desk-main",
       xMm: 2850,
       yMm: 850,
@@ -279,9 +277,9 @@ try {
       status: king.status,
       conflicts: king.conflicts,
     },
-    recovery: {
-      status: recovery.status,
-      selectedOptionId: recovery.selectedOptionId,
+    turnC: {
+      status: turnC.status,
+      selectedOptionId: turnC.selectedOptionId,
     },
     manual: {
       accepted: manual.accepted,

@@ -102,11 +102,11 @@ const previewRecognition: FloorPlanRecognition = {
   windowOpening: "present",
 };
 
-type PreviewStep = "queen" | "conflict" | "recovery" | "failure";
+type PreviewStep = "queen" | "conflict" | "request" | "failure";
 
 function requestedPreviewStep(): PreviewStep {
   const step = new URLSearchParams(window.location.search).get("step");
-  return step === "queen" || step === "conflict" || step === "recovery" ? step : "failure";
+  return step === "queen" || step === "conflict" || step === "request" ? step : "failure";
 }
 
 function requestedPlanningFixture(): PlanningFixture {
@@ -193,8 +193,8 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
   });
   const turnC = compareKnownLayoutOptions(turnCInput, state, queenLayout, planningFixture);
   state = applyToolResult(state, turnC);
-  const recoveryState = state;
-  const recoveryLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+  const turnCState = state;
+  const turnCLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
   const failureInput = createToolInputForTests({
     state,
     planningFixture,
@@ -202,14 +202,14 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     retainFurnitureIds: ["desk-compact", "crib-standard"],
     changedPreference: stageTurns[3]?.prompt ?? "",
   });
-  const controlledFailure = compareKnownLayoutOptions(failureInput, state, recoveryLayout, planningFixture);
+  const controlledFailure = compareKnownLayoutOptions(failureInput, state, turnCLayout, planningFixture);
   const failureState = applyToolResult(state, controlledFailure);
   const evidenceInput =
     previewStep === "queen"
       ? turnAInput
       : previewStep === "conflict"
         ? turnBInput
-        : previewStep === "recovery"
+        : previewStep === "request"
           ? turnCInput
           : failureInput;
   const evidenceResult =
@@ -217,21 +217,21 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
       ? turnA
       : previewStep === "conflict"
         ? turnB
-        : previewStep === "recovery"
+        : previewStep === "request"
           ? turnC
           : controlledFailure;
   const evidencePrompt =
     stageTurns[
-      previewStep === "queen" ? 0 : previewStep === "conflict" ? 1 : previewStep === "recovery" ? 2 : 3
+      previewStep === "queen" ? 0 : previewStep === "conflict" ? 1 : previewStep === "request" ? 2 : 3
     ]?.prompt ?? "";
   const evidencePriorState =
     previewStep === "queen"
       ? initialState
       : previewStep === "conflict"
         ? queenState
-        : previewStep === "recovery"
+        : previewStep === "request"
           ? afterBState
-          : recoveryState;
+          : turnCState;
   const messages = [
     {
       id: "preview-system",
@@ -256,7 +256,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     {
       id: "preview-app-b",
       role: "application" as const,
-      text: "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+      text: "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation?",
     },
     {
       id: "preview-user-c",
@@ -284,7 +284,7 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
       ? 3
       : previewStep === "conflict"
         ? 5
-        : previewStep === "recovery"
+        : previewStep === "request"
           ? 7
           : messages.length;
 
@@ -297,8 +297,8 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
         ? queenState
         : previewStep === "conflict"
           ? afterBState
-          : previewStep === "recovery"
-            ? recoveryState
+          : previewStep === "request"
+            ? turnCState
             : failureState,
     readiness,
     audioReadiness,
@@ -310,11 +310,11 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
         ? ["turn-a"]
         : previewStep === "conflict"
           ? ["turn-a", "turn-b"]
-          : previewStep === "recovery"
+          : previewStep === "request"
             ? ["turn-a", "turn-b", "turn-c"]
             : stageTurns.map((turn) => turn.id),
     lastInteraction: "turn",
-    selectedLayout: previewStep === "queen" || previewStep === "conflict" ? queenLayout : recoveryLayout,
+    selectedLayout: previewStep === "queen" || previewStep === "conflict" ? queenLayout : turnCLayout,
     lastToolResult: evidenceResult,
     messages: messages.slice(0, messageCount),
     trace: [

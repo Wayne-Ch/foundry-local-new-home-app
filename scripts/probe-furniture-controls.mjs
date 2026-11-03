@@ -174,7 +174,14 @@ async function snapshot(client) {
       ),
       conflictText: document.querySelector("#conflictList")?.textContent ?? "",
       requirementText: document.querySelector("#requirementSummary")?.textContent ?? "",
+      nextTurnText: document.querySelector("#nextTurnButton")?.textContent?.trim() ?? "",
       messageCount: document.querySelectorAll("#messages .message").length,
+      buyerMessages: [...document.querySelectorAll("#messages .message-user p")].map(
+        (element) => element.textContent?.trim() ?? "",
+      ),
+      applicationMessages: [...document.querySelectorAll("#messages .message-application p")].map(
+        (element) => element.textContent?.trim() ?? "",
+      ),
       applyDisabled: document.querySelector("#manualApplyButton")?.disabled ?? true,
       revertDisabled: document.querySelector("#manualRevertButton")?.disabled ?? true,
       scaleX: matrix?.a ?? 0,
@@ -400,6 +407,9 @@ async function verifyPointerScenario(client, baseUrl, scenario) {
   await installCaptureProbe(client);
   const initial = await snapshot(client);
   assertAccessiblePlacements(initial, scenario.expectedIds);
+  assert.equal(initial.nextTurnText, scenario.expectedNextTurnText);
+  assert.equal(initial.buyerMessages.at(-1), scenario.expectedBuyerPrompt);
+  assert.equal(initial.buyerMessages.length, initial.applicationMessages.length);
   if (scenario.roomMode === "imported") {
     assert.match(initial.importStatus, /VLM visible-topology recognition passed/);
   }
@@ -491,6 +501,7 @@ async function verifyRetainedFailureScenario(client, baseUrl, scenario) {
   assert.match(rejected.manualStatus, /cannot be edited or applied/);
   assert.equal(rejected.applyDisabled, true);
   assert.equal(rejected.revertDisabled, true);
+  assert.equal(rejected.nextTurnText, scenario.expectedNextTurnText);
 
   const rejectedDeskOrigin = renderedPlacement(rejected, "desk-main").xMm;
   await attemptRenderedDrag(client, "desk-main", 50);
@@ -563,7 +574,7 @@ async function verifyRetainedFailureScenario(client, baseUrl, scenario) {
 }
 
 async function verifyKeyboardApplyAndRevert(client, baseUrl) {
-  const url = `${baseUrl}/?preview=1&step=recovery`;
+  const url = `${baseUrl}/?preview=1&step=request`;
   await navigate(client, url, 3);
   const initial = await snapshot(client);
   const initialDeskX = placement(initial, "desk-main").xMm;
@@ -673,24 +684,36 @@ try {
       query: "?preview=1&step=queen",
       roomMode: "default",
       expectedIds: ["bed-main", "desk-main"],
+      expectedNextTurnText: "Run next: B · King conflict",
+      expectedBuyerPrompt:
+        "Can a Queen-size bed and a desk fit here without blocking the closet or the door?",
     },
     {
       name: "default layout C",
-      query: "?preview=1&step=recovery",
+      query: "?preview=1&step=request",
       roomMode: "default",
       expectedIds: ["bed-main", "desk-main", "crib-main"],
+      expectedNextTurnText: "Run next: E · King controlled failure",
+      expectedBuyerPrompt:
+        "Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.",
     },
     {
       name: "imported layout A",
       query: "?preview=1&room=imported&step=queen",
       roomMode: "imported",
       expectedIds: ["bed-main", "desk-main"],
+      expectedNextTurnText: "Run next: B · Imported King conflict",
+      expectedBuyerPrompt:
+        "In the imported bedroom, can a Queen-size bed and a desk fit while keeping the door, closet, and window clear?",
     },
     {
       name: "imported layout C",
-      query: "?preview=1&room=imported&step=recovery",
+      query: "?preview=1&room=imported&step=request",
       roomMode: "imported",
       expectedIds: ["bed-main", "desk-main", "crib-main"],
+      expectedNextTurnText: "Run next: E · Imported King failure",
+      expectedBuyerPrompt:
+        "Can we do a Queen bed and a desk in the imported bedroom, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.",
     },
   ];
   for (const scenario of scenarios) {
@@ -704,16 +727,18 @@ try {
       acceptedLabel: "Imported room · Queen + rotated standard desk",
       rejectedLabel: "Imported room · King + rotated standard desk",
       expectedAcceptedIds: ["bed-main", "desk-main"],
+      expectedNextTurnText: "Run next: C · Imported Queen + desk + baby bed",
       measurements: ["Rejected evidence · King bed ↔ Standard desk: 70 mm / required 250 mm · 180 mm short"],
       conflicts: ["King bed and Standard desk have 70 mm clearance; 250 mm is required\\."],
     },
     {
-      name: "imported E after recovery C",
+      name: "imported E after buyer-request C",
       query: "?preview=1&room=imported",
       acceptedLayoutId: "imported-queen-crib-compact-v1",
       acceptedLabel: "Imported room · Queen + baby bed + compact desk",
       rejectedLabel: "Imported room · King + baby bed + compact desk",
       expectedAcceptedIds: ["bed-main", "desk-main", "crib-main"],
+      expectedNextTurnText: "Scripted story complete",
       measurements: [
         "Rejected evidence · King bed ↔ Compact desk: 70 mm / required 250 mm · 180 mm short",
         "Rejected evidence · King bed ↔ Baby bed: 170 mm / required 250 mm · 80 mm short",

@@ -147,7 +147,7 @@ describe("strict floor-plan recognition contract", () => {
 });
 
 describe("imported deterministic planning chain", () => {
-  it("runs Queen success, King conflict, recovery, and app-owned manual placement", () => {
+  it("runs Queen success, King conflict, buyer-request C, and app-owned manual placement", () => {
     const fixture = importedFixture();
     let state = createInitialDemoState(fixture.roomPlan);
 
@@ -198,7 +198,7 @@ describe("imported deterministic planning chain", () => {
       ]),
     );
 
-    const recovery = compareKnownLayoutOptions(
+    const turnC = compareKnownLayoutOptions(
       createToolInputForTests({
         state,
         planningFixture: fixture,
@@ -209,9 +209,8 @@ describe("imported deterministic planning chain", () => {
       queen.feasibleOptions[0] ?? null,
       fixture,
     );
-    expect(recovery.status).toBe("feasible");
-    const selected =
-      recovery.feasibleOptions.find((option) => option.id === recovery.selectedOptionId) ?? null;
+    expect(turnC.status).toBe("feasible");
+    const selected = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
     expect(selected?.checkedStates.every((check) => check.passed)).toBe(true);
 
     const acceptedState = {
@@ -221,9 +220,9 @@ describe("imported deterministic planning chain", () => {
       currentLayoutId: selected?.id ?? null,
       currentLayoutSource: "known-option" as const,
       activeFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"] as const,
-      lastChangedPreference: recovery.changedPreference,
-      lastResultStatus: recovery.status,
-      lastToolResult: recovery,
+      lastChangedPreference: turnC.changedPreference,
+      lastResultStatus: turnC.status,
+      lastToolResult: turnC,
     };
     const manual = evaluateManualPlacement(
       acceptedState,

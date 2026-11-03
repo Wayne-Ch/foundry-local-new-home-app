@@ -35,6 +35,7 @@ import type {
   ResolvedPlacement,
   RuntimeReadiness,
 } from "../domain/types";
+import { nextPendingStageTurnIndex } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
@@ -157,8 +158,6 @@ const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
 const nextTurnButton = requiredButton("nextTurnButton");
-const recoveryActions = requiredElement("recoveryActions");
-const recoveryPrimaryButton = requiredButton("recoveryPrimaryButton");
 const messagesElement = requiredElement("messages");
 const promptForm = requiredForm("promptForm");
 const promptInput = requiredTextArea("promptInput");
@@ -526,13 +525,6 @@ nextTurnButton.addEventListener("click", () => {
   }
 });
 
-recoveryPrimaryButton.addEventListener("click", () => {
-  const recoveryTurn = viewState.stageTurns.find((turn) => turn.id === "turn-c");
-  if (recoveryTurn !== undefined) {
-    void runTurn(recoveryTurn.prompt, recoveryTurn.id);
-  }
-});
-
 speechApplyButton.addEventListener("click", () => {
   if (speechCorrection === null) {
     return;
@@ -742,7 +734,6 @@ function renderAll(): void {
   renderAudio();
   renderStageSteps(viewState.stageTurns);
   renderMessages(viewState.messages);
-  renderRecoveryActions();
   renderFloorPlanImport();
   renderLayout();
   renderSpeechSuggestion();
@@ -802,7 +793,7 @@ function renderFloorPlanImport(): void {
 }
 
 function nextStageTurnIndex(): number {
-  return viewState.stageTurns.findIndex((turn) => !viewState.completedStageTurnIds.includes(turn.id));
+  return nextPendingStageTurnIndex(viewState.stageTurns, viewState.completedStageTurnIds);
 }
 
 function renderRuntime(readiness: RuntimeReadiness): void {
@@ -972,20 +963,6 @@ function renderMessages(messages: readonly ConversationMessage[]): void {
     messagesElement.append(article);
   }
   messagesElement.scrollTop = messagesElement.scrollHeight;
-}
-
-function renderRecoveryActions(): void {
-  const recoveryPending =
-    latestToolResult?.status === "no_feasible_option" &&
-    viewState.completedStageTurnIds.includes("turn-b") &&
-    !viewState.completedStageTurnIds.includes("turn-c");
-  recoveryActions.hidden = !recoveryPending;
-  recoveryPrimaryButton.disabled =
-    !recoveryPending ||
-    isBusy ||
-    isAudioBusy() ||
-    operationBarrier.operationsBlocked ||
-    !viewState.readiness.localInferenceReady;
 }
 
 function renderSpeechSuggestion(): void {

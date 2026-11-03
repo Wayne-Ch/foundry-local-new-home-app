@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stageTurnsForMode } from "../src/foundry/prompt";
+import { nextPendingStageTurnIndex, stageTurnsForMode } from "../src/foundry/prompt";
 import { createPreviewApi } from "../src/renderer/preview-api";
 
 afterEach(() => {
@@ -9,9 +9,9 @@ afterEach(() => {
 describe("renderer preview scenarios", () => {
   it.each([
     ["default A", "?preview=1&step=queen", "default", "queen-desk-standard-v1", 2],
-    ["default C", "?preview=1&step=recovery", "default", "queen-crib-compact-v1", 3],
+    ["default C", "?preview=1&step=request", "default", "queen-crib-compact-v1", 3],
     ["imported A", "?preview=1&room=imported&step=queen", "imported", "imported-queen-desk-standard-v1", 2],
-    ["imported C", "?preview=1&room=imported&step=recovery", "imported", "imported-queen-crib-compact-v1", 3],
+    ["imported C", "?preview=1&room=imported&step=request", "imported", "imported-queen-crib-compact-v1", 3],
   ] as const)(
     "renders the accepted %s layout through the real preview API",
     async (_label, search, roomMode, layoutId, placementCount) => {
@@ -32,8 +32,10 @@ describe("renderer preview scenarios", () => {
 
   it.each([
     ["default feasible", "?preview=1&step=queen", "default", 0],
+    ["default buyer request", "?preview=1&step=request", "default", 2],
     ["default rejected", "?preview=1&step=failure", "default", 3],
     ["imported feasible", "?preview=1&room=imported&step=queen", "imported", 0],
+    ["imported buyer request", "?preview=1&room=imported&step=request", "imported", 2],
     ["imported rejected", "?preview=1&room=imported&step=failure", "imported", 3],
   ] as const)(
     "keeps Buyer prompts separate from Application evidence for %s without changing trace provenance",
@@ -79,6 +81,17 @@ describe("renderer preview scenarios", () => {
     },
   );
 
+  it("leaves C pending after B until the buyer explicitly runs or submits it", async () => {
+    vi.stubGlobal("window", { location: { search: "?preview=1&step=conflict" } });
+    const turns = stageTurnsForMode("default");
+
+    const bootstrap = await createPreviewApi().getBootstrap();
+
+    expect(bootstrap.completedStageTurnIds).toEqual(["turn-a", "turn-b"]);
+    expect(nextPendingStageTurnIndex(turns, bootstrap.completedStageTurnIds)).toBe(2);
+    expect(bootstrap.messages.some((message) => message.text === turns[2]?.prompt)).toBe(false);
+  });
+
   it.each([
     {
       label: "B after A",
@@ -90,10 +103,10 @@ describe("renderer preview scenarios", () => {
       measurements: [[70, 250]],
       turnIndex: 1,
       evidenceVerdict:
-        "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+        "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation?",
     },
     {
-      label: "E after recovery C",
+      label: "E after buyer-request C",
       search: "?preview=1&room=imported",
       stateVersion: 4,
       acceptedLayoutId: "imported-queen-crib-compact-v1",

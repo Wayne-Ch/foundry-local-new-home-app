@@ -215,7 +215,7 @@ Message:
 
 Show only:
 
-- explicit A/B/recovery/E story plus baby-bed alias turns;
+- explicit A/B/C/E buyer-request story plus baby-bed alias turns;
 - expected furniture IDs;
 - closet conflict assertion;
 - no-feasible assertion;
@@ -229,7 +229,7 @@ Show only:
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 - exact VLM ID/CPU EP, categorical bedroom/door/window evidence, canonical imported geometry,
-  Queen/King/recovery/manual chain,
+  Queen/King/Turn C/manual chain,
   and terminal `FLOOR_PLAN_INTEGRATION_OK`.
 
 The final checkpoint is recorded in `VALIDATION.md`. The real audio

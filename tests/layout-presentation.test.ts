@@ -70,7 +70,7 @@ describe("layout evidence presentation", () => {
     expect(acceptedLayout.layoutNotice).toContain('Select "Inspect rejected option"');
   });
 
-  it("defaults E after recovery C to the rejected preview while preserving exact C state and E evidence", () => {
+  it("defaults E after buyer-request C to the rejected preview while preserving exact C state and E evidence", () => {
     const fixture = createImportedPlanningFixture({
       schema: "single-room-topology-v1",
       roomShape: "rectangle",

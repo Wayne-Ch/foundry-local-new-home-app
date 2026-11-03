@@ -73,16 +73,17 @@ In the app:
    stays quarantined until automatic session replacement succeeds or a later explicit Reset starts
    a newer v0 generation.
 7. Close the trace for the opening shot.
-8. Run one focused real-microphone recovery gate with:
+8. Run one focused real-microphone Turn C buyer-request gate with:
 
-   > Keep the Queen bed. Add a baby bed. Use a compact desk. Keep the closet clear.
+   > Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed.
+   > Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.
 
    Confirm the raw transcript remains in Developer trace. If the observed demo vocabulary is
    misheard, confirm the exact raw text initially remains in Manual prompt, the banner lists exact
    before/after replacements, and only **Apply suggested furniture corrections** changes the prompt.
    Confirm **Dismiss** leaves raw and **Undo suggestions** restores raw, then use Apply and verify the
-   same feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate
-   or relabel the committed Queen + desk WAV fixture as baby-bed evidence.
+   same feasible `queen-crib-compact-v1` result as the scripted Turn C action. Do not regenerate or
+   relabel the committed Queen + desk WAV fixture as baby-bed evidence.
 
 Optional enhanced-room preflight:
 
@@ -114,7 +115,7 @@ The hands-on story is intentionally explicit:
 |---|---|---|
 | A | Queen + desk | Feasible accepted layout |
 | B | Change to King | Closet conflict; app asks which preference may change |
-| C | Select the recovery action or say “Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.” | Queen + compact desk + baby bed is feasible; the changed preference is visible while door, closet, window, and 250 mm clearance remain locked |
+| C | Select **Run next: C · Queen + desk + baby bed** or say “Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.” | Queen + compact desk + baby bed is feasible; the full new buyer request is visible before Application evidence while door, closet, window, and 250 mm clearance remain locked |
 | D | Optionally drag accepted furniture, then Apply or Revert | App-owned 50 mm-grid preview with live deterministic measurements; no Qwen geometry |
 | E | Use King while retaining compact desk + baby bed | Controlled failure with exact 70 / 250 mm and 170 / 250 mm gap callouts |
 
@@ -149,7 +150,7 @@ Before the audience arrives:
    Turn B/Turn C evidence ready for the condensed story.
 
 Turn B and Turn C evidence is real Foundry Local output produced during rehearsal, but it is
-**pre-run**. Label it that way. The browser screenshot is recovery evidence only, never a live-demo
+**pre-run**. Label it that way. The browser screenshot is backup evidence only, never a live-demo
 substitute.
 
 ### 0:00–1:00 — Foundry Local overview
@@ -200,7 +201,7 @@ Then switch to clearly labeled pre-run evidence:
    - Baby bed added.
    - Desk changed to compact/rotated.
    - All five deterministic checks passed.
-   - The visible recovery action states exactly what changed and what stayed locked.
+   - The visible **Run next: C · Queen + desk + baby bed** action identifies the next buyer request.
 
 Say explicitly for Turn B/C:
 
@@ -210,7 +211,8 @@ Say explicitly for Turn B/C:
 Keep the remaining exact staged dialogue visible:
 
 - “What changes if we use a King-size bed instead?”
-- “Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.”
+- “Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep
+  the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.”
 
 ### 3:30–4:00 — Map the UI to architecture and code
 
@@ -246,7 +248,7 @@ function-call path.
 
 ### 11:15–11:45 — Optional app-owned manual adjustment
 
-Starting from the accepted recovery layout:
+Starting from the accepted Turn C layout:
 
 1. Drag one accepted furniture footprint a single 50 mm grid step, or focus it and use an arrow key.
 2. Point to the original-position ghost, live pair measurements, and deterministic checks.
@@ -290,7 +292,7 @@ Expected live result:
   `King bed ↔ Baby bed: 170 mm / required 250 mm`;
 - **Inspect rejected option** shows the east option with dimension lines at the exact gaps, only its
   own furniture-clearance failures, and the door-open check at `PASS`;
-- **Show accepted layout** returns to the active Queen recovery layout without rerunning a turn;
+- **Show accepted layout** returns to the active Queen Turn C layout without rerunning a turn;
 - Developer trace separately labels aggregate reasons across both rejected alternatives, including
   the south option's door-swing conflict;
 - response asks which preference may change.
@@ -363,7 +365,7 @@ alone—is the offline readiness gate.
 | Microphone permission denied / no mic | State the error shown by the app and use the existing typed Turn A prompt. Never bypass transcript review or switch to an online speech service. |
 | Nemotron unavailable or live stream fails | If the labeled **Whisper Tiny fallback (record then transcribe)** action is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
 | Whisper fallback unavailable | Keep typed input. The voice badge must not claim fallback readiness. |
-| No feasible layout after Turn B | Select the visible recovery action: keep Queen, allow the compact desk, add a baby bed, and keep door/closet/window/250 mm clearance locked. The action enters the same Qwen/app validation pipeline as typed input. |
+| No feasible layout after Turn B | Select **Run next: C · Queen + desk + baby bed**, or submit the equivalent full buyer request. The action enters the same Qwen/app validation pipeline as typed input; nothing runs automatically. |
 | Empty/incorrect transcript | Review the exact raw draft and visible replacement diff. Apply explicitly, Dismiss, edit, or Undo before Send. The raw ASR transcript remains in Developer trace and the app never auto-rewrites or auto-submits it. |
 
 There is no canned natural-language fallback. The visible response is explicitly labeled
