@@ -1615,9 +1615,7 @@ export class FoundryLayoutService {
           );
         }
 
-        onProgress?.(
-          `Classifying room shape, bedroom label, door, window, and movable furniture locally (attempt ${attempt}).`,
-        );
+        onProgress?.(`Classifying room shape, room label, door, and window locally (attempt ${attempt}).`);
         const generationStarted = performance.now();
         const response = await this.#executeVisionRequest(request, generation, () =>
           session.processRequest(request),

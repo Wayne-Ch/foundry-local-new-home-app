@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { FLOOR_PLAN_MAX_BYTES, validateFloorPlanImageBytes } from "../src/layout-import/image-security";
@@ -53,6 +54,10 @@ describe("floor-plan image security", () => {
     });
     expect(validated.bytes).not.toBe(source);
     expect(validated.bytes).toEqual(new Uint8Array(source));
+    expect(source.byteLength).toBe(194_686);
+    expect(createHash("sha256").update(source).digest("hex")).toBe(
+      "02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587",
+    );
   });
 
   it.each([

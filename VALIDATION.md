@@ -129,7 +129,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 28 files / 705 tests pass |
+| Unit tests | 28 files / 704 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
@@ -189,7 +189,7 @@ Final command outputs from the October 31 independent revision run:
 | `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18; 4,355 ms load, 5,671 ms median, 9,107 ms max |
 | `npm run lint` | 89 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 28 files / 705 tests pass |
+| `npm test` | 28 files / 704 tests pass |
 | `npm run build` | Pass; 122 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:reset` | Pass; actual renderer Start/Reset controls, controlled WAV-backed MediaStream, production IPC/controller/owner, real Nemotron stream, 1 PCM chunk per cycle, 6 ms then 4 ms cancellation, stopped tracks, v0 UI/controller, and fresh lease session 2 |

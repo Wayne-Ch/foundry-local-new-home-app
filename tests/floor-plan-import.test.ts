@@ -216,5 +216,70 @@ describe("imported deterministic planning chain", () => {
       rejectionCode: null,
       selectedLayout: { placementSource: "manual-adjustment" },
     });
+
+    const doorBlocked = evaluateManualPlacement(
+      acceptedState,
+      selected,
+      {
+        priorStateRef: acceptedState.stateRef,
+        sourceLayoutId: selected?.id ?? "",
+        instanceId: "desk-main",
+        xMm: 300,
+        yMm: 800,
+      },
+      fixture,
+    );
+    expect(doorBlocked).toMatchObject({
+      accepted: false,
+      rejectionCode: "INVALID_PLACEMENT",
+      preview: {
+        conflicts: expect.arrayContaining([expect.objectContaining({ code: "DOOR_SWING_OVERLAP" })]),
+      },
+    });
+
+    const windowBlocked = evaluateManualPlacement(
+      acceptedState,
+      selected,
+      {
+        priorStateRef: acceptedState.stateRef,
+        sourceLayoutId: selected?.id ?? "",
+        instanceId: "bed-main",
+        xMm: 1100,
+        yMm: 1900,
+      },
+      fixture,
+    );
+    expect(windowBlocked).toMatchObject({
+      accepted: false,
+      rejectionCode: "INVALID_PLACEMENT",
+      preview: {
+        conflicts: expect.arrayContaining([
+          expect.objectContaining({
+            code: "RESERVED_ZONE_OVERLAP",
+            zoneId: "window-clearance-zone",
+          }),
+        ]),
+      },
+    });
+
+    const controlledFailure = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state: acceptedState,
+        planningFixture: fixture,
+        candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+        retainFurnitureIds: ["desk-compact", "crib-standard"],
+      }),
+      acceptedState,
+      selected,
+      fixture,
+    );
+    expect(controlledFailure.status).toBe("no_feasible_option");
+    expect(controlledFailure.aggregateConflicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "FURNITURE_CLEARANCE", actualDistanceMm: 70 }),
+        expect.objectContaining({ code: "FURNITURE_CLEARANCE", actualDistanceMm: 170 }),
+        expect.objectContaining({ code: "DOOR_SWING_OVERLAP" }),
+      ]),
+    );
   });
 });
