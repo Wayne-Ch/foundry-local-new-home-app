@@ -70,15 +70,23 @@ export function rectangleSeparation(left: Rectangle, right: Rectangle): Rectangl
 
 export function rectangleIntersectsDoorSwing(rect: Rectangle, room: RoomPlan): boolean {
   const edges = rectangleEdges(rect);
-  const swing = room.doorSwing;
-  if (edges.right < swing.hingeXmm || edges.top > swing.hingeYmm) {
-    return false;
-  }
+  return room.doorSwings.some((swing) => {
+    const east = swing.quadrant.endsWith("east");
+    const south = swing.quadrant.startsWith("south");
+    if (
+      (east && edges.right < swing.hingeXmm) ||
+      (!east && edges.left > swing.hingeXmm) ||
+      (south && edges.bottom < swing.hingeYmm) ||
+      (!south && edges.top > swing.hingeYmm)
+    ) {
+      return false;
+    }
 
-  const nearestX = Math.max(edges.left, Math.min(swing.hingeXmm, edges.right));
-  const nearestY = Math.max(edges.top, Math.min(swing.hingeYmm, edges.bottom));
-  const distance = Math.hypot(nearestX - swing.hingeXmm, nearestY - swing.hingeYmm);
-  return distance <= swing.radiusMm;
+    const nearestX = Math.max(edges.left, Math.min(swing.hingeXmm, edges.right));
+    const nearestY = Math.max(edges.top, Math.min(swing.hingeYmm, edges.bottom));
+    const distance = Math.hypot(nearestX - swing.hingeXmm, nearestY - swing.hingeYmm);
+    return distance <= swing.radiusMm;
+  });
 }
 
 export function resolvePlacement(
@@ -145,14 +153,21 @@ export function evaluateLayoutOption(
       });
     }
 
-    if (rectangleIntersectsDoorSwing(placement.rect, room)) {
-      conflicts.push({
-        code: "DOOR_SWING_OVERLAP",
-        ruleId: "keep-door-swing-clear",
-        message: `${placement.label} intersects the verified ${room.doorSwing.radiusMm} mm door swing.`,
-        objectIds: [placement.instanceId],
-        zoneId: room.doorSwing.id,
-      });
+    for (const swing of room.doorSwings) {
+      if (
+        rectangleIntersectsDoorSwing(placement.rect, {
+          ...room,
+          doorSwings: [swing],
+        })
+      ) {
+        conflicts.push({
+          code: "DOOR_SWING_OVERLAP",
+          ruleId: "keep-door-swing-clear",
+          message: `${placement.label} intersects the verified ${swing.radiusMm} mm ${swing.label.toLowerCase()}.`,
+          objectIds: [placement.instanceId],
+          zoneId: swing.id,
+        });
+      }
     }
 
     for (const zone of room.reservedZones) {
@@ -226,10 +241,10 @@ export function evaluateLayoutOption(
     ),
     checkedState(
       "door-open",
-      "Entry door can open",
+      "Doors can open",
       conflicts,
       ["DOOR_SWING_OVERLAP"],
-      "No footprint intersects the verified door swing.",
+      "No footprint intersects a verified door swing.",
     ),
     {
       id: "closet-access",

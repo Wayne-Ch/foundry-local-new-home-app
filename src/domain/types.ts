@@ -37,7 +37,7 @@ export interface DoorSwing {
   readonly hingeXmm: number;
   readonly hingeYmm: number;
   readonly radiusMm: number;
-  readonly quadrant: "north-east";
+  readonly quadrant: "north-east" | "north-west" | "south-east" | "south-west";
 }
 
 export interface ReservedZone {
@@ -56,8 +56,14 @@ export interface RoomPlan {
   readonly depthMm: number;
   readonly verifiedBy: string;
   readonly verifiedAt: string;
-  readonly doorSwing: DoorSwing;
+  readonly doorSwings: readonly DoorSwing[];
   readonly reservedZones: readonly ReservedZone[];
+}
+
+export interface PlanningFixture {
+  readonly mode: "default" | "imported";
+  readonly roomPlan: RoomPlan;
+  readonly knownLayoutOptions: readonly LayoutOption[];
 }
 
 export interface FurnitureDefinition {
@@ -192,6 +198,8 @@ export interface LockedConstraints {
 export interface DemoStateSnapshot {
   readonly stateRef: string;
   readonly version: number;
+  readonly roomPlanId: string;
+  readonly planVersion: string;
   readonly currentLayoutId: string | null;
   readonly currentLayoutSource: EvaluatedLayoutOption["placementSource"] | null;
   readonly activeFurnitureIds: readonly FurnitureId[];
@@ -246,6 +254,30 @@ export interface RuntimeReadiness {
     | "loading"
     | "recovering"
     | "recovery_required"
+    | "error";
+  readonly detail: string;
+}
+
+export interface FloorPlanVisionReadiness {
+  readonly sdkVersion: "2.2.1";
+  readonly provider: "Foundry Local in-process SDK";
+  readonly target: {
+    readonly modelId: "qwen3.5-0.8b-generic-cpu:3";
+    readonly executionProvider: "CPUExecutionProvider";
+    readonly task: "vision-language-chat";
+    readonly stageValidated: true;
+  };
+  readonly model: ModelIdentity | null;
+  readonly modelCached: boolean;
+  readonly localInferenceReady: boolean;
+  readonly externalEndpointUsed: false;
+  readonly status:
+    | "not_initialized"
+    | "checking"
+    | "downloading"
+    | "loading"
+    | "ready"
+    | "model_unavailable"
     | "error";
   readonly detail: string;
 }

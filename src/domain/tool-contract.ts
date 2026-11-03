@@ -2,11 +2,10 @@ import { z } from "zod";
 import {
   CLEARANCE_RULE_SET_ID,
   CLEARANCE_RULE_SET_VERSION,
+  defaultPlanningFixture,
   furnitureCatalog,
   LOCKED_CONSTRAINT_SET_ID,
   REQUIRED_ROOM_STATE_SET_ID,
-  ROOM_PLAN_ID,
-  ROOM_PLAN_VERSION,
 } from "./fixture";
 import {
   directObjectCandidateActionSource,
@@ -22,7 +21,12 @@ import {
   parseTableClauseOccurrences,
   type TableClauseOccurrence,
 } from "./table-clause-parser";
-import { type DemoStateSnapshot, type FurnitureId, furnitureIds } from "./types";
+import {
+  type DemoStateSnapshot,
+  type FurnitureId,
+  furnitureIds,
+  type PlanningFixture,
+} from "./types";
 
 const bedIds = ["bed-queen", "bed-king"] as const;
 const deskIds = ["desk-standard", "desk-compact"] as const;
@@ -56,8 +60,8 @@ const generatedLayoutIntentDeltaSchema = z
 
 export const compareLayoutOptionsInputSchema = z
   .object({
-    roomPlanId: z.literal(ROOM_PLAN_ID),
-    planVersion: z.literal(ROOM_PLAN_VERSION),
+    roomPlanId: z.string().min(1).max(80),
+    planVersion: z.string().min(1).max(80),
     priorStateRef: z.string().min(1),
     clearanceRuleSetId: z.literal(CLEARANCE_RULE_SET_ID),
     clearanceRuleSetVersion: z.literal(CLEARANCE_RULE_SET_VERSION),
@@ -96,11 +100,9 @@ export const compareLayoutOptionsJsonSchema = {
   properties: {
     roomPlanId: {
       type: "string",
-      enum: [ROOM_PLAN_ID],
     },
     planVersion: {
       type: "string",
-      enum: [ROOM_PLAN_VERSION],
     },
     priorStateRef: {
       type: "string",
@@ -2136,6 +2138,7 @@ export function parseAndValidateIntentDelta(
   rawArguments: string,
   state: DemoStateSnapshot,
   prompt: string,
+  planningFixture: PlanningFixture = defaultPlanningFixture,
 ): LayoutIntentValidationResult {
   const parsed = parseJson(rawArguments);
   if (!parsed.ok) {
@@ -2174,7 +2177,7 @@ export function parseAndValidateIntentDelta(
 
   const intentDelta = intentSchemaResult.data;
   const analysis = analyzeLayoutPrompt(state, prompt);
-  const toolInputResult = buildCompareLayoutOptionsInput(intentDelta, state);
+  const toolInputResult = buildCompareLayoutOptionsInput(intentDelta, state, planningFixture);
   if (!toolInputResult.ok) {
     return toolInputResult;
   }
@@ -2218,7 +2221,12 @@ export function parseAndValidateIntentDelta(
     };
   }
 
-  const toolValidation = parseAndValidateToolInput(JSON.stringify(toolInput), state, prompt);
+  const toolValidation = parseAndValidateToolInput(
+    JSON.stringify(toolInput),
+    state,
+    prompt,
+    planningFixture,
+  );
   if (!toolValidation.ok) {
     return toolValidation;
   }
@@ -2236,6 +2244,7 @@ export function parseAndValidateToolInput(
   rawArguments: string,
   state: DemoStateSnapshot,
   prompt?: string,
+  planningFixture: PlanningFixture = defaultPlanningFixture,
 ): ToolValidationResult {
   let parsed: unknown;
   try {
@@ -2270,6 +2279,23 @@ export function parseAndValidateToolInput(
     state.version === 0 && parsedInput.changedPreference.trim().length === 0
       ? { ...parsedInput, changedPreference: "initial layout request" }
       : parsedInput;
+  if (
+    input.roomPlanId !== planningFixture.roomPlan.id ||
+    input.planVersion !== planningFixture.roomPlan.version ||
+    state.roomPlanId !== planningFixture.roomPlan.id ||
+    state.planVersion !== planningFixture.roomPlan.version
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "STALE_STATE",
+        message: "The tool input does not reference the active room-plan fixture.",
+        details: [
+          `Expected ${planningFixture.roomPlan.id}@${planningFixture.roomPlan.version}; received ${input.roomPlanId}@${input.planVersion}.`,
+        ],
+      },
+    };
+  }
   if (state.version > 0 && input.changedPreference.trim().length < 3) {
     return {
       ok: false,
@@ -2362,11 +2388,13 @@ export function parseAndValidateToolInput(
 export function createToolInputForTests(overrides: {
   readonly state: DemoStateSnapshot;
   readonly candidateFurnitureIds: readonly FurnitureId[];
+  readonly planningFixture?: PlanningFixture;
   readonly retainFurnitureIds?: readonly FurnitureId[];
   readonly changedPreference?: string;
   readonly unknowns?: readonly string[];
   readonly clarificationNeeded?: boolean;
 }): CompareLayoutOptionsInput {
+  const planningFixture = overrides.planningFixture ?? defaultPlanningFixture;
   const bed = overrides.candidateFurnitureIds.find((id) => furnitureCatalog[id].category === "bed");
   const desk = overrides.candidateFurnitureIds.find((id) => furnitureCatalog[id].category === "desk");
   const crib = overrides.candidateFurnitureIds.find((id) => furnitureCatalog[id].category === "crib");
@@ -2374,8 +2402,8 @@ export function createToolInputForTests(overrides: {
     throw new Error("Test tool input requires one known bed and one known desk.");
   }
   return {
-    roomPlanId: ROOM_PLAN_ID,
-    planVersion: ROOM_PLAN_VERSION,
+    roomPlanId: planningFixture.roomPlan.id,
+    planVersion: planningFixture.roomPlan.version,
     priorStateRef: overrides.state.stateRef,
     clearanceRuleSetId: CLEARANCE_RULE_SET_ID,
     clearanceRuleSetVersion: CLEARANCE_RULE_SET_VERSION,
@@ -2554,6 +2582,7 @@ export function resolveCandidateFurnitureIds(
 export function buildCompareLayoutOptionsInput(
   intentDelta: LayoutIntentDelta,
   state: DemoStateSnapshot,
+  planningFixture: PlanningFixture = defaultPlanningFixture,
 ): ToolValidationResult {
   const intentSchemaResult = layoutIntentDeltaSchema.safeParse(intentDelta);
   if (!intentSchemaResult.success) {
@@ -2574,8 +2603,8 @@ export function buildCompareLayoutOptionsInput(
   const candidateIds = new Set(expandCandidateFurnitureIds(candidateFurnitureIds));
   const analysis = analyzeLayoutPrompt(state, validIntentDelta.changedPreference);
   const schemaResult = compareLayoutOptionsInputSchema.safeParse({
-    roomPlanId: ROOM_PLAN_ID,
-    planVersion: ROOM_PLAN_VERSION,
+    roomPlanId: planningFixture.roomPlan.id,
+    planVersion: planningFixture.roomPlan.version,
     priorStateRef: state.stateRef,
     clearanceRuleSetId: CLEARANCE_RULE_SET_ID,
     clearanceRuleSetVersion: CLEARANCE_RULE_SET_VERSION,

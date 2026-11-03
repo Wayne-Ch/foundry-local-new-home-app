@@ -19,11 +19,15 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
-import { roomPlan } from "../domain/fixture";
+import {
+  createImportedPlanningFixture,
+  type FloorPlanRecognition,
+} from "../domain/floor-plan-import";
+import { defaultPlanningFixture } from "../domain/fixture";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
-import type { DemoState, EvaluatedLayoutOption } from "../domain/types";
+import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
 import { FoundryLayoutService } from "../foundry/foundry-service";
-import { stageTurns } from "../foundry/prompt";
+import { stageTurnsForMode } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
@@ -37,6 +41,7 @@ import type {
   StageTurnId,
   TraceEntry,
 } from "../shared/contracts";
+import { FloorPlanImageStore } from "./floor-plan-image-store";
 
 function now(): string {
   return new Date().toISOString();
@@ -51,10 +56,23 @@ function message(role: ConversationMessage["role"], text: string, status?: Conve
   };
 }
 
+function recognizedFloorPlanFacts(recognition: FloorPlanRecognition): readonly string[] {
+  const [northDoor, eastDoor] = recognition.doors;
+  return [
+    `Rectangular single room; recognized aspect ${recognition.room.aspectPermille / 1000}.`,
+    `North-wall inward door at ${northDoor.startPermille}-${northDoor.endPermille} permille.`,
+    `East-wall inward door at ${eastDoor.startPermille}-${eastDoor.endPermille} permille.`,
+    `East-wall window at ${recognition.window.startPermille}-${recognition.window.endPermille} permille.`,
+    "No fixed obstruction recognized.",
+    "Gray furniture symbols and the “Family” label are ignored source annotations.",
+  ];
+}
+
 type DemoFoundryService = Pick<
   FoundryLayoutService,
   | "readiness"
   | "audioReadiness"
+  | "visionReadiness"
   | "initialize"
   | "prepareOffline"
   | "prepareAudioOffline"
@@ -64,17 +82,23 @@ type DemoFoundryService = Pick<
   | "finishAudioStream"
   | "cancelAudioStream"
   | "runTurn"
+  | "prepareFloorPlanVision"
+  | "analyzeFloorPlan"
+  | "cancelFloorPlanAnalysis"
   | "reset"
   | "shutdown"
 >;
 
 export interface DemoControllerOptions {
   readonly foundry?: DemoFoundryService;
+  readonly floorPlanImages?: FloorPlanImageStore;
 }
 
 export class DemoController {
   readonly #foundry: DemoFoundryService;
-  #state: DemoState = createInitialDemoState();
+  readonly #floorPlanImages: FloorPlanImageStore;
+  #planningFixture: PlanningFixture = defaultPlanningFixture;
+  #state: DemoState = createInitialDemoState(defaultPlanningFixture.roomPlan);
   #selectedLayout: EvaluatedLayoutOption | null = null;
   #messages: ConversationMessage[] = [
     message(
@@ -85,22 +109,33 @@ export class DemoController {
   #trace: TraceEntry[] = [];
   #completedStageTurnIds: StageTurnId[] = [];
   #lastInteraction: BootstrapPayload["lastInteraction"] = null;
+  #floorPlanImport: BootstrapPayload["floorPlanImport"] = {
+    status: "idle",
+    preview: null,
+    recognition: null,
+    recognizedFacts: [],
+    error: null,
+  };
   #operationGeneration = 0;
   #conversationGeneration = 0;
   #resetPromise: Promise<BootstrapPayload> | null = null;
 
   constructor(options: DemoControllerOptions = {}) {
     this.#foundry = options.foundry ?? new FoundryLayoutService();
+    this.#floorPlanImages = options.floorPlanImages ?? new FloorPlanImageStore();
   }
 
   bootstrap(): BootstrapPayload {
     return {
       conversationGeneration: this.#conversationGeneration,
-      roomPlan,
+      roomMode: this.#planningFixture.mode,
+      roomPlan: this.#planningFixture.roomPlan,
       state: this.#state,
       readiness: this.#foundry.readiness,
       audioReadiness: this.#foundry.audioReadiness,
-      stageTurns,
+      visionReadiness: this.#foundry.visionReadiness,
+      floorPlanImport: this.#floorPlanImport,
+      stageTurns: stageTurnsForMode(this.#planningFixture.mode),
       completedStageTurnIds: this.#completedStageTurnIds,
       lastInteraction: this.#lastInteraction,
       selectedLayout: this.#selectedLayout,
@@ -144,6 +179,152 @@ export class DemoController {
     this.#assertOperationCurrent(generation);
     this.#pushTrace("runtime", "Audio runtime prepared", readiness);
     return { readiness };
+  }
+
+  async loadFloorPlanImage(
+    bytes: Uint8Array,
+    source: "sample" | "picker",
+    displayName: string,
+  ): Promise<BootstrapPayload> {
+    if (this.#resetPromise !== null) {
+      throw new Error("Conversation reset is in progress.");
+    }
+    this.#operationGeneration += 1;
+    await this.#foundry.cancelFloorPlanAnalysis();
+    const preview = this.#floorPlanImages.load(bytes, source, displayName);
+    this.#planningFixture = defaultPlanningFixture;
+    this.#conversationGeneration += 1;
+    this.#resetConversationState();
+    this.#floorPlanImport = {
+      status: "image_ready",
+      preview,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    };
+    this.#messages = [
+      message(
+        "system",
+        "Experimental floor-plan image staged in the main process. Analyze it to replace the default room; until then the verified default room remains active.",
+      ),
+    ];
+    this.#pushTrace("floor-plan-vision", "Floor-plan image accepted", {
+      source,
+      displayName,
+      format: preview.format,
+      width: preview.width,
+      height: preview.height,
+      byteLength: preview.byteLength,
+      filesystemPathExposed: false,
+    });
+    return this.bootstrap();
+  }
+
+  async analyzeFloorPlan(onProgress?: (event: ProgressEvent) => void): Promise<BootstrapPayload> {
+    const generation = this.#beginOperation();
+    const preview = this.#floorPlanImages.preview;
+    if (preview === null) {
+      throw new Error("Load the packaged sample or choose a supported image before analysis.");
+    }
+    this.#floorPlanImport = {
+      ...this.#floorPlanImport,
+      status: "analyzing",
+      error: null,
+    };
+    try {
+      onProgress?.({
+        phase: "vision-preparing",
+        detail: `Preparing exact CPU vision model for ${preview.displayName}.`,
+      });
+      const outcome = await this.#foundry.analyzeFloorPlan(
+        this.#floorPlanImages.format,
+        this.#floorPlanImages.borrowBytes(),
+        (detail) => {
+          if (this.#isOperationCurrent(generation)) {
+            onProgress?.({ phase: "vision-analyzing", detail });
+          }
+        },
+      );
+      this.#assertOperationCurrent(generation);
+      this.#planningFixture = createImportedPlanningFixture(outcome.recognition);
+      this.#conversationGeneration += 1;
+      this.#resetConversationState();
+      const recognizedFacts = recognizedFloorPlanFacts(outcome.recognition);
+      this.#floorPlanImport = {
+        status: "imported",
+        preview,
+        recognition: outcome.recognition,
+        recognizedFacts,
+        error: null,
+      };
+      this.#floorPlanImages.releaseBytesRetainingPreview();
+      this.#messages = [
+        message(
+          "system",
+          `Experimental imported room loaded. Foundry Local recognized a rectangular room, two inward doors, and one east-wall window. Gray furniture symbols and the “Family” label are ignored source annotations; application geometry remains authoritative.`,
+        ),
+      ];
+      this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition accepted", {
+        model: outcome.model,
+        recognition: outcome.recognition,
+        rawOutput: outcome.rawOutput,
+        preflight: outcome.preflight,
+        performance: outcome.performance,
+        externalEndpointUsed: false,
+      });
+      onProgress?.({ phase: "complete", detail: "Imported room geometry is ready." });
+      return this.bootstrap();
+    } catch (error) {
+      if (!this.#isOperationCurrent(generation)) {
+        throw error;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      this.#floorPlanImport = {
+        ...this.#floorPlanImport,
+        status: "error",
+        error: detail,
+      };
+      this.#pushTrace("error", "Floor-plan recognition failed closed", {
+        message: detail,
+        defaultRoomStillActive: this.#planningFixture.mode === "default",
+        externalEndpointUsed: false,
+      });
+      onProgress?.({ phase: "error", detail });
+      throw error;
+    }
+  }
+
+  async useDefaultRoom(): Promise<BootstrapPayload> {
+    if (this.#resetPromise !== null) {
+      throw new Error("Conversation reset is in progress.");
+    }
+    this.#operationGeneration += 1;
+    await this.#foundry.cancelFloorPlanAnalysis();
+    this.#floorPlanImages.clear();
+    this.#planningFixture = defaultPlanningFixture;
+    this.#conversationGeneration += 1;
+    this.#floorPlanImport = {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    };
+    this.#resetConversationState();
+    this.#messages = [
+      message(
+        "system",
+        "Verified default room restored. Experimental floor-plan bytes and preview state were cleared.",
+      ),
+    ];
+    return this.bootstrap();
+  }
+
+  async releaseFloorPlanImage(): Promise<void> {
+    if (this.#floorPlanImages.preview === null && this.#planningFixture.mode === "default") {
+      return;
+    }
+    await this.useDefaultRoom();
   }
 
   async startAudioStream(
@@ -287,6 +468,7 @@ export class DemoController {
           onProgress?.({ phase: progressPhase, detail });
         },
         this.#selectedLayout,
+        this.#planningFixture,
       );
       this.#assertOperationCurrent(generation);
 
@@ -343,7 +525,12 @@ export class DemoController {
 
   applyManualPlacement(request: ManualPlacementRequest): ManualPlacementResponse {
     this.#beginOperation();
-    const outcome = evaluateManualPlacement(this.#state, this.#selectedLayout, request);
+    const outcome = evaluateManualPlacement(
+      this.#state,
+      this.#selectedLayout,
+      request,
+      this.#planningFixture,
+    );
     this.#pushTrace("manual-placement", "Application-owned manual placement", {
       provenance: "application-owned direct manipulation",
       accepted: outcome.accepted,
@@ -384,6 +571,15 @@ export class DemoController {
     }
     this.#operationGeneration += 1;
     this.#conversationGeneration += 1;
+    this.#planningFixture = defaultPlanningFixture;
+    this.#floorPlanImages.clear();
+    this.#floorPlanImport = {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    };
     this.#resetConversationState();
     const resetGeneration = this.#conversationGeneration;
     let trackedPromise: Promise<BootstrapPayload>;
@@ -405,10 +601,15 @@ export class DemoController {
   }
 
   #resetConversationState(): void {
-    this.#state = createInitialDemoState();
+    this.#state = createInitialDemoState(this.#planningFixture.roomPlan);
     this.#selectedLayout = null;
     this.#messages = [
-      message("system", "Conversation reset. Verified dimensions and locked room constraints remain loaded."),
+      message(
+        "system",
+        this.#planningFixture.mode === "imported"
+          ? "Conversation reset. Imported room geometry and locked constraints remain loaded."
+          : "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
+      ),
     ];
     this.#trace = [];
     this.#completedStageTurnIds = [];
@@ -417,6 +618,7 @@ export class DemoController {
 
   async shutdown(): Promise<void> {
     this.#operationGeneration += 1;
+    this.#floorPlanImages.clear();
     await this.#foundry.shutdown();
   }
 

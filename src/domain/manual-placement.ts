@@ -1,6 +1,12 @@
-import { clearanceRuleSet, furnitureCatalog, roomPlan } from "./fixture";
+import { clearanceRuleSet, defaultPlanningFixture, furnitureCatalog } from "./fixture";
 import { evaluateLayoutOption } from "./geometry";
-import type { DemoState, EvaluatedLayoutOption, FurniturePlacement, LayoutOption } from "./types";
+import type {
+  DemoState,
+  EvaluatedLayoutOption,
+  FurniturePlacement,
+  LayoutOption,
+  PlanningFixture,
+} from "./types";
 
 export const MANUAL_PLACEMENT_GRID_MM = 50;
 
@@ -87,6 +93,7 @@ export function evaluateManualPlacement(
   state: DemoState,
   selectedLayout: EvaluatedLayoutOption | null,
   request: ManualPlacementRequest,
+  planningFixture: PlanningFixture = defaultPlanningFixture,
 ): ManualPlacementOutcome {
   if (selectedLayout === null) {
     return rejected(
@@ -136,7 +143,7 @@ export function evaluateManualPlacement(
 
   const preview = evaluateLayoutOption(
     manualLayoutOption(state, selectedLayout, request),
-    roomPlan,
+    planningFixture.roomPlan,
     furnitureCatalog,
     clearanceRuleSet,
     "manual-adjustment",

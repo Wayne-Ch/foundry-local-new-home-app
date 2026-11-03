@@ -7,7 +7,7 @@ import {
   NEMOTRON_AUDIO_MODEL_ID,
   WHISPER_AUDIO_MODEL_ID,
 } from "../src/audio/audio-types";
-import type { RuntimeReadiness } from "../src/domain/types";
+import type { FloorPlanVisionReadiness, RuntimeReadiness } from "../src/domain/types";
 import { DemoController, type DemoControllerOptions } from "../src/main/demo-controller";
 
 const readiness: RuntimeReadiness = {
@@ -67,6 +67,23 @@ const audioReadiness: AudioReadiness = {
   lastTranscriptionMs: null,
 };
 
+const visionReadiness: FloorPlanVisionReadiness = {
+  sdkVersion: "2.2.1",
+  provider: "Foundry Local in-process SDK",
+  target: {
+    modelId: "qwen3.5-0.8b-generic-cpu:3",
+    executionProvider: "CPUExecutionProvider",
+    task: "vision-language-chat",
+    stageValidated: true,
+  },
+  model: null,
+  modelCached: false,
+  localInferenceReady: false,
+  externalEndpointUsed: false,
+  status: "not_initialized",
+  detail: "Not prepared.",
+};
+
 function unused(): never {
   throw new Error("Not used by this reset test.");
 }
@@ -91,6 +108,7 @@ function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
   return {
     readiness,
     audioReadiness,
+    visionReadiness,
     initialize: async () => readiness,
     prepareOffline: async () => unused(),
     prepareAudioOffline: async () => unused(),
@@ -99,6 +117,9 @@ function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
     appendAudioStreamChunk: () => unused(),
     finishAudioStream: async () => unused(),
     cancelAudioStream: async () => unused(),
+    prepareFloorPlanVision: async () => unused(),
+    analyzeFloorPlan: async () => unused(),
+    cancelFloorPlanAnalysis: async () => {},
     runTurn: async () => unused(),
     reset: async () => {},
     shutdown: async () => {},

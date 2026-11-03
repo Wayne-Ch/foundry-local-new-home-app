@@ -1,10 +1,12 @@
-import { lockedConstraints } from "./fixture";
-import { type DemoState, type LayoutToolResult, roomStateIds } from "./types";
+import { lockedConstraints, roomPlan } from "./fixture";
+import { type DemoState, type LayoutToolResult, type RoomPlan, roomStateIds } from "./types";
 
-export function createInitialDemoState(): DemoState {
+export function createInitialDemoState(activeRoomPlan: RoomPlan = roomPlan): DemoState {
   return {
     stateRef: "layout-state-v0",
     version: 0,
+    roomPlanId: activeRoomPlan.id,
+    planVersion: activeRoomPlan.version,
     currentLayoutId: null,
     currentLayoutSource: null,
     activeFurnitureIds: [],

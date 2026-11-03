@@ -7,11 +7,16 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
-import { roomPlan } from "../domain/fixture";
+import {
+  createImportedPlanningFixture,
+  FLOOR_PLAN_SAMPLE_ASSET_PATH,
+  type FloorPlanRecognition,
+} from "../domain/floor-plan-import";
+import { defaultPlanningFixture, roomPlan } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import { evaluateManualPlacement } from "../domain/manual-placement";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
-import type { DemoState, RuntimeReadiness } from "../domain/types";
+import type { DemoState, FloorPlanVisionReadiness, PlanningFixture, RuntimeReadiness } from "../domain/types";
 import { stageTurns } from "../foundry/prompt";
 import type { BootstrapPayload, DemoApi, PrepareOfflineResponse, RunTurnResponse } from "../shared/contracts";
 
@@ -72,6 +77,49 @@ const audioReadiness: AudioReadiness = {
   lastTranscriptionMs: 6183,
 };
 
+const visionReadiness: FloorPlanVisionReadiness = {
+  sdkVersion: "2.2.1",
+  provider: "Foundry Local in-process SDK",
+  target: {
+    modelId: "qwen3.5-0.8b-generic-cpu:3",
+    executionProvider: "CPUExecutionProvider",
+    task: "vision-language-chat",
+    stageValidated: true,
+  },
+  model: null,
+  modelCached: false,
+  localInferenceReady: false,
+  externalEndpointUsed: false,
+  status: "not_initialized",
+  detail: "Visual preview only; no vision inference is running.",
+};
+
+const previewRecognition: FloorPlanRecognition = {
+  schema: "single-room-v1",
+  room: { shape: "rectangle", aspectPermille: 1390 },
+  doors: [
+    {
+      wall: "north",
+      startPermille: 170,
+      endPermille: 300,
+      hinge: "west",
+      swing: "inward",
+      quadrant: "south-east",
+    },
+    {
+      wall: "east",
+      startPermille: 150,
+      endPermille: 320,
+      hinge: "south",
+      swing: "inward",
+      quadrant: "north-west",
+    },
+  ],
+  window: { wall: "east", startPermille: 500, endPermille: 690 },
+  fixedObstruction: { kind: "none" },
+  movableFurnitureSymbols: "present",
+};
+
 function buildPreview(conversationGeneration: number): BootstrapPayload {
   const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
   let state: DemoState = createInitialDemoState();
@@ -117,10 +165,19 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
 
   return {
     conversationGeneration,
+    roomMode: "default",
     roomPlan,
     state: recoveryOnly ? recoveryState : failureState,
     readiness,
     audioReadiness,
+    visionReadiness,
+    floorPlanImport: {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    },
     stageTurns,
     completedStageTurnIds: recoveryOnly ? ["turn-a", "turn-b", "turn-c"] : stageTurns.map((turn) => turn.id),
     lastInteraction: "turn",
@@ -213,10 +270,19 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
 function buildResetPreview(conversationGeneration: number): BootstrapPayload {
   return {
     conversationGeneration,
+    roomMode: "default",
     roomPlan,
     state: createInitialDemoState(),
     readiness,
     audioReadiness,
+    visionReadiness,
+    floorPlanImport: {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    },
     stageTurns,
     completedStageTurnIds: [],
     lastInteraction: null,
@@ -235,6 +301,7 @@ function buildResetPreview(conversationGeneration: number): BootstrapPayload {
 
 export function createPreviewApi(): DemoApi {
   let bootstrap = buildPreview(0);
+  let planningFixture: PlanningFixture = defaultPlanningFixture;
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
@@ -259,6 +326,58 @@ export function createPreviewApi(): DemoApi {
       throw new Error("Live microphone streaming is unavailable in the visual-only browser preview.");
     },
     cancelAudioStream: async () => {},
+    loadSampleFloorPlan: async () => {
+      planningFixture = defaultPlanningFixture;
+      bootstrap = {
+        ...buildResetPreview(bootstrap.conversationGeneration + 1),
+        floorPlanImport: {
+          status: "image_ready",
+          preview: {
+            source: "sample",
+            displayName: "Packaged public-domain Family-room crop",
+            dataUrl: `./${FLOOR_PLAN_SAMPLE_ASSET_PATH}`,
+            format: "png",
+            mimeType: "image/png",
+            width: 992,
+            height: 776,
+            byteLength: 0,
+            pixelCount: 992 * 776,
+          },
+          recognition: null,
+          recognizedFacts: [],
+          error: null,
+        },
+      };
+      return { cancelled: false, bootstrap };
+    },
+    chooseFloorPlan: async () => ({ cancelled: true, bootstrap }),
+    analyzeFloorPlan: async () => {
+      planningFixture = createImportedPlanningFixture(previewRecognition);
+      bootstrap = {
+        ...buildResetPreview(bootstrap.conversationGeneration + 1),
+        roomMode: "imported",
+        roomPlan: planningFixture.roomPlan,
+        state: createInitialDemoState(planningFixture.roomPlan),
+        floorPlanImport: {
+          status: "imported",
+          preview: bootstrap.floorPlanImport.preview,
+          recognition: previewRecognition,
+          recognizedFacts: [
+            "Rectangular room",
+            "Two inward doors",
+            "East-wall window",
+            "Movable source furniture ignored",
+          ],
+          error: null,
+        },
+      };
+      return bootstrap;
+    },
+    useDefaultRoom: async () => {
+      planningFixture = defaultPlanningFixture;
+      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1);
+      return bootstrap;
+    },
     runTurn: async (): Promise<RunTurnResponse> => ({
       conversationGeneration: bootstrap.conversationGeneration,
       state: bootstrap.state,
@@ -276,7 +395,12 @@ export function createPreviewApi(): DemoApi {
         ...bootstrap.state,
         lastToolResult: bootstrap.lastToolResult,
       };
-      const outcome = evaluateManualPlacement(state, bootstrap.selectedLayout, request);
+      const outcome = evaluateManualPlacement(
+        state,
+        bootstrap.selectedLayout,
+        request,
+        planningFixture,
+      );
       if (outcome.accepted) {
         bootstrap = {
           ...bootstrap,

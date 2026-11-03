@@ -15,11 +15,14 @@ import type { ManualPlacementOutcome, ManualPlacementRequest } from "../domain/m
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
+  FloorPlanVisionReadiness,
   LayoutToolResult,
   ModelIdentity,
   RoomPlan,
   RuntimeReadiness,
 } from "../domain/types";
+import type { FloorPlanRecognition } from "../domain/floor-plan-import";
+import type { FloorPlanImageMetadata } from "../layout-import/image-security";
 
 export const ipcChannels = {
   getBootstrap: "demo:get-bootstrap",
@@ -35,6 +38,10 @@ export const ipcChannels = {
   transcribeAudio: "demo:transcribe-audio",
   runTurn: "demo:run-turn",
   applyManualPlacement: "demo:apply-manual-placement",
+  loadSampleFloorPlan: "demo:load-sample-floor-plan",
+  chooseFloorPlan: "demo:choose-floor-plan",
+  analyzeFloorPlan: "demo:analyze-floor-plan",
+  useDefaultRoom: "demo:use-default-room",
   resetConversation: "demo:reset-conversation",
   progress: "demo:progress",
 } as const;
@@ -59,6 +66,7 @@ export interface TraceEntry {
     | "application-response"
     | "manual-placement"
     | "audio-transcription"
+    | "floor-plan-vision"
     | "runtime"
     | "error";
   readonly title: string;
@@ -74,10 +82,13 @@ export interface ConversationMessage {
 
 export interface BootstrapPayload {
   readonly conversationGeneration: number;
+  readonly roomMode: "default" | "imported";
   readonly roomPlan: RoomPlan;
   readonly state: DemoStateSnapshot;
   readonly readiness: RuntimeReadiness;
   readonly audioReadiness: AudioReadiness;
+  readonly visionReadiness: FloorPlanVisionReadiness;
+  readonly floorPlanImport: FloorPlanImportSnapshot;
   readonly stageTurns: readonly StageTurnDefinition[];
   readonly completedStageTurnIds: readonly StageTurnId[];
   readonly lastInteraction: "turn" | "manual" | null;
@@ -122,9 +133,30 @@ export interface ProgressEvent {
     | "model-summarizing"
     | "audio-preparing"
     | "audio-transcribing"
+    | "vision-preparing"
+    | "vision-analyzing"
     | "complete"
     | "error";
   readonly detail: string;
+}
+
+export interface FloorPlanImageDescriptor extends FloorPlanImageMetadata {
+  readonly source: "sample" | "picker";
+  readonly displayName: string;
+  readonly dataUrl: string;
+}
+
+export interface FloorPlanImportSnapshot {
+  readonly status: "idle" | "image_ready" | "analyzing" | "imported" | "error";
+  readonly preview: FloorPlanImageDescriptor | null;
+  readonly recognition: FloorPlanRecognition | null;
+  readonly recognizedFacts: readonly string[];
+  readonly error: string | null;
+}
+
+export interface FloorPlanLoadResponse {
+  readonly cancelled: boolean;
+  readonly bootstrap: BootstrapPayload;
 }
 
 export interface PrepareOfflineResponse {
@@ -160,6 +192,10 @@ export interface DemoApi {
   cancelAudioStream(request: AudioStreamCancelRequest): Promise<void>;
   runTurn(request: RunTurnRequest): Promise<RunTurnResponse>;
   applyManualPlacement(request: ManualPlacementRequest): Promise<ManualPlacementResponse>;
+  loadSampleFloorPlan(): Promise<FloorPlanLoadResponse>;
+  chooseFloorPlan(): Promise<FloorPlanLoadResponse>;
+  analyzeFloorPlan(): Promise<BootstrapPayload>;
+  useDefaultRoom(): Promise<BootstrapPayload>;
   resetConversation(): Promise<BootstrapPayload>;
   onProgress(callback: (event: ProgressEvent) => void): () => void;
   onAudioPartial(callback: (event: AudioPartialTranscriptEvent) => void): () => void;

@@ -39,6 +39,16 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
+import {
+  floorPlanRecognitionJsonSchema,
+  floorPlanVisionSystemPrompt,
+  floorPlanVisionUserPrompt,
+  FLOOR_PLAN_VISION_EXECUTION_PROVIDER,
+  FLOOR_PLAN_VISION_MODEL_ID,
+  type FloorPlanRecognition,
+  parseFloorPlanRecognition,
+} from "../domain/floor-plan-import";
+import { defaultPlanningFixture } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import {
   type CompareLayoutOptionsInput,
@@ -51,11 +61,14 @@ import {
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
+  FloorPlanVisionReadiness,
   LayoutToolResult,
   ModelIdentity,
+  PlanningFixture,
   RuntimeReadiness,
   RuntimeTargetIdentity,
 } from "../domain/types";
+import { type FloorPlanImageFormat, zeroFill } from "../layout-import/image-security";
 import { type FoundryPaths, resolveFoundryPaths } from "./paths";
 import { formatTurnPrompt, systemPrompt } from "./prompt";
 import {
@@ -69,6 +82,7 @@ import {
 
 const MAX_TOOL_ATTEMPTS = 3;
 const MAX_INTENT_OUTPUT_TOKENS = 256;
+const MAX_VISION_OUTPUT_TOKENS = 320;
 const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
 const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding", "vision-language-chat"]);
 
@@ -129,6 +143,7 @@ export interface FoundryLayoutServiceOptions {
   readonly resolvePaths?: () => Promise<FoundryPaths>;
   readonly createManager?: (config: FoundryLocalConfig) => FoundryManagerHandle;
   readonly createSession?: (model: IModel) => FoundrySessionHandle;
+  readonly createVisionSession?: (model: IModel) => FoundrySessionHandle;
   readonly createAudioSession?: (model: IModel) => FoundryAudioSessionHandle;
   readonly audioTempStore?: TempAudioStore;
   readonly operationDrainTimeoutMs?: number;
@@ -172,6 +187,20 @@ export interface FoundryTurnOutcome {
     }[];
   };
   readonly planningMode: "json-schema-intent-delta";
+}
+
+export interface FoundryFloorPlanOutcome {
+  readonly recognition: FloorPlanRecognition;
+  readonly rawOutput: string;
+  readonly preflight: RequestPreflightResult;
+  readonly response: Response;
+  readonly model: ModelIdentity;
+  readonly performance: {
+    readonly totalMs: number;
+    readonly preflightMs: number;
+    readonly generationMs: number;
+    readonly outputBytes: number;
+  };
 }
 
 export class FoundryRuntimeError extends Error {
@@ -358,12 +387,32 @@ function initialAudioReadiness(): AudioReadiness {
   };
 }
 
+function initialVisionReadiness(): FloorPlanVisionReadiness {
+  return {
+    sdkVersion: "2.2.1",
+    provider: "Foundry Local in-process SDK",
+    target: {
+      modelId: FLOOR_PLAN_VISION_MODEL_ID,
+      executionProvider: FLOOR_PLAN_VISION_EXECUTION_PROVIDER,
+      task: "vision-language-chat",
+      stageValidated: true,
+    },
+    model: null,
+    modelCached: false,
+    localInferenceReady: false,
+    externalEndpointUsed: false,
+    status: "not_initialized",
+    detail: "Experimental floor-plan vision has not been prepared.",
+  };
+}
+
 export class FoundryLayoutService {
   readonly #target: RuntimeTargetIdentity;
   readonly #configurationError: string | null;
   readonly #resolvePaths: () => Promise<FoundryPaths>;
   readonly #createManager: (config: FoundryLocalConfig) => FoundryManagerHandle;
   readonly #sessionFactory: (model: IModel) => FoundrySessionHandle;
+  readonly #visionSessionFactory: (model: IModel) => FoundrySessionHandle;
   readonly #audioSessionFactory: (model: IModel) => FoundryAudioSessionHandle;
   readonly #operationDrainTimeoutMs: number;
   #audioTempStore: TempAudioStore | null;
@@ -385,16 +434,23 @@ export class FoundryLayoutService {
   #audioPrepareMode: AudioMode | null = null;
   #audioTranscriptionPromise: Promise<AudioTranscriptionResult> | null = null;
   #audioResetPromise: Promise<void> | null = null;
+  #visionModel: IModel | null = null;
+  #visionPreparePromise: Promise<FloorPlanVisionReadiness> | null = null;
+  #visionPrepareAbort: AbortController | null = null;
+  #visionAnalyzePromise: Promise<FoundryFloorPlanOutcome> | null = null;
+  #activeVisionRequest: Request | null = null;
   #shutdownPromise: Promise<void> | null = null;
   #runtimeRecoveryPromise: Promise<void> | null = null;
   #runtimeRecoveryBaseline: RuntimeReadiness | null = null;
   readonly #audioPrepareProgressListeners = new Set<(detail: string) => void>();
   #layoutGeneration = 0;
   #audioGeneration = 0;
+  #visionGeneration = 0;
   #shuttingDown = false;
   #systemPromptPending = true;
   #readiness: RuntimeReadiness;
   #audioReadiness = initialAudioReadiness();
+  #visionReadiness = initialVisionReadiness();
 
   constructor(options: FoundryLayoutServiceOptions = {}) {
     const environment = options.environment ?? process.env;
@@ -415,6 +471,7 @@ export class FoundryLayoutService {
     this.#resolvePaths = options.resolvePaths ?? resolveFoundryPaths;
     this.#createManager = options.createManager ?? ((config) => FoundryLocalManager.create(config));
     this.#sessionFactory = options.createSession ?? ((model) => new ChatSession(model));
+    this.#visionSessionFactory = options.createVisionSession ?? ((model) => new ChatSession(model));
     this.#audioSessionFactory = options.createAudioSession ?? ((model) => new AudioSession(model));
     this.#operationDrainTimeoutMs = Math.max(
       1,
@@ -430,6 +487,10 @@ export class FoundryLayoutService {
 
   get audioReadiness(): AudioReadiness {
     return this.#audioReadiness;
+  }
+
+  get visionReadiness(): FloorPlanVisionReadiness {
+    return this.#visionReadiness;
   }
 
   initialize(): Promise<RuntimeReadiness> {
@@ -1328,11 +1389,255 @@ export class FoundryLayoutService {
     }
   }
 
+  prepareFloorPlanVision(
+    onProgress?: (detail: string) => void,
+  ): Promise<FloorPlanVisionReadiness> {
+    this.#assertRuntimeLifecycleAvailable();
+    if (this.#visionPreparePromise !== null) {
+      return this.#visionPreparePromise;
+    }
+
+    const generation = this.#visionGeneration;
+    let trackedPromise: Promise<FloorPlanVisionReadiness>;
+    trackedPromise = this.#prepareFloorPlanVision(generation, onProgress).finally(() => {
+      if (this.#visionPreparePromise === trackedPromise) {
+        this.#visionPreparePromise = null;
+        this.#visionPrepareAbort = null;
+      }
+    });
+    this.#visionPreparePromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #prepareFloorPlanVision(
+    generation: number,
+    onProgress?: (detail: string) => void,
+  ): Promise<FloorPlanVisionReadiness> {
+    await this.initialize();
+    this.#assertVisionOperationCurrent(generation);
+    this.#visionReadiness = {
+      ...this.#visionReadiness,
+      status: "checking",
+      detail: `Resolving exact vision model ${FLOOR_PLAN_VISION_MODEL_ID}.`,
+    };
+
+    const resolution = await this.#resolveExactModel(FLOOR_PLAN_VISION_MODEL_ID);
+    this.#assertVisionOperationCurrent(generation);
+    const model = resolution.model;
+    if (model === null) {
+      this.#visionReadiness = {
+        ...this.#visionReadiness,
+        status: "model_unavailable",
+        detail: resolution.detail,
+      };
+      throw new FoundryRuntimeError(resolution.detail, "MODEL_UNAVAILABLE");
+    }
+    this.#assertVisionModel(model);
+    this.#visionModel = model;
+
+    if (!model.isCached) {
+      this.#visionReadiness = {
+        ...this.#visionReadiness,
+        model: modelIdentity(model),
+        status: "downloading",
+        detail: `Downloading exact vision model ${model.id}.`,
+      };
+      onProgress?.(`Downloading exact vision model ${model.id}.`);
+      const abortController = new AbortController();
+      this.#visionPrepareAbort = abortController;
+      try {
+        await model.download(
+          (percent) => onProgress?.(`Vision model download ${percent.toFixed(1)}%`),
+          abortController.signal,
+        );
+      } catch (error) {
+        this.#assertVisionOperationCurrent(generation);
+        this.#visionReadiness = {
+          ...this.#visionReadiness,
+          status: "error",
+          detail: `Failed to download exact vision model ${model.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+        throw new FoundryRuntimeError(this.#visionReadiness.detail, "MODEL_DOWNLOAD_FAILED", {
+          cause: error,
+        });
+      }
+    }
+
+    this.#assertVisionOperationCurrent(generation);
+    this.#visionReadiness = {
+      ...this.#visionReadiness,
+      model: modelIdentity(model),
+      modelCached: model.isCached,
+      status: "loading",
+      detail: `Loading ${model.id} through ${FLOOR_PLAN_VISION_EXECUTION_PROVIDER}.`,
+    };
+    onProgress?.(`Loading ${model.id} locally on CPU.`);
+    try {
+      if (!(await model.isLoaded())) {
+        await model.load();
+      }
+    } catch (error) {
+      this.#assertVisionOperationCurrent(generation);
+      this.#visionReadiness = {
+        ...this.#visionReadiness,
+        status: "error",
+        detail: `Failed to load exact vision model ${model.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+      throw new FoundryRuntimeError(this.#visionReadiness.detail, "MODEL_LOAD_FAILED", {
+        cause: error,
+      });
+    }
+
+    this.#assertVisionOperationCurrent(generation);
+    this.#visionReadiness = {
+      ...this.#visionReadiness,
+      model: modelIdentity(model),
+      modelCached: model.isCached,
+      localInferenceReady: true,
+      status: "ready",
+      detail: `${model.id} is loaded through ${FLOOR_PLAN_VISION_EXECUTION_PROVIDER}; no external endpoint is configured.`,
+    };
+    return this.#visionReadiness;
+  }
+
+  analyzeFloorPlan(
+    format: FloorPlanImageFormat,
+    imageBytes: Uint8Array,
+    onProgress?: (detail: string) => void,
+  ): Promise<FoundryFloorPlanOutcome> {
+    this.#assertRuntimeLifecycleAvailable();
+    if (this.#visionAnalyzePromise !== null) {
+      return Promise.reject(
+        new FoundryRuntimeError("A floor-plan vision request is already running.", "RUNTIME_NOT_READY"),
+      );
+    }
+
+    const generation = this.#visionGeneration;
+    let trackedPromise: Promise<FoundryFloorPlanOutcome>;
+    trackedPromise = this.#analyzeFloorPlan(format, imageBytes, generation, onProgress).finally(() => {
+      if (this.#visionAnalyzePromise === trackedPromise) {
+        this.#visionAnalyzePromise = null;
+      }
+    });
+    this.#visionAnalyzePromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async #analyzeFloorPlan(
+    format: FloorPlanImageFormat,
+    imageBytes: Uint8Array,
+    generation: number,
+    onProgress?: (detail: string) => void,
+  ): Promise<FoundryFloorPlanOutcome> {
+    const started = performance.now();
+    if (!this.#visionReadiness.localInferenceReady) {
+      await this.prepareFloorPlanVision(onProgress);
+    }
+    this.#assertVisionOperationCurrent(generation);
+    const model = this.#requireVisionModel();
+    this.#assertVisionModel(model);
+
+    const requestBytes = new Uint8Array(imageBytes);
+    const session = this.#visionSessionFactory(model);
+    const request = new Request()
+      .addItem(Item.systemMessage(floorPlanVisionSystemPrompt))
+      .addItem(
+        Item.userMessage([
+          Item.imageFromData(format, requestBytes),
+          Item.text(floorPlanVisionUserPrompt),
+        ]),
+      )
+      .setOptions({
+        search: {
+          doSample: false,
+          temperature: 0,
+          seed: 42,
+          maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
+        },
+        toolChoice: "none",
+        additionalOptions: {
+          guidance_type: "json_schema",
+          guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
+          chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
+        },
+      });
+
+    try {
+      onProgress?.("Checking the bounded image request against the local context window.");
+      const preflightStarted = performance.now();
+      const preflight = await this.#executeVisionRequest(request, generation, () =>
+        session.preflightRequest(request),
+      );
+      const preflightMs = performance.now() - preflightStarted;
+      if (!preflight.fits) {
+        throw new FoundryRuntimeError(
+          `Floor-plan request needs ${preflight.requiredTokens} tokens but the context limit is ${preflight.contextLimitTokens}.`,
+          "CONTEXT_LIMIT",
+        );
+      }
+
+      onProgress?.("Recognizing room walls, both doors, and the east window locally.");
+      const generationStarted = performance.now();
+      const response = await this.#executeVisionRequest(request, generation, () =>
+        session.processRequest(request),
+      );
+      const generationMs = performance.now() - generationStarted;
+      if (response.finishReason !== "stop") {
+        throw new FoundryRuntimeError(
+          response.finishReason === "length"
+            ? "Floor-plan vision hit its bounded output limit; partial JSON is never accepted."
+            : `Floor-plan vision returned unexpected finish reason ${response.finishReason}.`,
+          "MODEL_RESPONSE_INVALID",
+        );
+      }
+      const rawOutput = extractDefaultText(response);
+      const parsed = parseFloorPlanRecognition(rawOutput);
+      if (!parsed.ok) {
+        throw new FoundryRuntimeError(parsed.error.message, "MODEL_RESPONSE_INVALID");
+      }
+      this.#assertVisionOperationCurrent(generation);
+      return {
+        recognition: parsed.value,
+        rawOutput,
+        preflight,
+        response,
+        model: modelIdentity(model),
+        performance: {
+          totalMs: performance.now() - started,
+          preflightMs,
+          generationMs,
+          outputBytes: Buffer.byteLength(rawOutput, "utf8"),
+        },
+      };
+    } finally {
+      if (this.#activeVisionRequest === request) {
+        this.#activeVisionRequest = null;
+      }
+      session.dispose();
+      zeroFill(requestBytes);
+    }
+  }
+
+  async cancelFloorPlanAnalysis(): Promise<void> {
+    this.#visionGeneration += 1;
+    this.#visionPrepareAbort?.abort();
+    this.#activeVisionRequest?.cancel();
+    await this.#waitForOperationDrain(
+      "floor-plan analysis cancellation",
+      this.#captureOperationDrain([this.#visionPreparePromise, this.#visionAnalyzePromise]),
+    );
+  }
+
   runTurn(
     userPrompt: string,
     state: DemoStateSnapshot,
     onPhase?: (phase: string, detail: string) => void,
     currentAcceptedLayout: EvaluatedLayoutOption | null = null,
+    planningFixture: PlanningFixture = defaultPlanningFixture,
   ): Promise<FoundryTurnOutcome> {
     this.#assertRuntimeLifecycleAvailable();
     if (this.#turnPromise !== null) {
@@ -1343,13 +1648,18 @@ export class FoundryLayoutService {
 
     const generation = this.#layoutGeneration;
     let trackedPromise: Promise<FoundryTurnOutcome>;
-    trackedPromise = this.#runTurn(userPrompt, state, generation, onPhase, currentAcceptedLayout).finally(
-      () => {
+    trackedPromise = this.#runTurn(
+      userPrompt,
+      state,
+      generation,
+      onPhase,
+      currentAcceptedLayout,
+      planningFixture,
+    ).finally(() => {
         if (this.#turnPromise === trackedPromise) {
           this.#turnPromise = null;
         }
-      },
-    );
+      });
     this.#turnPromise = trackedPromise;
     return trackedPromise;
   }
@@ -1360,6 +1670,7 @@ export class FoundryLayoutService {
     generation: number,
     onPhase?: (phase: string, detail: string) => void,
     currentAcceptedLayout: EvaluatedLayoutOption | null = null,
+    planningFixture: PlanningFixture = defaultPlanningFixture,
   ): Promise<FoundryTurnOutcome> {
     const turnStarted = performance.now();
     await this.initialize();
@@ -1537,7 +1848,12 @@ export class FoundryLayoutService {
         "The application is validating intent and deriving IDs, state, units, and locked constraints.",
       );
       const validationStarted = performance.now();
-      const validation = parseAndValidateIntentDelta(rawArguments, state, userPrompt);
+      const validation = parseAndValidateIntentDelta(
+        rawArguments,
+        state,
+        userPrompt,
+        planningFixture,
+      );
       const validationMs = performance.now() - validationStarted;
       attemptPerformance.push({
         attempt,
@@ -1593,7 +1909,12 @@ export class FoundryLayoutService {
     onPhase?.("geometry-running", "Running deterministic bounded geometry checks.");
     this.#assertLayoutOperationCurrent(generation);
     const geometryStarted = performance.now();
-    const toolResult = compareKnownLayoutOptions(validatedInput, state, currentAcceptedLayout);
+    const toolResult = compareKnownLayoutOptions(
+      validatedInput,
+      state,
+      currentAcceptedLayout,
+      planningFixture,
+    );
     const geometryMs = performance.now() - geometryStarted;
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
     const assistantText = renderApplicationEvidence(toolResult);
@@ -1686,8 +2007,11 @@ export class FoundryLayoutService {
   #startReset(): Promise<void> {
     this.#layoutGeneration += 1;
     this.#audioGeneration += 1;
+    this.#visionGeneration += 1;
     this.#activeLayoutRequest?.cancel();
     this.#activeAudioRequest?.cancel();
+    this.#visionPrepareAbort?.abort();
+    this.#activeVisionRequest?.cancel();
     const streamCancellation =
       this.#activeAudioStream === null ? null : this.#cancelActiveAudioStream(this.#activeAudioStream);
     const operations = [
@@ -1696,6 +2020,8 @@ export class FoundryLayoutService {
       this.#turnPromise,
       this.#audioPreparePromise,
       this.#audioTranscriptionPromise,
+      this.#visionPreparePromise,
+      this.#visionAnalyzePromise,
       streamCancellation,
       this.#layoutResetPromise,
       this.#audioResetPromise,
@@ -1752,6 +2078,7 @@ export class FoundryLayoutService {
       if (error instanceof OperationDrainTimeoutError && drain !== null) {
         this.#startAutomaticRuntimeRecovery(error, drain, async () => {
           await this.#resetAudioResources();
+          await this.#resetVisionResources();
           this.#resetConversationResources();
         });
       }
@@ -1759,6 +2086,7 @@ export class FoundryLayoutService {
     }
     try {
       await this.#resetAudioResources();
+      await this.#resetVisionResources();
       this.#resetConversationResources();
       this.#completeRuntimeRecovery();
     } catch (error) {
@@ -1824,6 +2152,20 @@ export class FoundryLayoutService {
     this.#audioReadiness = initialAudioReadiness();
   }
 
+  async #resetVisionResources(): Promise<void> {
+    this.#visionPrepareAbort?.abort();
+    this.#activeVisionRequest?.cancel();
+    const model = this.#visionModel;
+    if (model !== null && (await model.isLoaded())) {
+      await model.unload();
+    }
+    if (this.#visionModel === model) {
+      this.#visionModel = null;
+    }
+    this.#visionPrepareAbort = null;
+    this.#visionReadiness = initialVisionReadiness();
+  }
+
   async #shutdown(): Promise<void> {
     try {
       await (this.#runtimeRecoveryPromise ?? this.#resetPromise ?? this.#startReset());
@@ -1837,6 +2179,7 @@ export class FoundryLayoutService {
       }
       this.#model = null;
     }
+    await this.#resetVisionResources();
     const manager = this.#manager;
     this.#manager = null;
     manager?.dispose();
@@ -1887,6 +2230,44 @@ export class FoundryLayoutService {
     };
   }
 
+  async #resolveExactModel(modelId: string): Promise<{
+    readonly model: IModel | null;
+    readonly detail: string;
+  }> {
+    const manager = this.#requireManager();
+    let publicCatalogError = "";
+    try {
+      return {
+        model: await manager.catalog.getModelVariant(modelId),
+        detail: `Resolved exact model ${modelId} from the public catalog.`,
+      };
+    } catch (error) {
+      publicCatalogError = error instanceof Error ? error.message : String(error);
+    }
+
+    try {
+      const cached = (await manager.catalog.getCachedModels()).find((model) => model.id === modelId);
+      if (cached !== undefined) {
+        return {
+          model: cached,
+          detail: `Resolved exact model ${modelId} from the local cache.`,
+        };
+      }
+    } catch (error) {
+      return {
+        model: null,
+        detail: `Exact model ${modelId} could not be resolved. Public catalog error: ${publicCatalogError}. Local cache error: ${
+          error instanceof Error ? error.message : String(error)
+        }.`,
+      };
+    }
+
+    return {
+      model: null,
+      detail: `Exact model ${modelId} is absent from both the public catalog and local cache. Public catalog error: ${publicCatalogError}.`,
+    };
+  }
+
   #assertModelMatchesTarget(model: IModel): void {
     if (model.id !== this.#target.modelId) {
       throw new FoundryRuntimeError(
@@ -1911,6 +2292,37 @@ export class FoundryLayoutService {
       throw new FoundryRuntimeError(
         `Configured exact model ${model.id} uses ${actualProvider}; expected ${this.#target.executionProvider}.`,
         "PROVIDER_UNAVAILABLE",
+      );
+    }
+  }
+
+  #assertVisionModel(model: IModel): void {
+    if (model.id !== FLOOR_PLAN_VISION_MODEL_ID) {
+      throw new FoundryRuntimeError(
+        `Resolved vision model ${model.id} does not match ${FLOOR_PLAN_VISION_MODEL_ID}.`,
+        "MODEL_UNAVAILABLE",
+      );
+    }
+    if (executionProvider(model) !== FLOOR_PLAN_VISION_EXECUTION_PROVIDER) {
+      throw new FoundryRuntimeError(
+        `Vision model ${model.id} must use ${FLOOR_PLAN_VISION_EXECUTION_PROVIDER}.`,
+        "PROVIDER_UNAVAILABLE",
+      );
+    }
+    if (model.info.task?.toLowerCase() !== "vision-language-chat") {
+      throw new FoundryRuntimeError(
+        `Vision model ${model.id} does not expose the vision-language-chat task.`,
+        "MODEL_UNAVAILABLE",
+      );
+    }
+    const modalities = (model.inputModalities ?? model.info.inputModalities ?? "")
+      .toLowerCase()
+      .split(",")
+      .map((value) => value.trim());
+    if (!modalities.includes("image") || !modalities.includes("text")) {
+      throw new FoundryRuntimeError(
+        `Vision model ${model.id} must advertise both text and image input modalities.`,
+        "MODEL_UNAVAILABLE",
       );
     }
   }
@@ -1974,6 +2386,24 @@ export class FoundryLayoutService {
     } finally {
       if (this.#activeLayoutRequest === request) {
         this.#activeLayoutRequest = null;
+      }
+    }
+  }
+
+  async #executeVisionRequest<T>(
+    request: Request,
+    generation: number,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.#assertVisionOperationCurrent(generation);
+    this.#activeVisionRequest = request;
+    try {
+      const result = await operation();
+      this.#assertVisionOperationCurrent(generation);
+      return result;
+    } finally {
+      if (this.#activeVisionRequest === request) {
+        this.#activeVisionRequest = null;
       }
     }
   }
@@ -2303,6 +2733,20 @@ export class FoundryLayoutService {
     }
   }
 
+  #assertVisionOperationCurrent(generation: number): void {
+    if (
+      generation !== this.#visionGeneration ||
+      this.#resetPromise !== null ||
+      this.#runtimeRecoveryBaseline !== null ||
+      this.#shuttingDown
+    ) {
+      throw new FoundryRuntimeError(
+        "Floor-plan vision operation was superseded by reset, cancellation, or shutdown.",
+        "RUNTIME_NOT_READY",
+      );
+    }
+  }
+
   #isLayoutOperationCurrent(generation: number): boolean {
     return !(
       generation !== this.#layoutGeneration ||
@@ -2331,6 +2775,13 @@ export class FoundryLayoutService {
       throw new FoundryRuntimeError(this.#readiness.detail, "MODEL_UNAVAILABLE");
     }
     return this.#model;
+  }
+
+  #requireVisionModel(): IModel {
+    if (this.#visionModel === null) {
+      throw new FoundryRuntimeError(this.#visionReadiness.detail, "MODEL_UNAVAILABLE");
+    }
+    return this.#visionModel;
   }
 
   #requireSession(): FoundrySessionHandle {

@@ -2,13 +2,11 @@ import {
   CLEARANCE_RULE_SET_ID,
   CLEARANCE_RULE_SET_VERSION,
   clearanceRuleSet,
+  defaultPlanningFixture,
   FURNITURE_CATALOG_VERSION,
   furnitureCatalog,
   GEOMETRY_ENGINE_VERSION,
   getKnownLayoutOptions,
-  ROOM_PLAN_ID,
-  ROOM_PLAN_VERSION,
-  roomPlan,
 } from "./fixture";
 import { evaluateLayoutOption } from "./geometry";
 import { type CompareLayoutOptionsInput, expandCandidateFurnitureIds } from "./tool-contract";
@@ -18,6 +16,7 @@ import type {
   LayoutConflict,
   LayoutOption,
   LayoutToolResult,
+  PlanningFixture,
 } from "./types";
 
 function evidenceOption(
@@ -94,10 +93,11 @@ export function compareKnownLayoutOptions(
   input: CompareLayoutOptionsInput,
   state: DemoStateSnapshot,
   currentAcceptedLayout: EvaluatedLayoutOption | null = null,
+  planningFixture: PlanningFixture = defaultPlanningFixture,
 ): LayoutToolResult {
   const provenance = {
-    roomPlanId: ROOM_PLAN_ID,
-    planVersion: ROOM_PLAN_VERSION,
+    roomPlanId: planningFixture.roomPlan.id,
+    planVersion: planningFixture.roomPlan.version,
     clearanceRuleSetId: CLEARANCE_RULE_SET_ID,
     clearanceRuleSetVersion: CLEARANCE_RULE_SET_VERSION,
     furnitureCatalogVersion: FURNITURE_CATALOG_VERSION,
@@ -129,12 +129,15 @@ export function compareKnownLayoutOptions(
   const retainedManual = retainedManualOption(input, state, currentAcceptedLayout);
   const options = [
     ...(retainedManual === null ? [] : [retainedManual]),
-    ...getKnownLayoutOptions(expandCandidateFurnitureIds(input.candidateFurnitureIds)),
+    ...getKnownLayoutOptions(
+      expandCandidateFurnitureIds(input.candidateFurnitureIds),
+      planningFixture.knownLayoutOptions,
+    ),
   ];
   const evaluated = options.map((option) =>
     evaluateLayoutOption(
       option,
-      roomPlan,
+      planningFixture.roomPlan,
       furnitureCatalog,
       clearanceRuleSet,
       option === retainedManual ? "manual-adjustment" : "known-option",

@@ -4,6 +4,7 @@ import type {
   FurnitureId,
   LayoutOption,
   LockedConstraints,
+  PlanningFixture,
   RoomPlan,
 } from "./types";
 
@@ -33,14 +34,16 @@ export const roomPlan: RoomPlan = {
   depthMm: 3600,
   verifiedBy: "Demo fixture: tape-measure plan",
   verifiedAt: "2026-10-27",
-  doorSwing: {
-    id: "door-entry-swing",
-    label: "900 mm inward entry-door swing",
-    hingeXmm: 0,
-    hingeYmm: 3600,
-    radiusMm: 900,
-    quadrant: "north-east",
-  },
+  doorSwings: [
+    {
+      id: "door-entry-swing",
+      label: "900 mm inward entry-door swing",
+      hingeXmm: 0,
+      hingeYmm: 3600,
+      radiusMm: 900,
+      quadrant: "north-east",
+    },
+  ],
   reservedZones: [
     {
       id: "closet-access-zone",
@@ -284,11 +287,20 @@ export const knownLayoutOptions: readonly LayoutOption[] = [
   },
 ] as const;
 
+export const defaultPlanningFixture: PlanningFixture = {
+  mode: "default",
+  roomPlan,
+  knownLayoutOptions,
+};
+
 function furnitureSetKey(ids: readonly FurnitureId[]): string {
   return [...ids].sort().join("|");
 }
 
-export function getKnownLayoutOptions(ids: readonly FurnitureId[]): readonly LayoutOption[] {
+export function getKnownLayoutOptions(
+  ids: readonly FurnitureId[],
+  options: readonly LayoutOption[] = knownLayoutOptions,
+): readonly LayoutOption[] {
   const key = furnitureSetKey(ids);
-  return knownLayoutOptions.filter((option) => furnitureSetKey(option.furnitureIds) === key);
+  return options.filter((option) => furnitureSetKey(option.furnitureIds) === key);
 }

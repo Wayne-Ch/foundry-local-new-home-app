@@ -1,5 +1,7 @@
 import type { AudioRecorderState, LiveTranscriptDraft } from "../audio/audio-types";
 import { createInitialDemoState } from "../domain/demo-state";
+import { defaultPlanningFixture } from "../domain/fixture";
+import { defaultStageTurns } from "../foundry/prompt";
 import type { BootstrapPayload, TraceEntry } from "../shared/contracts";
 
 export const DEFAULT_AUDIO_NOTICE = "Editable draft only; click Send to submit.";
@@ -81,7 +83,17 @@ export function createAuthoritativeResetBootstrap(
   return {
     ...current,
     conversationGeneration,
-    state: createInitialDemoState(),
+    roomMode: "default",
+    roomPlan: defaultPlanningFixture.roomPlan,
+    state: createInitialDemoState(defaultPlanningFixture.roomPlan),
+    stageTurns: defaultStageTurns,
+    floorPlanImport: {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    },
     completedStageTurnIds: [],
     lastInteraction: null,
     selectedLayout: null,

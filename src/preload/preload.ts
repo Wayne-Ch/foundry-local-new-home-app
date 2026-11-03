@@ -52,6 +52,14 @@ const api: DemoApi = {
     ipcRenderer.invoke(ipcChannels.runTurn, request) as Promise<RunTurnResponse>,
   applyManualPlacement: (request: ManualPlacementRequest) =>
     ipcRenderer.invoke(ipcChannels.applyManualPlacement, request) as Promise<ManualPlacementResponse>,
+  loadSampleFloorPlan: () =>
+    ipcRenderer.invoke(ipcChannels.loadSampleFloorPlan) as ReturnType<DemoApi["loadSampleFloorPlan"]>,
+  chooseFloorPlan: () =>
+    ipcRenderer.invoke(ipcChannels.chooseFloorPlan) as ReturnType<DemoApi["chooseFloorPlan"]>,
+  analyzeFloorPlan: () =>
+    ipcRenderer.invoke(ipcChannels.analyzeFloorPlan) as ReturnType<DemoApi["analyzeFloorPlan"]>,
+  useDefaultRoom: () =>
+    ipcRenderer.invoke(ipcChannels.useDefaultRoom) as ReturnType<DemoApi["useDefaultRoom"]>,
   resetConversation: () => ipcRenderer.invoke(ipcChannels.resetConversation) as Promise<BootstrapPayload>,
   onProgress: (callback: (event: ProgressEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ProgressEvent) => {

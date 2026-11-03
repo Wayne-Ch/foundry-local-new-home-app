@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   app,
   BrowserWindow,
+  dialog,
   type IpcMainInvokeEvent,
   ipcMain,
   session,
@@ -19,7 +20,11 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
-import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
+import {
+  ipcChannels,
+  type MicrophoneAuthorizationRequest,
+  type RunTurnRequest,
+} from "../shared/contracts";
 import {
   type AudioStreamLease,
   type AudioStreamOwnerIdentity,
@@ -93,6 +98,14 @@ const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
 });
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererFilePath = path.join(currentDirectory, "..", "renderer", "index.html");
+const sampleFloorPlanPath = path.join(
+  currentDirectory,
+  "..",
+  "renderer",
+  "assets",
+  "floor-plan",
+  "sample-family-room.png",
+);
 const rendererDocumentUrl = pathToFileURL(rendererFilePath).href;
 const rendererPermissionOrigin = permissionOriginForDocument(rendererDocumentUrl);
 let microphonePermissionProbeCheck:
@@ -176,6 +189,7 @@ function createWindow(): BrowserWindow {
     permissionGate.revoke();
     if (event.isMainFrame) {
       revokeAudioStreamOwner(webContentsId, frameOwnership(event.frame));
+      releaseFloorPlanForRenderer("main-frame navigation");
     }
     if (!isAllowedAppNavigation(rendererDocumentUrl, event.url, event.isMainFrame)) {
       event.preventDefault();
@@ -193,14 +207,17 @@ function createWindow(): BrowserWindow {
   webContents.on("did-start-navigation", (event) => {
     if (event.isMainFrame && !event.isSameDocument) {
       revokeAudioStreamOwner(webContentsId);
+      releaseFloorPlanForRenderer("main-frame load");
     }
   });
   webContents.on("render-process-gone", () => {
     permissionGate.revoke();
     revokeAudioStreamOwner(webContentsId);
+    releaseFloorPlanForRenderer("renderer process loss");
   });
   webContents.on("destroyed", () => {
     revokeAudioStreamOwner(webContentsId);
+    releaseFloorPlanForRenderer("webContents destruction");
     if (mainWebContents === webContents) {
       mainWebContents = null;
     }
@@ -208,6 +225,7 @@ function createWindow(): BrowserWindow {
   window.on("closed", () => {
     permissionGate.revoke();
     revokeAudioStreamOwner(webContentsId);
+    releaseFloorPlanForRenderer("window close");
     if (mainWindow === window) {
       mainWindow = null;
       if (mainWebContents === webContents) {
@@ -400,6 +418,60 @@ function registerIpc(): void {
     assertTrustedRendererIpc(event);
     return controller.applyManualPlacement(request);
   });
+  ipcMain.handle(ipcChannels.loadSampleFloorPlan, async (event) => {
+    assertTrustedRendererIpc(event);
+    const bytes = await readFile(sampleFloorPlanPath);
+    try {
+      return {
+        cancelled: false,
+        bootstrap: await controller.loadFloorPlanImage(
+          bytes,
+          "sample",
+          "Packaged public-domain Family-room crop",
+        ),
+      };
+    } finally {
+      bytes.fill(0);
+    }
+  });
+  ipcMain.handle(ipcChannels.chooseFloorPlan, async (event) => {
+    assertTrustedRendererIpc(event);
+    const window = mainWindow;
+    if (window === null || window.isDestroyed()) {
+      throw new Error("The application window is unavailable.");
+    }
+    const selection = await dialog.showOpenDialog(window, {
+      title: "Choose the experimental single-room floor plan",
+      properties: ["openFile"],
+      filters: [{ name: "Supported room images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    });
+    if (selection.canceled || selection.filePaths.length !== 1) {
+      return { cancelled: true, bootstrap: controller.bootstrap() };
+    }
+    const selectedPath = selection.filePaths[0];
+    if (selectedPath === undefined) {
+      return { cancelled: true, bootstrap: controller.bootstrap() };
+    }
+    const bytes = await readFile(selectedPath);
+    try {
+      return {
+        cancelled: false,
+        bootstrap: await controller.loadFloorPlanImage(bytes, "picker", path.basename(selectedPath)),
+      };
+    } finally {
+      bytes.fill(0);
+    }
+  });
+  ipcMain.handle(ipcChannels.analyzeFloorPlan, (event) => {
+    const renderer = assertTrustedRendererIpc(event);
+    return controller.analyzeFloorPlan((progress) => {
+      sendToFrame(renderer.frame, ipcChannels.progress, progress);
+    });
+  });
+  ipcMain.handle(ipcChannels.useDefaultRoom, (event) => {
+    assertTrustedRendererIpc(event);
+    return controller.useDefaultRoom();
+  });
   ipcMain.handle(
     ipcChannels.resetConversation,
     createResetConversationHandler(
@@ -414,6 +486,12 @@ function registerIpc(): void {
       },
     ),
   );
+}
+
+function releaseFloorPlanForRenderer(reason: string): void {
+  void controller.releaseFloorPlanImage().catch((error: unknown) => {
+    console.error(`Failed to release floor-plan image during ${reason}:`, error);
+  });
 }
 
 function assertTrustedRendererIpc(event: IpcMainInvokeEvent): {

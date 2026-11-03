@@ -25,6 +25,7 @@ import {
 import type {
   CheckedRoomState,
   DemoState,
+  DoorSwing,
   EvaluatedLayoutOption,
   LayoutConflict,
   LayoutToolResult,
@@ -180,6 +181,15 @@ const audioTrace = requiredElement("audioTrace");
 const toolTrace = requiredElement("toolTrace");
 const geometryTrace = requiredElement("geometryTrace");
 const previewBanner = requiredElement("previewBanner");
+const loadSampleFloorPlanButton = requiredButton("loadSampleFloorPlanButton");
+const chooseFloorPlanButton = requiredButton("chooseFloorPlanButton");
+const analyzeFloorPlanButton = requiredButton("analyzeFloorPlanButton");
+const useDefaultRoomButton = requiredButton("useDefaultRoomButton");
+const floorPlanImportStatus = requiredElement("floorPlanImportStatus");
+const floorPlanFacts = requiredElement("floorPlanFacts");
+const floorPlanPreviewFrame = requiredElement("floorPlanPreviewFrame");
+const floorPlanPreview = requiredImage("floorPlanPreview");
+const floorPlanPreviewCaption = requiredElement("floorPlanPreviewCaption");
 
 interface VoiceCaptureOperation {
   readonly operationId: number;
@@ -264,6 +274,92 @@ prepareButton.addEventListener("click", async () => {
     }
   }
 });
+
+loadSampleFloorPlanButton.addEventListener("click", () => {
+  void loadFloorPlanImage(() => demoApi?.loadSampleFloorPlan());
+});
+
+chooseFloorPlanButton.addEventListener("click", () => {
+  void loadFloorPlanImage(() => demoApi?.chooseFloorPlan());
+});
+
+analyzeFloorPlanButton.addEventListener("click", async () => {
+  if (demoApi === null || isBusy || operationBarrier.operationsBlocked) {
+    return;
+  }
+  const lifecycleGeneration = operationBarrier.beginOperation();
+  setBusy(true);
+  try {
+    const bootstrap = await demoApi.analyzeFloorPlan();
+    if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      return;
+    }
+    applyBootstrap(bootstrap);
+  } catch (error) {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      showImportError(error);
+      const bootstrap = await demoApi.getBootstrap();
+      if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+        applyBootstrap(bootstrap);
+      }
+    }
+  } finally {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
+  }
+});
+
+useDefaultRoomButton.addEventListener("click", async () => {
+  if (demoApi === null || isBusy || operationBarrier.operationsBlocked) {
+    return;
+  }
+  const lifecycleGeneration = operationBarrier.beginOperation();
+  setBusy(true);
+  try {
+    const bootstrap = await demoApi.useDefaultRoom();
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      applyBootstrap(bootstrap);
+    }
+  } catch (error) {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      showImportError(error);
+    }
+  } finally {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
+  }
+});
+
+async function loadFloorPlanImage(
+  load: () => ReturnType<NonNullable<typeof demoApi>["loadSampleFloorPlan"]> | undefined,
+): Promise<void> {
+  if (demoApi === null || isBusy || operationBarrier.operationsBlocked) {
+    return;
+  }
+  const lifecycleGeneration = operationBarrier.beginOperation();
+  setBusy(true);
+  try {
+    const response = await load();
+    if (
+      response === undefined ||
+      response.cancelled ||
+      !operationBarrier.isCurrentOperation(lifecycleGeneration)
+    ) {
+      return;
+    }
+    applyBootstrap(response.bootstrap);
+  } catch (error) {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      showImportError(error);
+    }
+  } finally {
+    if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      setBusy(false);
+    }
+  }
+}
 
 audioPrepareButton.addEventListener("click", async () => {
   await prepareAudioMode("nemotron_streaming");
@@ -581,12 +677,21 @@ function applyTurnResponse(response: RunTurnResponse): void {
   renderAll();
 }
 
+function applyBootstrap(bootstrap: BootstrapPayload): void {
+  viewState = bootstrap;
+  latestToolResult = bootstrap.lastToolResult;
+  manualPreview = null;
+  manualPreviewOrigin = null;
+  renderAll();
+}
+
 function renderAll(): void {
   renderRuntime(viewState.readiness);
   renderAudio();
   renderStageSteps(viewState.stageTurns);
   renderMessages(viewState.messages);
   renderRecoveryActions();
+  renderFloorPlanImport();
   renderLayout();
   renderSpeechSuggestion();
   renderTrace();
@@ -598,6 +703,51 @@ function renderAll(): void {
       : "Scripted story complete";
   nextTurnButton.disabled =
     isBusy || operationBarrier.operationsBlocked || !viewState.readiness.localInferenceReady || nextIndex < 0;
+}
+
+function renderFloorPlanImport(): void {
+  const imported = viewState.floorPlanImport;
+  const preview = imported.preview;
+  floorPlanPreviewFrame.hidden = preview === null;
+  if (preview !== null) {
+    floorPlanPreview.src = preview.dataUrl;
+    floorPlanPreviewCaption.textContent = `${preview.displayName} · ${preview.width} x ${preview.height} · ${preview.format.toUpperCase()}`;
+  } else {
+    floorPlanPreview.removeAttribute("src");
+    floorPlanPreviewCaption.textContent = "";
+  }
+
+  floorPlanFacts.replaceChildren();
+  for (const fact of imported.recognizedFacts) {
+    const item = document.createElement("span");
+    item.className = "floor-plan-fact";
+    item.textContent = fact;
+    floorPlanFacts.append(item);
+  }
+
+  const vision = viewState.visionReadiness;
+  if (imported.status === "idle") {
+    floorPlanImportStatus.textContent =
+      "Default verified room is active. Load the public-domain sample only when demonstrating image intake.";
+  } else if (imported.status === "image_ready") {
+    floorPlanImportStatus.textContent =
+      "Image bytes passed main-process signature, size, dimension, and pixel bounds. Analyze to recognize the room.";
+  } else if (imported.status === "analyzing") {
+    floorPlanImportStatus.textContent = `Analyzing locally with ${vision.target.modelId}; no cloud endpoint or canned fallback.`;
+  } else if (imported.status === "imported") {
+    floorPlanImportStatus.textContent =
+      "Experimental imported room is active. The app canonicalized recognized topology into deterministic geometry.";
+  } else {
+    floorPlanImportStatus.textContent = `Import failed closed: ${imported.error ?? "unknown error"}. The default room remains available.`;
+  }
+
+  const controlsBlocked = isBusy || operationBarrier.operationsBlocked || previewMode;
+  loadSampleFloorPlanButton.disabled = controlsBlocked;
+  chooseFloorPlanButton.disabled = controlsBlocked;
+  analyzeFloorPlanButton.disabled =
+    controlsBlocked || preview === null || !["image_ready", "error"].includes(imported.status);
+  useDefaultRoomButton.disabled =
+    controlsBlocked || (viewState.roomMode === "default" && preview === null);
 }
 
 function nextStageTurnIndex(): number {
@@ -901,6 +1051,10 @@ function renderRoomSvg(
   isManualPreview: boolean,
 ): void {
   roomSvg.replaceChildren();
+  roomSvg.setAttribute(
+    "viewBox",
+    `-180 -260 ${viewState.roomPlan.widthMm + 360} ${viewState.roomPlan.depthMm + 540}`,
+  );
   const title = svgElement("title");
   title.textContent = "Interactive bedroom layout";
   roomSvg.append(title);
@@ -968,17 +1122,20 @@ function renderRoomSvg(
     );
   }
 
-  const doorConflicted = conflictZoneIds.has(viewState.roomPlan.doorSwing.id);
-  roomSvg.append(
-    svgElement("path", {
-      d: "M 0 3600 L 0 2700 A 900 900 0 0 1 900 3600 Z",
-      fill: doorConflicted ? "#D92D3B66" : "#EB575733",
-      stroke: doorConflicted ? "#FF4054" : "#EB5757",
-      "stroke-width": doorConflicted ? "34" : "24",
-      "stroke-dasharray": "40 25",
-    }),
-  );
-  appendSvgLabel("Door swing", 430, 3290, "#FFD6D6");
+  for (const swing of viewState.roomPlan.doorSwings) {
+    const doorConflicted = conflictZoneIds.has(swing.id);
+    roomSvg.append(
+      svgElement("path", {
+        d: doorSwingPath(swing),
+        fill: doorConflicted ? "#D92D3B66" : "#EB575733",
+        stroke: doorConflicted ? "#FF4054" : "#EB5757",
+        "stroke-width": doorConflicted ? "34" : "24",
+        "stroke-dasharray": "40 25",
+      }),
+    );
+    const label = doorSwingLabelPoint(swing);
+    appendSvgLabel(swing.label, label.xMm, label.yMm, "#FFD6D6");
+  }
 
   renderSvgMeasurements(layout);
 
@@ -1124,8 +1281,12 @@ function renderRequirements(layout: EvaluatedLayoutOption | null): void {
   const windowZone = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
   const requirements = [
     `<strong>Furniture clearance:</strong> ${clearanceRuleSet.minimumFurnitureGapMm} mm minimum`,
-    `<strong>Door swing:</strong> keep ${viewState.roomPlan.doorSwing.radiusMm} mm verified swing clear`,
-    `<strong>Closet access:</strong> keep ${closet?.rect.widthMm ?? 0} x ${closet?.rect.depthMm ?? 0} mm zone clear`,
+    `<strong>Door swings:</strong> keep ${viewState.roomPlan.doorSwings
+      .map((swing) => `${swing.radiusMm} mm`)
+      .join(" + ")} clear`,
+    closet === undefined
+      ? "<strong>Fixed obstruction:</strong> none recognized in the imported fixture"
+      : `<strong>Closet access:</strong> keep ${closet.rect.widthMm} x ${closet.rect.depthMm} mm zone clear`,
     `<strong>Window clearance:</strong> keep ${windowZone?.rect.widthMm ?? 0} x ${windowZone?.rect.depthMm ?? 0} mm zone clear`,
     `<strong>Accepted state:</strong> ${escapeHtml(acceptedFurniture || "No furniture accepted yet")}`,
     `<strong>${layout?.status === "rejected" ? "Preview" : "Displayed"} furniture:</strong> ${escapeHtml(displayFurniture)}`,
@@ -1949,6 +2110,20 @@ function showResetError(error: unknown): void {
   });
 }
 
+function showImportError(error: unknown): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  viewState = {
+    ...viewState,
+    floorPlanImport: {
+      ...viewState.floorPlanImport,
+      status: "error",
+      error: detail,
+    },
+  };
+  renderProgress({ phase: "error", detail: `Floor-plan import failed: ${detail}` });
+  renderFloorPlanImport();
+}
+
 function startResetRecoveryMonitor(conversationGeneration: number): void {
   if (resetRecoveryMonitor?.conversationGeneration === conversationGeneration) {
     return;
@@ -2068,6 +2243,30 @@ function appendSvgCallout(text: string, x: number, y: number, color: string): vo
   roomSvg.append(label);
 }
 
+function doorSwingPath(swing: DoorSwing): string {
+  const east = swing.quadrant.endsWith("east");
+  const south = swing.quadrant.startsWith("south");
+  const start = {
+    xMm: swing.hingeXmm,
+    yMm: swing.hingeYmm + (south ? swing.radiusMm : -swing.radiusMm),
+  };
+  const end = {
+    xMm: swing.hingeXmm + (east ? swing.radiusMm : -swing.radiusMm),
+    yMm: swing.hingeYmm,
+  };
+  const sweep = east !== south ? 1 : 0;
+  return `M ${swing.hingeXmm} ${swing.hingeYmm} L ${start.xMm} ${start.yMm} A ${swing.radiusMm} ${swing.radiusMm} 0 0 ${sweep} ${end.xMm} ${end.yMm} Z`;
+}
+
+function doorSwingLabelPoint(swing: DoorSwing): Point {
+  const east = swing.quadrant.endsWith("east");
+  const south = swing.quadrant.startsWith("south");
+  return {
+    xMm: swing.hingeXmm + (east ? swing.radiusMm * 0.48 : -swing.radiusMm * 0.48),
+    yMm: swing.hingeYmm + (south ? swing.radiusMm * 0.48 : -swing.radiusMm * 0.48),
+  };
+}
+
 function appendSvgLabel(text: string, x: number, y: number, color: string): void {
   const label = svgElement("text", {
     x: String(x),
@@ -2143,6 +2342,14 @@ function requiredForm(id: string): HTMLFormElement {
   const element = requiredElement(id);
   if (!(element instanceof HTMLFormElement)) {
     throw new Error(`#${id} is not a form`);
+  }
+  return element;
+}
+
+function requiredImage(id: string): HTMLImageElement {
+  const element = requiredElement(id);
+  if (!(element instanceof HTMLImageElement)) {
+    throw new Error(`#${id} is not an image`);
   }
   return element;
 }

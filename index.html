@@ -140,6 +140,35 @@
             <div id="resultBadge" class="result-badge is-neutral">Waiting for a request</div>
           </div>
 
+          <section class="floor-plan-import" aria-labelledby="floorPlanImportTitle">
+            <div class="floor-plan-import-copy">
+              <p class="eyebrow">Optional experimental intake</p>
+              <h3 id="floorPlanImportTitle">Recognize one packaged room-plan fixture</h3>
+              <p id="floorPlanImportStatus" class="floor-plan-import-status">
+                Default verified room is active. Load the public-domain sample only when demonstrating image intake.
+              </p>
+              <div id="floorPlanFacts" class="floor-plan-facts"></div>
+              <div class="floor-plan-actions">
+                <button id="loadSampleFloorPlanButton" class="button button-secondary" type="button">
+                  Load sample floor plan
+                </button>
+                <button id="chooseFloorPlanButton" class="button button-ghost" type="button">
+                  Choose image
+                </button>
+                <button id="analyzeFloorPlanButton" class="button button-primary" type="button" disabled>
+                  Analyze layout
+                </button>
+                <button id="useDefaultRoomButton" class="button button-ghost" type="button" disabled>
+                  Use default room
+                </button>
+              </div>
+            </div>
+            <figure id="floorPlanPreviewFrame" class="floor-plan-preview" hidden>
+              <img id="floorPlanPreview" alt="Selected single-room floor-plan preview" />
+              <figcaption id="floorPlanPreviewCaption"></figcaption>
+            </figure>
+          </section>
+
           <div class="layout-content">
             <fieldset
               class="room-card"
