@@ -6,9 +6,9 @@ Run while connected:
 
 ```powershell
 cd C:\Users\waynechuang\Projects\foundry-local-ignite-new-home-demo
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
-npm rebuild electron esbuild foundry-local-sdk
+npm run setup:native
 npm run probe:foundry
 npm run typecheck
 npm run lint
@@ -19,6 +19,7 @@ Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run test:nemotron-integration
 npm run test:audio-integration
+npm run test:floor-plan-integration
 npm run build
 npm run smoke:electron
 npm run probe:reset
@@ -27,6 +28,12 @@ npm run probe:microphone-permission
 npm run capture:ui
 npm run start:built
 ```
+
+`npm run test:floor-plan-integration` must finish with
+`FLOOR_PLAN_INTEGRATION_OK`. It is not replaced by parser mocks: the script uses the packaged PNG,
+exact `qwen3.5-0.8b-generic-cpu:3`, CPU/`CPUExecutionProvider`, and the real v2.2.1 image item path.
+After `npm ci`, verify `node_modules\electron\path.txt` exists. If it does not, stop and run
+`npm run setup:native`; do not continue with a partially materialized Electron package.
 
 For a benchmark refresh rather than routine stage preflight, run `npm run benchmark:layout`. It
 isolates each exact cached candidate in a fresh process, never downloads a model, and rewrites the
@@ -74,6 +81,18 @@ In the app:
    same feasible `queen-crib-compact-v1` result as the scripted recovery button. Do not regenerate
    or relabel the committed Queen + desk WAV fixture as baby-bed evidence.
 
+Optional enhanced-room preflight:
+
+1. Select **Load sample floor plan** and confirm the NARA `1020 x 1080` preview. Commons marks the
+   source `PD-US`; keep this optional fixture private unless legal review approves wider use.
+2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
+   endpoint, and the non-forced categories: rectangular room, bedroom label/door/window present,
+   movable furniture absent.
+3. If analysis fails, open **Developer trace -> Runtime + locked state** and record
+   `floorPlanVision.attempts[].rawOutput`; never present the default-room fallback as a successful
+   import.
+4. Select **Use default room** and confirm the original verified bedroom returns at v0.
+
 Observed selected-default integration timings on the validated laptop were 2.332–8.362 seconds per
 turn, including bounded application-validation correction when needed. The unrestricted semantic
 benchmark measured 5.357 seconds median and 10.216 seconds maximum. Do not start the first
@@ -95,6 +114,22 @@ The hands-on story is intentionally explicit:
 | C | Select the recovery action or say “Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.” | Queen + compact desk + baby bed is feasible; the changed preference is visible while door, closet, window, and 250 mm clearance remain locked |
 | D | Optionally drag accepted furniture, then Apply or Revert | App-owned 50 mm-grid preview with live deterministic measurements; no Qwen geometry |
 | E | Use King while retaining compact desk + baby bed | Controlled failure with exact 70 / 250 mm and 170 / 250 mm gap callouts |
+
+Optional enhanced beat before A:
+
+| Beat | Action | Expected evidence |
+|---|---|---|
+| I | Load sample floor plan -> Analyze layout | Preview remains visible; VLM recognizes bedroom/door/window topology; app applies documented dimensions and canonical geometry |
+| I-A | Queen + desk in imported room | Feasible, with entry swing, closet access, and window clearance passing |
+| I-B | Change to King | No feasible bounded option; exact 70 / 250 mm furniture gap |
+| I-C | Keep Queen, add baby bed, allow compact desk | Feasible; manual 50 mm adjustment remains valid |
+
+Say:
+
+> This is a deliberately constrained image-understanding demo, not arbitrary CAD ingestion. The
+> local VLM recognizes topology; the application owns scale, geometry, placement options, and every
+> verdict. The fixture is an empty labeled master bedroom; the model is not asked for dimensions or
+> coordinates.
 
 ### Before 0:00 — Prepare real, pre-run state
 

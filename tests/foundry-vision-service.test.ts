@@ -16,7 +16,7 @@ import {
 } from "../src/foundry/runtime-config";
 
 const validRecognition =
-  '{"schema":"single-room-v1","room":{"shape":"rectangle","aspectPermille":1390},"doors":[{"wall":"north","startPermille":170,"endPermille":300,"hinge":"west","swing":"inward","quadrant":"south-east"},{"wall":"east","startPermille":150,"endPermille":320,"hinge":"south","swing":"inward","quadrant":"north-west"}],"window":{"wall":"east","startPermille":500,"endPermille":690},"fixedObstruction":{"kind":"none"},"movableFurnitureSymbols":"present"}';
+  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present","movableFurniture":"absent"}';
 
 const fakePaths = {
   rootDir: "C:\\foundry-test",

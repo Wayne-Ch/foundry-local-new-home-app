@@ -1615,7 +1615,9 @@ export class FoundryLayoutService {
           );
         }
 
-        onProgress?.(`Recognizing room walls, both doors, and the east window locally (attempt ${attempt}).`);
+        onProgress?.(
+          `Classifying room shape, bedroom label, door, window, and movable furniture locally (attempt ${attempt}).`,
+        );
         const generationStarted = performance.now();
         const response = await this.#executeVisionRequest(request, generation, () =>
           session.processRequest(request),
@@ -1667,7 +1669,7 @@ export class FoundryLayoutService {
           finishReason: response.finishReason,
           error,
         });
-        correction = `\nThe previous attempt was rejected (${error.code}: ${error.message}). Re-emit one complete JSON object with every required key exactly once and the north door before the east door. Do not increase detail or add prose.`;
+        correction = `\nThe previous attempt was rejected (${error.code}: ${error.message}). Re-inspect the pixels and re-emit one complete JSON object with every required key exactly once. Use absent or uncertain when the evidence is not visible. Do not increase detail or add prose.`;
       } finally {
         if (this.#activeVisionRequest === request) {
           this.#activeVisionRequest = null;

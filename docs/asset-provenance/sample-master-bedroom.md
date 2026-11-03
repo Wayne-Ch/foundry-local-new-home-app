@@ -8,6 +8,9 @@
 - **Processing preview:** [3840px JPEG preview](https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2e/400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans%2C_July_24%2C_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff/lossy-page1-3840px-400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans%2C_July_24%2C_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff.jpg)
 - **NARA ID:** `167060897`
 - **DPLA ID:** `c7a8b82ce8562d0a20b33b02d2f5f6fd`
+- **Creator / author:** No individual drafter is identified in the Commons/DPLA fixture metadata;
+  the U.S. federal record is held by the National Archives and Records Administration.
+- **Required attribution:** None under the Commons `PD-US` marking.
 
 Wikimedia Commons identifies the source as public domain in the United States (`PD-US`) and says attribution is not required. The work may not be in the public domain outside the United States, particularly in territories that do not apply the rule of the shorter term to United States works. Legal review is required before relying on its public-domain status for wider or non-US distribution.
 

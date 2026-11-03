@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FLOOR_PLAN_MAX_BYTES, validateFloorPlanImageBytes } from "../src/layout-import/image-security";
 import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 
-const samplePath = new URL("../public/assets/floor-plan/sample-family-room.png", import.meta.url);
+const samplePath = new URL("../public/assets/floor-plan/sample-master-bedroom.png", import.meta.url);
 
 function oversizedPng(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(24);
@@ -15,6 +15,29 @@ function oversizedPng(width: number, height: number): Uint8Array {
   return bytes;
 }
 
+function jpeg(width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(24);
+  bytes.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08], 0);
+  bytes[7] = height >> 8;
+  bytes[8] = height & 0xff;
+  bytes[9] = width >> 8;
+  bytes[10] = width & 0xff;
+  bytes.set([0xff, 0xd9], bytes.length - 2);
+  return bytes;
+}
+
+function webp(width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(30);
+  bytes.set(new TextEncoder().encode("RIFF"), 0);
+  bytes.set(new TextEncoder().encode("WEBP"), 8);
+  bytes.set(new TextEncoder().encode("VP8X"), 12);
+  const widthMinusOne = width - 1;
+  const heightMinusOne = height - 1;
+  bytes.set([widthMinusOne & 0xff, (widthMinusOne >> 8) & 0xff, (widthMinusOne >> 16) & 0xff], 24);
+  bytes.set([heightMinusOne & 0xff, (heightMinusOne >> 8) & 0xff, (heightMinusOne >> 16) & 0xff], 27);
+  return bytes;
+}
+
 describe("floor-plan image security", () => {
   it("accepts the packaged PNG by magic signature and bounded dimensions", () => {
     const source = readFileSync(samplePath);
@@ -23,13 +46,25 @@ describe("floor-plan image security", () => {
     expect(validated).toMatchObject({
       format: "png",
       mimeType: "image/png",
-      width: 992,
-      height: 776,
+      width: 1020,
+      height: 1080,
       byteLength: source.byteLength,
-      pixelCount: 992 * 776,
+      pixelCount: 1020 * 1080,
     });
     expect(validated.bytes).not.toBe(source);
     expect(validated.bytes).toEqual(new Uint8Array(source));
+  });
+
+  it.each([
+    ["jpeg", jpeg(640, 480), "image/jpeg"],
+    ["webp", webp(800, 600), "image/webp"],
+  ] as const)("accepts bounded %s signatures without trusting extensions", (format, bytes, mimeType) => {
+    expect(validateFloorPlanImageBytes(bytes)).toMatchObject({
+      format,
+      mimeType,
+      width: format === "jpeg" ? 640 : 800,
+      height: format === "jpeg" ? 480 : 600,
+    });
   });
 
   it.each([
@@ -76,5 +111,40 @@ describe("floor-plan image security", () => {
     expect(owned.every((value) => value === 0)).toBe(true);
     expect(store.preview).toEqual(preview);
     expect(() => store.borrowBytes()).toThrow("No floor-plan image is loaded");
+  });
+
+  it("zero-fills the prior owned image before replacing it", () => {
+    const store = new FloorPlanImageStore();
+    store.load(readFileSync(samplePath), "sample", "first");
+    const first = store.borrowBytes();
+
+    store.load(readFileSync(samplePath), "picker", "second");
+
+    expect(first.every((value) => value === 0)).toBe(true);
+    expect(store.preview?.displayName).toBe("second");
+  });
+
+  it("separates sanitized preview and inference ownership and zero-fills preparation buffers", () => {
+    const previewBytes = new Uint8Array(readFileSync(samplePath));
+    const inferenceBytes = oversizedPng(512, 400);
+    const store = new FloorPlanImageStore({
+      prepare: () => ({ previewBytes, inferenceBytes }),
+    });
+
+    const preview = store.load(readFileSync(samplePath), "sample", "prepared");
+    const ownedInference = store.borrowBytes();
+
+    expect(preview).toMatchObject({
+      sourceFormat: "png",
+      inferenceFormat: "png",
+      inferenceWidth: 512,
+      inferenceHeight: 400,
+    });
+    expect(previewBytes.every((value) => value === 0)).toBe(true);
+    expect(inferenceBytes.every((value) => value === 0)).toBe(true);
+    expect(ownedInference.some((value) => value !== 0)).toBe(true);
+
+    store.clear();
+    expect(ownedInference.every((value) => value === 0)).toBe(true);
   });
 });

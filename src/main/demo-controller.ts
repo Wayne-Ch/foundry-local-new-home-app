@@ -54,14 +54,13 @@ function message(role: ConversationMessage["role"], text: string, status?: Conve
 }
 
 function recognizedFloorPlanFacts(recognition: FloorPlanRecognition): readonly string[] {
-  const [northDoor, eastDoor] = recognition.doors;
   return [
-    `Rectangular single room; recognized aspect ${recognition.room.aspectPermille / 1000}.`,
-    `North-wall inward door at ${northDoor.startPermille}-${northDoor.endPermille} permille.`,
-    `East-wall inward door at ${eastDoor.startPermille}-${eastDoor.endPermille} permille.`,
-    `East-wall window at ${recognition.window.startPermille}-${recognition.window.endPermille} permille.`,
-    "No fixed obstruction recognized.",
-    "Gray furniture symbols and the “Family” label are ignored source annotations.",
+    `Room shape: ${recognition.roomShape}.`,
+    `Room label: ${recognition.roomLabel}.`,
+    `Door opening: ${recognition.doorOpening}.`,
+    `Window opening: ${recognition.windowOpening}.`,
+    `Movable furniture: ${recognition.movableFurniture}.`,
+    "Application applied the fixture's documented dimensions and canonical door/window/closet geometry.",
   ];
 }
 
@@ -116,6 +115,7 @@ export class DemoController {
   #operationGeneration = 0;
   #conversationGeneration = 0;
   #resetPromise: Promise<BootstrapPayload> | null = null;
+  #floorPlanReleasePromise: Promise<void> | null = null;
 
   constructor(options: DemoControllerOptions = {}) {
     this.#foundry = options.foundry ?? new FoundryLayoutService();
@@ -212,6 +212,12 @@ export class DemoController {
       width: preview.width,
       height: preview.height,
       byteLength: preview.byteLength,
+      sourceFormat: preview.sourceFormat,
+      sourceByteLength: preview.sourceByteLength,
+      inferenceFormat: preview.inferenceFormat,
+      inferenceWidth: preview.inferenceWidth,
+      inferenceHeight: preview.inferenceHeight,
+      inferenceByteLength: preview.inferenceByteLength,
       filesystemPathExposed: false,
     });
     return this.bootstrap();
@@ -258,7 +264,7 @@ export class DemoController {
       this.#messages = [
         message(
           "system",
-          `Experimental imported room loaded. Foundry Local recognized a rectangular room, two inward doors, and one east-wall window. Gray furniture symbols and the “Family” label are ignored source annotations; application geometry remains authoritative.`,
+          "Experimental NARA master bedroom loaded. Foundry Local recognized a rectangular labeled bedroom with a door and window and no movable furniture. The application applied the documented fixture dimensions and canonical door/window/closet geometry.",
         ),
       ];
       this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition accepted", {
@@ -322,11 +328,23 @@ export class DemoController {
     return this.bootstrap();
   }
 
-  async releaseFloorPlanImage(): Promise<void> {
-    if (this.#floorPlanImages.preview === null && this.#planningFixture.mode === "default") {
-      return;
+  releaseFloorPlanImage(): Promise<void> {
+    if (this.#floorPlanReleasePromise !== null) {
+      return this.#floorPlanReleasePromise;
     }
-    await this.useDefaultRoom();
+    if (this.#floorPlanImages.preview === null && this.#planningFixture.mode === "default") {
+      return Promise.resolve();
+    }
+    let trackedPromise: Promise<void>;
+    trackedPromise = this.useDefaultRoom()
+      .then(() => undefined)
+      .finally(() => {
+        if (this.#floorPlanReleasePromise === trackedPromise) {
+          this.#floorPlanReleasePromise = null;
+        }
+      });
+    this.#floorPlanReleasePromise = trackedPromise;
+    return trackedPromise;
   }
 
   async startAudioStream(
@@ -620,6 +638,7 @@ export class DemoController {
 
   async shutdown(): Promise<void> {
     this.#operationGeneration += 1;
+    await this.#floorPlanReleasePromise?.catch(() => undefined);
     this.#floorPlanImages.clear();
     await this.#foundry.shutdown();
   }

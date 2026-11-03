@@ -76,6 +76,56 @@ room plan.
 There is no cloud inference or speech endpoint, OS online speech service, CLI subprocess,
 image-generation pipeline, hidden canned model response, TTS, or success-shaped fallback.
 
+## Optional experimental floor-plan import
+
+This feature branch adds an optional **Load sample floor plan** -> **Analyze layout** flow without
+replacing the verified default room. The main process owns image selection and bytes; the renderer
+receives only a bounded data-URL preview and recognized facts, never a filesystem path.
+
+- Exact vision model: `qwen3.5-0.8b-generic-cpu:3`.
+- Task / device / EP: `vision-language-chat` / CPU / `CPUExecutionProvider`.
+- SDK path: the existing in-process `foundry-local-sdk@2.2.1` manager plus a separate short-lived
+  `ChatSession`; no cloud or loopback endpoint.
+- Input gate: PNG, JPEG, or WebP magic signature; at most 4 MiB, 2,048 px per side, and 4,000,000
+  pixels. SVG, HTML, PDF, Office/ZIP, mislabeled files, and `SharedArrayBuffer` views are rejected.
+- Main decodes and re-encodes the preview as PNG, verifies decoded/header dimensions agree, and
+  creates a separate inference PNG capped at 1,024 px on its longest side. Preparation buffers,
+  preview bytes after data-URL creation, inference copies, and staged source bytes have independent
+  zero-fill ownership.
+- Contract: non-forced categorical alternatives. `roomShape` is
+  `rectangle|not_rectangle|uncertain`; bedroom label, door opening, window opening, and movable
+  furniture are each `present|absent|uncertain`. Import requires a visible rectangular labeled
+  bedroom with a door and window and no movable furniture. Missing, negative, uncertain, duplicate,
+  or extra evidence rejects.
+- Output is bounded to 320 tokens, must finish with `stop`, gets at most one same-budget
+  fresh-session correction attempt, and fails closed on invalid JSON, repetition, truncation, or
+  content mismatch. The schema does not force the expected answer and does not ask the 0.8B model
+  for coordinates, hinge direction, dimensions, or OCR text.
+- Geometry: after topology acceptance, the app applies this one fixture's documented
+  approximately `11'-10 3/4" x 13'-0"` scale as `3650 x 3950 mm` and canonical one-door,
+  closet-access, and exterior-window zones. Existing collision, door-swing, clearance, manual
+  placement, voice intent, Reset, and stale-result rules remain authoritative.
+- Cleanup: each inference copy and the main-owned source buffer is zero-filled. Reset, default-room
+  selection, reload, renderer loss, window close, and shutdown cancel stale work and clear preview
+  ownership.
+
+The fixture is intentionally narrow. It is not arbitrary architectural-plan support. It is an
+empty `MASTER BEDROOM` crop with one door, exterior window detail, built-in wall/closet detail, and
+printed dimensions. The VLM recognizes topology only; the application owns all geometry.
+
+### Fixture source and license
+
+| Item | Value |
+|---|---|
+| Canonical source | [Wikimedia Commons: `400 Family Housing Units 2 Bedroom Unit Typical Floor Plans, July 24, 1989`](https://commons.wikimedia.org/wiki/File:400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans,_July_24,_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff) |
+| Author / archive | U.S. federal architectural record held by the National Archives and Records Administration; specific drafter not identified in the fixture metadata |
+| IDs | NARA `167060897`; DPLA `c7a8b82ce8562d0a20b33b02d2f5f6fd` |
+| License | Commons marks the work `PD-US`; attribution is not required. Public-domain status may differ outside the United States. This fixture is for the private optional demo unless legal review approves wider distribution. |
+| Local derivative | `public/assets/floor-plan/sample-master-bedroom.png` |
+| Derivative operation | Crop `(1660,1180)-(2000,1540)` from the actual `3840 x 2840` Commons preview; resize to `1020 x 1080` Lanczos, contrast `1.35`, one sharpen pass; no annotation, inpainting, or geometry change |
+| SHA-256 | `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587` |
+| Full provenance | [`docs/asset-provenance/sample-master-bedroom.md`](docs/asset-provenance/sample-master-bedroom.md) |
+
 ## Layout model decision
 
 The previous full `CompareLayoutOptionsInput` contract made Qwen2.5 1.5B generate roughly
@@ -145,12 +195,17 @@ Prerequisites:
   registered.
 
 ```powershell
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
-npm rebuild electron esbuild foundry-local-sdk
+npm run setup:native
 npm run build
 npm run start:built
 ```
+
+The root `postinstall` runs Electron's explicit `install.js` because Electron 42 no longer exposes a
+package `postinstall` script. `npm run setup:native` is the reproducible repair/checkpoint command:
+it materializes `node_modules/electron/path.txt`, then rebuilds esbuild and the Foundry Local native
+binding. A missing Electron binary is an installation failure; the app does not mask it.
 
 In the app:
 
@@ -175,6 +230,16 @@ In the app:
    and does not invoke Qwen.
 9. Open **Developer trace** to distinguish the raw ASR transcript and visible suggestion layer from the
    complete layout-model plan, validation, and geometry evidence.
+
+Optional image-intake beat:
+
+1. Select **Load sample floor plan**.
+2. Confirm the `1020 x 1080` PNG preview and select **Analyze layout**.
+3. Confirm the exact CPU VLM identity in Developer trace and categorical evidence:
+   `roomShape=rectangle`, bedroom label/door/window `present`, movable furniture `absent`.
+4. Load the normal layout model, then run the imported Queen -> King conflict -> Queen + baby bed
+   recovery story. **Use default room** is always available; **Reset** clears the import and restores
+   the original verified bedroom.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
 exact default from the public catalog and can download it into an empty cache.
@@ -208,12 +273,22 @@ Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run test:nemotron-integration
 npm run test:audio-integration
+npm run test:floor-plan-integration
 npm run build
 npm run smoke:electron
 npm run probe:reset
 npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
+```
+
+`npm run test:floor-plan-integration` is a Windows-native gate. It loads the packaged fixture
+through the exact VLM, requires the non-forced bedroom/door/window categories to pass, asserts no
+external endpoint, then runs the imported Queen success, exact King `70 / 250 mm` conflict,
+Queen + compact desk + baby-bed recovery, and valid app-owned manual move. Success ends with:
+
+```text
+FLOOR_PLAN_INTEGRATION_OK
 ```
 
 `npm run test:integration` performs the explicit recovery story plus semantic guards:

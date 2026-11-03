@@ -7,6 +7,7 @@ import {
   dialog,
   type IpcMainInvokeEvent,
   ipcMain,
+  nativeImage,
   session,
   type WebContents,
   type WebFrameMain,
@@ -19,7 +20,9 @@ import type {
   AudioStreamStartRequest,
   PrepareAudioRequest,
 } from "../audio/audio-types";
+import { FLOOR_PLAN_SAMPLE_ASSET_PATH } from "../domain/floor-plan-import";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
+import { FLOOR_PLAN_INFERENCE_MAX_DIMENSION } from "../layout-import/image-security";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import {
   type AudioStreamLease,
@@ -27,6 +30,7 @@ import {
   AudioStreamOwnership,
 } from "./audio-stream-owner";
 import { DemoController } from "./demo-controller";
+import { FloorPlanImageStore } from "./floor-plan-image-store";
 import {
   isAllowedAppNavigation,
   MicrophonePermissionGate,
@@ -67,7 +71,32 @@ const rendererLifecycleProbeTrackStops = new Set<string>();
 const rendererLifecycleErrorMonitor = new RendererLifecycleErrorMonitor();
 let rendererLifecycleProbeMonitorReady: Promise<void> = Promise.resolve();
 const rendererTrackStopMarker = "ELECTRON_RENDERER_MEDIA_TRACK_STOP ";
-const controller = new DemoController();
+const floorPlanImages = new FloorPlanImageStore({
+  prepare: (image) => {
+    const decoded = nativeImage.createFromBuffer(Buffer.from(image.bytes));
+    if (decoded.isEmpty()) {
+      throw new Error("The floor-plan image could not be decoded safely.");
+    }
+    const size = decoded.getSize();
+    if (size.width !== image.width || size.height !== image.height) {
+      throw new Error("Decoded floor-plan dimensions do not match the container header.");
+    }
+    const scale = Math.min(1, FLOOR_PLAN_INFERENCE_MAX_DIMENSION / Math.max(size.width, size.height));
+    const inference =
+      scale === 1
+        ? decoded
+        : decoded.resize({
+            width: Math.max(1, Math.round(size.width * scale)),
+            height: Math.max(1, Math.round(size.height * scale)),
+            quality: "best",
+          });
+    return {
+      previewBytes: new Uint8Array(decoded.toPNG()),
+      inferenceBytes: new Uint8Array(inference.toPNG()),
+    };
+  },
+});
+const controller = new DemoController({ floorPlanImages });
 const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
   const probeCancellation: RendererLifecycleProbeCancellation | null = rendererLifecycleProbeEnabled
     ? {
@@ -94,14 +123,7 @@ const audioStreamOwnership = new AudioStreamOwnership(async (streamId) => {
 });
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererFilePath = path.join(currentDirectory, "..", "renderer", "index.html");
-const sampleFloorPlanPath = path.join(
-  currentDirectory,
-  "..",
-  "renderer",
-  "assets",
-  "floor-plan",
-  "sample-family-room.png",
-);
+const sampleFloorPlanPath = path.join(currentDirectory, "..", "renderer", FLOOR_PLAN_SAMPLE_ASSET_PATH);
 const rendererDocumentUrl = pathToFileURL(rendererFilePath).href;
 const rendererPermissionOrigin = permissionOriginForDocument(rendererDocumentUrl);
 let microphonePermissionProbeCheck:
@@ -420,11 +442,7 @@ function registerIpc(): void {
     try {
       return {
         cancelled: false,
-        bootstrap: await controller.loadFloorPlanImage(
-          bytes,
-          "sample",
-          "Packaged public-domain Family-room crop",
-        ),
+        bootstrap: await controller.loadFloorPlanImage(bytes, "sample", "Packaged NARA master-bedroom crop"),
       };
     } finally {
       bytes.fill(0);

@@ -8,7 +8,9 @@ import { type FoundryFloorPlanOutcome, FoundryFloorPlanVisionError } from "../sr
 import { DemoController, type DemoControllerOptions } from "../src/main/demo-controller";
 import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 
-const sample = readFileSync(new URL("../public/assets/floor-plan/sample-family-room.png", import.meta.url));
+const sample = readFileSync(
+  new URL("../public/assets/floor-plan/sample-master-bedroom.png", import.meta.url),
+);
 
 const readiness: RuntimeReadiness = {
   sdkVersion: "2.2.1",
@@ -70,29 +72,12 @@ const visionReadiness: FloorPlanVisionReadiness = {
 };
 
 const recognition: FloorPlanRecognition = {
-  schema: "single-room-v1",
-  room: { shape: "rectangle", aspectPermille: 1390 },
-  doors: [
-    {
-      wall: "north",
-      startPermille: 170,
-      endPermille: 300,
-      hinge: "west",
-      swing: "inward",
-      quadrant: "south-east",
-    },
-    {
-      wall: "east",
-      startPermille: 150,
-      endPermille: 320,
-      hinge: "south",
-      swing: "inward",
-      quadrant: "north-west",
-    },
-  ],
-  window: { wall: "east", startPermille: 500, endPermille: 690 },
-  fixedObstruction: { kind: "none" },
-  movableFurnitureSymbols: "present",
+  schema: "single-room-topology-v1",
+  roomShape: "rectangle",
+  roomLabel: "present",
+  doorOpening: "present",
+  windowOpening: "present",
+  movableFurniture: "absent",
 };
 
 const response: Response = {
@@ -179,7 +164,7 @@ describe("floor-plan controller lifecycle", () => {
       roomMode: "default",
       floorPlanImport: {
         status: "image_ready",
-        preview: { format: "png", width: 992, height: 776 },
+        preview: { format: "png", width: 1020, height: 1080 },
       },
     });
     expect(staged.floorPlanImport.preview).not.toHaveProperty("path");
@@ -190,10 +175,10 @@ describe("floor-plan controller lifecycle", () => {
     expect(imported).toMatchObject({
       conversationGeneration: 2,
       roomMode: "imported",
-      roomPlan: { id: "imported-sample-family-room", doorSwings: [{}, {}] },
+      roomPlan: { id: "imported-nara-master-bedroom", doorSwings: [{}] },
       state: {
         version: 0,
-        roomPlanId: "imported-sample-family-room",
+        roomPlanId: "imported-nara-master-bedroom",
         currentLayoutId: null,
       },
       floorPlanImport: {
@@ -276,7 +261,7 @@ describe("floor-plan controller lifecycle", () => {
   });
 
   it("retains bounded redacted raw VLM output in Developer Trace when parsing fails", async () => {
-    const rawOutput = '{"schema":"single-room-v1","doors":[]}';
+    const rawOutput = '{"schema":"single-room-topology-v1","roomShape":"uncertain"}';
     const controller = new DemoController({
       foundry: createFoundry({
         analyzeFloorPlan: async () => {
@@ -310,5 +295,25 @@ describe("floor-plan controller lifecycle", () => {
         }),
       ]),
     );
+  });
+
+  it("single-flights duplicate reload/close cleanup", async () => {
+    const cancelFloorPlanAnalysis = vi.fn(async () => {});
+    const controller = new DemoController({
+      foundry: createFoundry({ cancelFloorPlanAnalysis }),
+    });
+    await controller.loadFloorPlanImage(sample, "sample", "sample");
+    cancelFloorPlanAnalysis.mockClear();
+
+    const first = controller.releaseFloorPlanImage();
+    const duplicate = controller.releaseFloorPlanImage();
+
+    expect(duplicate).toBe(first);
+    await first;
+    expect(cancelFloorPlanAnalysis).toHaveBeenCalledOnce();
+    expect(controller.bootstrap()).toMatchObject({
+      roomMode: "default",
+      floorPlanImport: { status: "idle", preview: null },
+    });
   });
 });

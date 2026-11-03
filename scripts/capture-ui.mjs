@@ -54,6 +54,7 @@ try {
     browserExecutable,
     [
       "--headless=new",
+      ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
       "--disable-gpu",
       "--hide-scrollbars",
       "--disable-background-networking",

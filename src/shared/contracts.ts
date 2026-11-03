@@ -144,6 +144,12 @@ export interface FloorPlanImageDescriptor extends FloorPlanImageMetadata {
   readonly source: "sample" | "picker";
   readonly displayName: string;
   readonly dataUrl: string;
+  readonly sourceFormat: FloorPlanImageMetadata["format"];
+  readonly sourceByteLength: number;
+  readonly inferenceFormat: FloorPlanImageMetadata["format"];
+  readonly inferenceWidth: number;
+  readonly inferenceHeight: number;
+  readonly inferenceByteLength: number;
 }
 
 export interface FloorPlanImportSnapshot {

@@ -2,48 +2,27 @@ import type { LayoutOption, PlanningFixture, RoomPlan } from "./types";
 
 export const FLOOR_PLAN_VISION_MODEL_ID = "qwen3.5-0.8b-generic-cpu:3";
 export const FLOOR_PLAN_VISION_EXECUTION_PROVIDER = "CPUExecutionProvider";
-export const IMPORTED_ROOM_PLAN_ID = "imported-sample-family-room";
-export const IMPORTED_ROOM_PLAN_VERSION = "2026-11-03.1";
-export const FLOOR_PLAN_SAMPLE_ASSET_PATH = "assets/floor-plan/sample-family-room.png";
+export const IMPORTED_ROOM_PLAN_ID = "imported-nara-master-bedroom";
+export const IMPORTED_ROOM_PLAN_VERSION = "2026-11-03.2";
+export const FLOOR_PLAN_SAMPLE_ASSET_PATH = "assets/floor-plan/sample-master-bedroom.png";
 
-const IMPORTED_ROOM_WIDTH_MM = 5000;
-const IMPORTED_ROOM_DEPTH_MM = 3600;
-const WINDOW_CLEARANCE_DEPTH_MM = 450;
+const IMPORTED_ROOM_WIDTH_MM = 3650;
+const IMPORTED_ROOM_DEPTH_MM = 3950;
 const MAX_RECOGNITION_BYTES = 2048;
 
-export interface RecognizedOpening {
-  readonly wall: "north" | "east";
-  readonly startPermille: number;
-  readonly endPermille: number;
-}
+export type RecognitionAlternative = "present" | "absent" | "uncertain";
 
 export interface FloorPlanRecognition {
-  readonly schema: "single-room-v1";
-  readonly room: {
-    readonly shape: "rectangle";
-    readonly aspectPermille: number;
-  };
-  readonly doors: readonly [
-    RecognizedOpening & {
-      readonly hinge: "west";
-      readonly swing: "inward";
-      readonly quadrant: "south-east";
-    },
-    RecognizedOpening & {
-      readonly hinge: "south";
-      readonly swing: "inward";
-      readonly quadrant: "north-west";
-    },
-  ];
-  readonly window: RecognizedOpening;
-  readonly fixedObstruction: {
-    readonly kind: "none";
-  };
-  readonly movableFurnitureSymbols: "present";
+  readonly schema: "single-room-topology-v1";
+  readonly roomShape: "rectangle" | "not_rectangle" | "uncertain";
+  readonly roomLabel: RecognitionAlternative;
+  readonly doorOpening: RecognitionAlternative;
+  readonly windowOpening: RecognitionAlternative;
+  readonly movableFurniture: RecognitionAlternative;
 }
 
 export interface FloorPlanRecognitionError {
-  readonly code: "INVALID_OUTPUT" | "INVALID_ORDER" | "OUT_OF_RANGE" | "CONFLICTING_GEOMETRY" | "REPETITION";
+  readonly code: "INVALID_OUTPUT" | "CONTENT_MISMATCH" | "REPETITION";
   readonly message: string;
 }
 
@@ -55,87 +34,39 @@ export const floorPlanRecognitionJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    schema: { type: "string", enum: ["single-room-v1"] },
-    room: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        shape: { type: "string", enum: ["rectangle"] },
-        aspectPermille: { type: "integer", minimum: 1000, maximum: 2000 },
-      },
-      required: ["shape", "aspectPermille"],
-    },
-    doors: {
-      type: "array",
-      minItems: 2,
-      maxItems: 2,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          wall: { type: "string", enum: ["north", "east"] },
-          startPermille: { type: "integer", minimum: 0, maximum: 1000 },
-          endPermille: { type: "integer", minimum: 0, maximum: 1000 },
-          hinge: { type: "string", enum: ["west", "south"] },
-          swing: { type: "string", enum: ["inward"] },
-          quadrant: { type: "string", enum: ["south-east", "north-west"] },
-        },
-        required: ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"],
-      },
-    },
-    window: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        wall: { type: "string", enum: ["east"] },
-        startPermille: { type: "integer", minimum: 0, maximum: 1000 },
-        endPermille: { type: "integer", minimum: 0, maximum: 1000 },
-      },
-      required: ["wall", "startPermille", "endPermille"],
-    },
-    fixedObstruction: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        kind: { type: "string", enum: ["none"] },
-      },
-      required: ["kind"],
-    },
-    movableFurnitureSymbols: { type: "string", enum: ["present"] },
+    schema: { type: "string", enum: ["single-room-topology-v1"] },
+    roomShape: { type: "string", enum: ["rectangle", "not_rectangle", "uncertain"] },
+    roomLabel: { type: "string", enum: ["present", "absent", "uncertain"] },
+    doorOpening: { type: "string", enum: ["present", "absent", "uncertain"] },
+    windowOpening: { type: "string", enum: ["present", "absent", "uncertain"] },
+    movableFurniture: { type: "string", enum: ["present", "absent", "uncertain"] },
   },
-  required: ["schema", "room", "doors", "window", "fixedObstruction", "movableFurnitureSymbols"],
+  required: ["schema", "roomShape", "roomLabel", "doorOpening", "windowOpening", "movableFurniture"],
 } as const;
 
 export const floorPlanVisionSystemPrompt = `
 Inspect one packaged architectural room-plan crop. Return exactly one compact JSON object matching the supplied schema.
-The crop contains one rectangular room, two visible inward-swinging doors, one east-wall window, gray movable furniture symbols, and no fixed obstruction.
-Treat the word "Family", gray sofas/chairs/tables, exterior labels, and crop-edge artifacts as source annotations, not walls or fixed obstructions.
-Report geometry from visible content only. Coordinates are integer permille positions along the named wall, measured west-to-east on north and north-to-south on east.
-Order doors as north-wall door first and east-wall door second. startPermille must be lower than endPermille.
-Do not add prose, Markdown, confidence, filenames, hashes, dimensions, or extra keys.
+Every categorical field deliberately allows a positive, negative, or uncertain answer. Inspect the pixels; do not choose a value merely because the prompt expects it.
+- roomShape: rectangle only when one room has a clearly rectangular boundary.
+- roomLabel: present only when a printed room label is clearly visible; do not return its OCR text.
+- doorOpening: present only when at least one architectural door opening or swing is visible.
+- windowOpening: present only when at least one architectural window opening is visible.
+- movableFurniture: present only when movable furniture symbols are drawn inside the room; built-in wall or closet linework is not movable furniture.
+Do not infer coordinates, hinge direction, dimensions, scale, filename identity, or a fit verdict.
+Do not add prose, Markdown, confidence, OCR text, hashes, or extra keys.
 `.trim();
 
 export const floorPlanVisionUserPrompt = `
-Recognize the single room topology. Include every required key exactly once.
-Order the doors array as north-wall door first and east-wall door second. Return JSON only.
+Classify the visible single-room topology. Include every required key exactly once and return JSON only.
 `.trim();
 
 const expectedKeyCounts = {
   schema: 1,
-  room: 1,
-  shape: 1,
-  aspectPermille: 1,
-  doors: 1,
-  wall: 3,
-  startPermille: 3,
-  endPermille: 3,
-  hinge: 2,
-  swing: 2,
-  quadrant: 2,
-  window: 1,
-  fixedObstruction: 1,
-  kind: 1,
-  movableFurnitureSymbols: 1,
+  roomShape: 1,
+  roomLabel: 1,
+  doorOpening: 1,
+  windowOpening: 1,
+  movableFurniture: 1,
 } as const;
 
 function repetitionDetected(raw: string): boolean {
@@ -149,10 +80,6 @@ function repetitionDetected(raw: string): boolean {
     }
   }
   return false;
-}
-
-function inRange(value: number, minimum: number, maximum: number): boolean {
-  return Number.isInteger(value) && value >= minimum && value <= maximum;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -216,25 +143,18 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
     !isRecord(parsed) ||
     !hasExactKeys(parsed, [
       "schema",
-      "room",
-      "doors",
-      "window",
-      "fixedObstruction",
-      "movableFurnitureSymbols",
+      "roomShape",
+      "roomLabel",
+      "doorOpening",
+      "windowOpening",
+      "movableFurniture",
     ]) ||
-    parsed.schema !== "single-room-v1" ||
-    parsed.movableFurnitureSymbols !== "present" ||
-    !isRecord(parsed.room) ||
-    !hasExactKeys(parsed.room, ["shape", "aspectPermille"]) ||
-    parsed.room.shape !== "rectangle" ||
-    !Array.isArray(parsed.doors) ||
-    parsed.doors.length !== 2 ||
-    !isRecord(parsed.window) ||
-    !hasExactKeys(parsed.window, ["wall", "startPermille", "endPermille"]) ||
-    parsed.window.wall !== "east" ||
-    !isRecord(parsed.fixedObstruction) ||
-    !hasExactKeys(parsed.fixedObstruction, ["kind"]) ||
-    parsed.fixedObstruction.kind !== "none"
+    parsed.schema !== "single-room-topology-v1" ||
+    !["rectangle", "not_rectangle", "uncertain"].includes(String(parsed.roomShape)) ||
+    !["present", "absent", "uncertain"].includes(String(parsed.roomLabel)) ||
+    !["present", "absent", "uncertain"].includes(String(parsed.doorOpening)) ||
+    !["present", "absent", "uncertain"].includes(String(parsed.windowOpening)) ||
+    !["present", "absent", "uncertain"].includes(String(parsed.movableFurniture))
   ) {
     return {
       ok: false,
@@ -245,84 +165,19 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
     };
   }
 
-  const [northDoor, eastDoor] = parsed.doors;
   if (
-    !isRecord(northDoor) ||
-    !isRecord(eastDoor) ||
-    !hasExactKeys(northDoor, ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"]) ||
-    !hasExactKeys(eastDoor, ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"]) ||
-    northDoor.wall !== "north" ||
-    northDoor.hinge !== "west" ||
-    northDoor.swing !== "inward" ||
-    northDoor.quadrant !== "south-east" ||
-    eastDoor.wall !== "east" ||
-    eastDoor.hinge !== "south" ||
-    eastDoor.swing !== "inward" ||
-    eastDoor.quadrant !== "north-west"
+    parsed.roomShape !== "rectangle" ||
+    parsed.roomLabel !== "present" ||
+    parsed.doorOpening !== "present" ||
+    parsed.windowOpening !== "present" ||
+    parsed.movableFurniture !== "absent"
   ) {
     return {
       ok: false,
       error: {
-        code: "INVALID_ORDER",
-        message: "Vision output reordered or conflicted with the required north/east door semantics.",
-      },
-    };
-  }
-
-  const aspectPermille = parsed.room.aspectPermille;
-  const northDoorStart = northDoor.startPermille;
-  const northDoorEnd = northDoor.endPermille;
-  const eastDoorStart = eastDoor.startPermille;
-  const eastDoorEnd = eastDoor.endPermille;
-  const windowStart = parsed.window.startPermille;
-  const windowEnd = parsed.window.endPermille;
-  if (
-    typeof aspectPermille !== "number" ||
-    typeof northDoorStart !== "number" ||
-    typeof northDoorEnd !== "number" ||
-    typeof eastDoorStart !== "number" ||
-    typeof eastDoorEnd !== "number" ||
-    typeof windowStart !== "number" ||
-    typeof windowEnd !== "number"
-  ) {
-    return {
-      ok: false,
-      error: { code: "INVALID_OUTPUT", message: "Vision output omitted a required numeric field." },
-    };
-  }
-
-  if (
-    !inRange(aspectPermille, 1200, 1550) ||
-    !inRange(northDoorStart, 100, 260) ||
-    !inRange(northDoorEnd, 230, 400) ||
-    !inRange(eastDoorStart, 100, 280) ||
-    !inRange(eastDoorEnd, 220, 420) ||
-    !inRange(windowStart, 400, 620) ||
-    !inRange(windowEnd, 580, 780)
-  ) {
-    return {
-      ok: false,
-      error: {
-        code: "OUT_OF_RANGE",
-        message: "Recognized room topology does not match the bounded sample fixture.",
-      },
-    };
-  }
-
-  const northDoorSpan = northDoorEnd - northDoorStart;
-  const eastDoorSpan = eastDoorEnd - eastDoorStart;
-  const windowSpan = windowEnd - windowStart;
-  if (
-    !inRange(northDoorSpan, 80, 220) ||
-    !inRange(eastDoorSpan, 80, 220) ||
-    !inRange(windowSpan, 100, 260) ||
-    eastDoorEnd + 60 >= windowStart
-  ) {
-    return {
-      ok: false,
-      error: {
-        code: "CONFLICTING_GEOMETRY",
-        message: "Recognized openings are reversed, overlapping, duplicated, or geometrically infeasible.",
+        code: "CONTENT_MISMATCH",
+        message:
+          "The image did not visibly confirm the supported empty rectangular bedroom with a label, door, and window.",
       },
     };
   }
@@ -330,92 +185,58 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
   return {
     ok: true,
     value: {
-      schema: "single-room-v1",
-      room: { shape: "rectangle", aspectPermille },
-      doors: [
-        {
-          wall: "north",
-          startPermille: northDoorStart,
-          endPermille: northDoorEnd,
-          hinge: "west",
-          swing: "inward",
-          quadrant: "south-east",
-        },
-        {
-          wall: "east",
-          startPermille: eastDoorStart,
-          endPermille: eastDoorEnd,
-          hinge: "south",
-          swing: "inward",
-          quadrant: "north-west",
-        },
-      ],
-      window: {
-        wall: "east",
-        startPermille: windowStart,
-        endPermille: windowEnd,
-      },
-      fixedObstruction: { kind: "none" },
-      movableFurnitureSymbols: "present",
+      schema: "single-room-topology-v1",
+      roomShape: "rectangle",
+      roomLabel: "present",
+      doorOpening: "present",
+      windowOpening: "present",
+      movableFurniture: "absent",
     },
   };
 }
 
-function snap50(value: number): number {
-  return Math.round(value / 50) * 50;
-}
-
-function importedRoomPlan(recognition: FloorPlanRecognition): RoomPlan {
-  const [northDoor, eastDoor] = recognition.doors;
-  const northDoorRadius = snap50(
-    ((northDoor.endPermille - northDoor.startPermille) / 1000) * IMPORTED_ROOM_WIDTH_MM,
-  );
-  const eastDoorRadius = snap50(
-    ((eastDoor.endPermille - eastDoor.startPermille) / 1000) * IMPORTED_ROOM_DEPTH_MM,
-  );
-  const windowStart = snap50((recognition.window.startPermille / 1000) * IMPORTED_ROOM_DEPTH_MM);
-  const windowDepth = snap50(
-    ((recognition.window.endPermille - recognition.window.startPermille) / 1000) * IMPORTED_ROOM_DEPTH_MM,
-  );
-
+function importedRoomPlan(_recognition: FloorPlanRecognition): RoomPlan {
   return {
     id: IMPORTED_ROOM_PLAN_ID,
     version: IMPORTED_ROOM_PLAN_VERSION,
-    label: "Imported sample room · experimental",
+    label: "Imported NARA master bedroom · experimental",
     unit: "mm",
     widthMm: IMPORTED_ROOM_WIDTH_MM,
     depthMm: IMPORTED_ROOM_DEPTH_MM,
     verifiedBy:
-      "Foundry Local recognized topology; application applied the documented demo scale and deterministic geometry",
+      "Foundry Local recognized topology; application applied the NARA fixture's documented dimensions and canonical geometry",
     verifiedAt: "2026-11-03",
     doorSwings: [
       {
-        id: "imported-north-door-swing",
-        label: "north-west inward door swing",
-        hingeXmm: snap50((northDoor.startPermille / 1000) * IMPORTED_ROOM_WIDTH_MM),
-        hingeYmm: 0,
-        radiusMm: northDoorRadius,
+        id: "imported-entry-door-swing",
+        label: "upper-left inward entry-door swing",
+        hingeXmm: 0,
+        hingeYmm: 850,
+        radiusMm: 850,
         quadrant: "south-east",
-      },
-      {
-        id: "imported-east-door-swing",
-        label: "east-wall inward door swing",
-        hingeXmm: IMPORTED_ROOM_WIDTH_MM,
-        hingeYmm: snap50((eastDoor.endPermille / 1000) * IMPORTED_ROOM_DEPTH_MM),
-        radiusMm: eastDoorRadius,
-        quadrant: "north-west",
       },
     ],
     reservedZones: [
       {
+        id: "closet-access-zone",
+        label: "Built-in closet and standing access zone",
+        kind: "closet-access",
+        rect: {
+          xMm: 2400,
+          yMm: 0,
+          widthMm: 1250,
+          depthMm: 700,
+        },
+      },
+      {
         id: "window-clearance-zone",
-        label: "East window clearance zone",
+        label: "Exterior window clearance zone",
         kind: "window-clearance",
         rect: {
-          xMm: IMPORTED_ROOM_WIDTH_MM - WINDOW_CLEARANCE_DEPTH_MM,
-          yMm: windowStart,
-          widthMm: WINDOW_CLEARANCE_DEPTH_MM,
-          depthMm: windowDepth,
+          xMm: 1100,
+          yMm: 3500,
+          widthMm: 1450,
+          depthMm: 450,
         },
       },
     ],
@@ -427,14 +248,14 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
     id: "imported-queen-desk-standard-v1",
     label: "Imported room · Queen + rotated standard desk",
     furnitureIds: ["bed-queen", "desk-standard"],
-    rationale: "Keeps both recognized door swings and the east window clearance clear.",
+    rationale: "Keeps the canonical entry door, closet access, and exterior window clear.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 1700, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 900, yMm: 1050, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-standard",
-        xMm: 3800,
-        yMm: 1600,
+        xMm: 2800,
+        yMm: 1000,
         orientation: 90,
       },
     ],
@@ -445,12 +266,12 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
     furnitureIds: ["bed-king", "desk-standard"],
     rationale: "The bounded King option leaves only 70 mm to the standard desk.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 1600, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 800, yMm: 1200, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-standard",
-        xMm: 3600,
-        yMm: 1600,
+        xMm: 2800,
+        yMm: 1200,
         orientation: 90,
       },
     ],
@@ -459,21 +280,21 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
     id: "imported-queen-crib-compact-v1",
     label: "Imported room · Queen + baby bed + compact desk",
     furnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
-    rationale: "Uses the center and south-east floor area while preserving both recognized openings.",
+    rationale: "Uses the east side while preserving the canonical entry, closet, and window zones.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 1500, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 850, yMm: 1000, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-compact",
-        xMm: 3600,
-        yMm: 700,
+        xMm: 2800,
+        yMm: 850,
         orientation: 90,
       },
       {
         instanceId: "crib-main",
         furnitureId: "crib-standard",
-        xMm: 3500,
-        yMm: 2000,
+        xMm: 2750,
+        yMm: 2100,
         orientation: 90,
       },
     ],
@@ -484,12 +305,12 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
     furnitureIds: ["bed-queen", "desk-compact"],
     rationale: "Retains the compact desk after removing the baby bed.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 1500, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-queen", xMm: 850, yMm: 1000, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-compact",
-        xMm: 3600,
-        yMm: 700,
+        xMm: 2800,
+        yMm: 850,
         orientation: 90,
       },
     ],
@@ -500,42 +321,42 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
     furnitureIds: ["bed-king", "desk-compact", "crib-standard"],
     rationale: "The King footprint leaves only 170 mm to the baby bed.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 1500, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 800, yMm: 1200, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-compact",
-        xMm: 3600,
-        yMm: 700,
+        xMm: 2800,
+        yMm: 850,
         orientation: 90,
       },
       {
         instanceId: "crib-main",
         furnitureId: "crib-standard",
-        xMm: 3600,
-        yMm: 2000,
+        xMm: 2900,
+        yMm: 2100,
         orientation: 90,
       },
     ],
   },
   {
-    id: "imported-king-crib-compact-north-v1",
-    label: "Imported room · King + baby bed + compact desk near north door",
+    id: "imported-king-crib-compact-door-v1",
+    label: "Imported room · King + baby bed + compact desk near entry",
     furnitureIds: ["bed-king", "desk-compact", "crib-standard"],
-    rationale: "Moving the compact desk north enters the recognized north-west door swing.",
+    rationale: "Moving the compact desk toward the upper-left entry crosses the canonical door swing.",
     placements: [
-      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 1500, yMm: 1200, orientation: 0 },
+      { instanceId: "bed-main", furnitureId: "bed-king", xMm: 800, yMm: 1200, orientation: 0 },
       {
         instanceId: "desk-main",
         furnitureId: "desk-compact",
-        xMm: 1050,
-        yMm: 250,
+        xMm: 300,
+        yMm: 800,
         orientation: 0,
       },
       {
         instanceId: "crib-main",
         furnitureId: "crib-standard",
-        xMm: 3600,
-        yMm: 2000,
+        xMm: 2900,
+        yMm: 2100,
         orientation: 90,
       },
     ],

@@ -29,7 +29,7 @@ export const importedStageTurns: readonly StageTurnDefinition[] = [
     id: "turn-a",
     label: "A · Imported Queen + desk",
     prompt:
-      "In the imported room, can a Queen-size bed and a desk fit while keeping both doors and the window clear?",
+      "In the imported bedroom, can a Queen-size bed and a desk fit while keeping the door, closet, and window clear?",
   },
   {
     id: "turn-b",
@@ -40,13 +40,13 @@ export const importedStageTurns: readonly StageTurnDefinition[] = [
     id: "turn-c",
     label: "C · Imported Queen + baby bed",
     prompt:
-      "Keep the Queen bed in the imported room. Add a baby bed. Use a compact desk if needed. Keep both doors and the window clear.",
+      "Keep the Queen bed in the imported bedroom. Add a baby bed. Use a compact desk if needed. Keep the door, closet, and window clear.",
   },
   {
     id: "controlled-failure",
     label: "E · Imported King failure",
     prompt:
-      "In the imported room use a King bed. Keep the compact desk and baby bed. Keep both doors and the window clear.",
+      "In the imported bedroom use a King bed. Keep the compact desk and baby bed. Keep the door, closet, and window clear.",
   },
 ] as const;
 

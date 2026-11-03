@@ -711,7 +711,7 @@ function renderFloorPlanImport(): void {
   floorPlanPreviewFrame.hidden = preview === null;
   if (preview !== null) {
     floorPlanPreview.src = preview.dataUrl;
-    floorPlanPreviewCaption.textContent = `${preview.displayName} · ${preview.width} x ${preview.height} · ${preview.format.toUpperCase()}`;
+    floorPlanPreviewCaption.textContent = `${preview.displayName} · preview ${preview.width} x ${preview.height} · inference ${preview.inferenceWidth} x ${preview.inferenceHeight} ${preview.inferenceFormat.toUpperCase()}`;
   } else {
     floorPlanPreview.removeAttribute("src");
     floorPlanPreviewCaption.textContent = "";
@@ -728,7 +728,7 @@ function renderFloorPlanImport(): void {
   const vision = viewState.visionReadiness;
   if (imported.status === "idle") {
     floorPlanImportStatus.textContent =
-      "Default verified room is active. Load the public-domain sample only when demonstrating image intake.";
+      "Default verified room is active. Load the private NARA sample only when demonstrating image intake.";
   } else if (imported.status === "image_ready") {
     floorPlanImportStatus.textContent =
       "Image bytes passed main-process signature, size, dimension, and pixel bounds. Analyze to recognize the room.";

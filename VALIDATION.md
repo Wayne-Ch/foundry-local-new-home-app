@@ -1,6 +1,6 @@
 # Validation record
 
-**Date:** October 31, 2026
+**Date:** November 3, 2026
 
 **Platform:** Windows 11 Enterprise x64, build `10.0.26300`
 
@@ -12,7 +12,7 @@
 |---|---|
 | SDK | `foundry-local-sdk@2.2.1` |
 | Node | `26.13.0` |
-| Electron | `42.3.3` |
+| Electron | `42.11.18` |
 | Model alias | `qwen3-0.6b` |
 | Exact model ID | `qwen3-0.6b-generic-gpu:2` |
 | Target source | Built-in stage default; no model alias fallback |
@@ -31,6 +31,11 @@
 | Default audio path | AudioWorklet -> PCM16LE 16 kHz mono -> typed bounded chunks -> native `AudioSession` PCM `ItemQueue` |
 | Explicit fallback | `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
 | Audio submission policy | live partials are display-only; raw final transcript stays in trace and the editable prompt; suggestions require explicit Apply; never auto-submit |
+| Optional floor-plan VLM | exact `qwen3.5-0.8b-generic-cpu:3` |
+| Floor-plan task / device / EP | `vision-language-chat` / CPU / `CPUExecutionProvider` |
+| Floor-plan endpoint | none; in-process image `ChatSession` |
+| Floor-plan fixture | NARA master-bedroom crop, `1020 x 1080`, SHA-256 `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587` |
+| Floor-plan contract | non-forced rectangle/bedroom-label/door/window/movable-furniture categories |
 
 The compact contract moved exact IDs, state references, versions, units, retained objects, locked
 constraints, required checks, and unknown-term construction into application code. The model emits
@@ -57,6 +62,24 @@ reset. Native cancellation remains bounded. A timeout stays v0 and quarantined; 
 recovery can re-enable controls only for the same v0 generation, and stale bootstrap/result payloads
 are rejected. Repeated Reset and a subsequent recording use a fresh ownership lease.
 
+The optional enhanced branch preserves the default-room path and adds one experimental image
+fixture. The canonical source is the Wikimedia/NARA record
+[`400 Family Housing Units 2 Bedroom Unit Typical Floor Plans, July 24, 1989`](https://commons.wikimedia.org/wiki/File:400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans,_July_24,_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff),
+NARA ID `167060897`, DPLA ID `c7a8b82ce8562d0a20b33b02d2f5f6fd`. Commons marks it
+`PD-US` with no required attribution and an explicit territorial caveat outside the United States.
+The fixture remains private unless legal review approves wider distribution. The committed
+derivative is a faithful crop from the actual 3840px preview, resized/contrasted/sharpened only; full
+recipe and hashes are in `docs/asset-provenance/sample-master-bedroom.md`.
+
+The first Windows checkpoint exposed why the Family-room numeric design was invalid: with genuinely
+open alternatives, the model did not confirm the requested openings, while the forced schema had
+made the expected answer the only legal output. Those two exact numeric attempts are committed as
+negative parser regressions. The replacement schema keeps positive, negative, and uncertain
+alternatives open and asks only for room shape, bedroom label, door, window, and movable-furniture
+presence. Application code applies the documented dimensions and canonical geometry. Every bounded
+redacted raw attempt remains visible in Developer trace. The final Windows-native gate is
+authoritative; a mocked parser pass is insufficient.
+
 Speech suggestions require a direct local governing action in a small token span before the
 candidate. Punctuation, coordinators, subordinators, or an explicit new subject between the action
 and candidate reject the suggestion; an action from an earlier clause is never inherited.
@@ -74,7 +97,7 @@ leaves raw, and Apply remains undoable before Send.
 ```powershell
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
-npm rebuild electron esbuild foundry-local-sdk
+npm run setup:native
 npm run probe:foundry
 $env:LAYOUT_BENCHMARK_MODELS="qwen3-0.6b-generic-gpu:2"
 $env:LAYOUT_BENCHMARK_REQUIRED_MODELS="qwen3-0.6b-generic-gpu:2"
@@ -90,6 +113,7 @@ Remove-Item Env:FOUNDRY_EXECUTION_PROVIDER -ErrorAction SilentlyContinue
 npm run test:integration
 npm run test:nemotron-integration
 npm run test:audio-integration
+npm run test:floor-plan-integration
 npm run build
 npm run smoke:electron
 npm run probe:reset
@@ -105,7 +129,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 24 files / 666 tests pass |
+| Unit tests | 28 files / 705 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
@@ -149,17 +173,23 @@ npm run capture:ui
 | Audio temp cleanup | Pass; real integration capture files before/after both empty |
 | Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
+| Floor-plan image security | Pass; magic type, bytes, dimensions, pixels, disallowed content, main ownership, no path, and zero-fill covered |
+| Floor-plan parser | Pass; open positive/negative/uncertain alternatives, exact keys/counts, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
+| Floor-plan lifecycle | Pass in unit/integration harness; stale analysis, Reset/default/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
+| Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` after exact VLM recognition and imported Queen/King/recovery/manual chain |
+| Dependency audit | Pass; `npm audit --json` reports 0 vulnerabilities after Electron `42.11.18` |
+| Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
 
 Final command outputs from the October 31 independent revision run:
 
 | Command | Result |
 |---|---|
 | `npm run probe:foundry` | Pass; exact selected default cached; exact task/device/EP/cache metadata recorded for all candidates |
-| Electron runtime materialization | Pass from the checksum-verified cached 42.3.3 archive after npm postinstall returned without extracting it |
+| Electron runtime materialization | Pass with root `postinstall` plus `npm run setup:native`; Electron `42.11.18` writes `node_modules/electron/path.txt` deterministically |
 | `npm run benchmark:layout` | Pass; required Qwen3 default passed 18/18; 4,355 ms load, 5,671 ms median, 9,107 ms max |
-| `npm run lint` | 81 files checked |
+| `npm run lint` | 89 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | 24 files / 666 tests pass |
+| `npm test` | 28 files / 705 tests pass |
 | `npm run build` | Pass; 122 renderer modules |
 | `npm run smoke:electron` | Pass, including its required rebuild |
 | `npm run probe:reset` | Pass; actual renderer Start/Reset controls, controlled WAV-backed MediaStream, production IPC/controller/owner, real Nemotron stream, 1 PCM chunk per cycle, 6 ms then 4 ms cancellation, stopped tracks, v0 UI/controller, and fresh lease session 2 |

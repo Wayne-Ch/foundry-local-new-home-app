@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
-import { createImportedPlanningFixture } from "../src/domain/floor-plan-import";
+import { createImportedPlanningFixture, FLOOR_PLAN_SAMPLE_ASSET_PATH } from "../src/domain/floor-plan-import";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { evaluateManualPlacement } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
-import { FoundryLayoutService } from "../src/foundry/foundry-service";
+import { FoundryFloorPlanVisionError, FoundryLayoutService } from "../src/foundry/foundry-service";
 import { validateFloorPlanImageBytes, zeroFill } from "../src/layout-import/image-security";
 
 const successMarker = "FLOOR_PLAN_INTEGRATION_OK";
@@ -20,7 +20,7 @@ if (process.platform !== "win32") {
   throw new Error("The real floor-plan VLM integration gate must run on Windows.");
 }
 
-const fixturePath = path.resolve("public", "assets", "floor-plan", "sample-family-room.png");
+const fixturePath = path.resolve("public", FLOOR_PLAN_SAMPLE_ASSET_PATH);
 const sourceBytes = await readFile(fixturePath);
 const validated = validateFloorPlanImageBytes(sourceBytes);
 sourceBytes.fill(0);
@@ -38,10 +38,10 @@ try {
   assert(service.visionReadiness.externalEndpointUsed === false, "External endpoint flag changed.");
 
   const planningFixture = createImportedPlanningFixture(outcome.recognition);
-  assert(planningFixture.roomPlan.doorSwings.length === 2, "Expected both visible door swings.");
+  assert(planningFixture.roomPlan.doorSwings.length === 1, "Expected one canonical entry-door swing.");
   assert(
     planningFixture.roomPlan.reservedZones.some((zone) => zone.kind === "window-clearance"),
-    "Expected the east-wall window clearance zone.",
+    "Expected the canonical exterior-window clearance zone.",
   );
 
   let state = createInitialDemoState(planningFixture.roomPlan);
@@ -51,7 +51,7 @@ try {
       planningFixture,
       candidateFurnitureIds: ["bed-queen", "desk-standard"],
       changedPreference:
-        "In the imported room, can a Queen-size bed and a desk fit while keeping both doors and the window clear?",
+        "In the imported bedroom, can a Queen-size bed and a desk fit while keeping the door, closet, and window clear?",
     }),
     state,
     null,
@@ -92,7 +92,7 @@ try {
       candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
       retainFurnitureIds: ["bed-queen"],
       changedPreference:
-        "Keep the Queen bed in the imported room. Add a baby bed. Use a compact desk if needed.",
+        "Keep the Queen bed in the imported bedroom. Add a baby bed. Use a compact desk if needed.",
     }),
     state,
     acceptedQueen,
@@ -111,8 +111,8 @@ try {
       priorStateRef: state.stateRef,
       sourceLayoutId: acceptedRecovery.id,
       instanceId: "desk-main",
-      xMm: 3650,
-      yMm: 700,
+      xMm: 2850,
+      yMm: 850,
     },
     planningFixture,
   );
@@ -154,6 +154,11 @@ try {
     `${JSON.stringify(evidence, null, 2)}\n`,
   );
   console.log(successMarker);
+} catch (error) {
+  if (error instanceof FoundryFloorPlanVisionError) {
+    console.error("FLOOR_PLAN_VISION_ATTEMPTS", JSON.stringify(error.attempts, null, 2));
+  }
+  throw error;
 } finally {
   zeroFill(validated.bytes);
   await service.shutdown();

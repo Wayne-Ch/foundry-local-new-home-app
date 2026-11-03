@@ -5,13 +5,27 @@ import {
 } from "../layout-import/image-security";
 import type { FloorPlanImageDescriptor } from "../shared/contracts";
 
+export interface PreparedFloorPlanImage {
+  readonly previewBytes: Uint8Array;
+  readonly inferenceBytes: Uint8Array;
+}
+
 export class FloorPlanImageStore {
   #bytes: Uint8Array | null = null;
   #preview: FloorPlanImageDescriptor | null = null;
   readonly #onZeroFill: ((bytes: Uint8Array) => void) | undefined;
+  readonly #prepare:
+    | ((image: ReturnType<typeof validateFloorPlanImageBytes>) => PreparedFloorPlanImage)
+    | undefined;
 
-  constructor(options: { readonly onZeroFill?: (bytes: Uint8Array) => void } = {}) {
+  constructor(
+    options: {
+      readonly onZeroFill?: (bytes: Uint8Array) => void;
+      readonly prepare?: (image: ReturnType<typeof validateFloorPlanImageBytes>) => PreparedFloorPlanImage;
+    } = {},
+  ) {
     this.#onZeroFill = options.onZeroFill;
+    this.#prepare = options.prepare;
   }
 
   get preview(): FloorPlanImageDescriptor | null {
@@ -30,20 +44,52 @@ export class FloorPlanImageStore {
     source: FloorPlanImageDescriptor["source"],
     displayName: string,
   ): FloorPlanImageDescriptor {
-    const validated = validateFloorPlanImageBytes(input);
+    const sourceImage = validateFloorPlanImageBytes(input);
+    let previewImage = sourceImage;
+    let inferenceImage = sourceImage;
+    if (this.#prepare !== undefined) {
+      let prepared: PreparedFloorPlanImage;
+      try {
+        prepared = this.#prepare(sourceImage);
+      } finally {
+        zeroFill(sourceImage.bytes);
+      }
+      try {
+        previewImage = validateFloorPlanImageBytes(prepared.previewBytes);
+        inferenceImage = validateFloorPlanImageBytes(prepared.inferenceBytes);
+      } catch (error) {
+        if (previewImage !== sourceImage) {
+          zeroFill(previewImage.bytes);
+        }
+        throw error;
+      } finally {
+        zeroFill(prepared.previewBytes);
+        zeroFill(prepared.inferenceBytes);
+      }
+    }
+
     this.clear();
-    this.#bytes = validated.bytes;
+    this.#bytes = inferenceImage.bytes;
     this.#preview = {
-      format: validated.format,
-      mimeType: validated.mimeType,
-      width: validated.width,
-      height: validated.height,
-      byteLength: validated.byteLength,
-      pixelCount: validated.pixelCount,
+      format: previewImage.format,
+      mimeType: previewImage.mimeType,
+      width: previewImage.width,
+      height: previewImage.height,
+      byteLength: previewImage.byteLength,
+      pixelCount: previewImage.pixelCount,
       source,
       displayName,
-      dataUrl: `data:${validated.mimeType};base64,${Buffer.from(validated.bytes).toString("base64")}`,
+      dataUrl: `data:${previewImage.mimeType};base64,${Buffer.from(previewImage.bytes).toString("base64")}`,
+      sourceFormat: sourceImage.format,
+      sourceByteLength: sourceImage.byteLength,
+      inferenceFormat: inferenceImage.format,
+      inferenceWidth: inferenceImage.width,
+      inferenceHeight: inferenceImage.height,
+      inferenceByteLength: inferenceImage.byteLength,
     };
+    if (previewImage !== inferenceImage) {
+      zeroFill(previewImage.bytes);
+    }
     return this.#preview;
   }
 

@@ -52,6 +52,62 @@ flowchart LR
 
 The model never decides whether geometry is valid.
 
+## Optional experimental floor-plan intake
+
+```mermaid
+sequenceDiagram
+  participant U as Designer
+  participant R as Renderer
+  participant M as Electron main
+  participant V as Foundry Local Qwen3.5 VLM
+  participant G as Existing geometry engine
+
+  U->>R: Load sample / Choose image
+  R->>M: Typed IPC request only
+  M->>M: Read bytes; validate magic, bytes,<br/>dimensions, pixels; retain no renderer path
+  M-->>R: Sanitized data-URL preview + metadata
+  U->>R: Analyze layout
+  R->>M: Analyze staged image
+  M->>V: Text + in-memory image bytes<br/>bounded JSON schema, CPU EP
+  V-->>M: Single-room topology JSON
+  M->>M: Strict keys and duplicates;<br/>categorical topology validation
+  M->>M: Zero inference copy; retain bounded raw evidence
+  M->>G: App-owned imported PlanningFixture
+  G-->>R: Existing deterministic room/placement evidence
+```
+
+The renderer never sends or receives a filesystem path. Main accepts only PNG/JPEG/WebP magic,
+limits input to 4 MiB / 2,048 px per side / 4,000,000 pixels, and rejects SVG, HTML, PDF, Office/ZIP,
+renamed content, and shared mutable buffers. Electron decodes and re-encodes a sanitized PNG,
+requires decoded and header dimensions to agree, retains original preview dimensions/metadata, and
+creates a separate inference PNG capped at 1,024 px on its longest side. The preview is a data URL;
+source, decode-preparation, preview-byte, and inference-byte owners are independently zero-filled.
+
+The exact optional slot is `qwen3.5-0.8b-generic-cpu:3`,
+`vision-language-chat`, CPU/`CPUExecutionProvider`. It shares the existing
+`FoundryLocalManager` but uses a separate short-lived `ChatSession`; the normal Qwen layout session
+retains its own history. There is no model substitution or endpoint fallback.
+
+The contract recognizes only the packaged fixture:
+
+- `roomShape`: `rectangle | not_rectangle | uncertain`;
+- `roomLabel`, `doorOpening`, `windowOpening`, and `movableFurniture`:
+  `present | absent | uncertain`.
+
+Every alternative remains available in runtime guidance. The application accepts only
+`rectangle`, visible bedroom label/door/window, and absent movable furniture. Missing, negative, or
+uncertain evidence rejects. Object-key order is irrelevant JSON syntax, but keys must occur exactly
+once; length, repetition, extra prose, and legacy numeric/coordinate output fail closed. The request
+uses a fixed 320-token cap and at most one fresh-session correction with the same cap. Every rejected
+attempt's bounded, control-character-redacted raw output is visible in Developer trace.
+
+Application conversion uses the plan's documented approximately `11'-10 3/4" x 13'-0"` dimensions
+as `3650 x 3950 mm`, then applies one canonical upper-left door swing, built-in closet/access zone,
+and exterior-window clearance zone. The model never supplies coordinates, hinge direction,
+millimetres, fit, or a verdict. Reset returns to the original verified bedroom. Default-room
+selection, reload, renderer loss, close, and shutdown cancel stale vision work and clear image
+ownership.
+
 ## Optional local audio input
 
 ```mermaid
@@ -238,11 +294,14 @@ Coordinate system:
 
 - origin: room's north-west corner;
 - unit: millimetres;
-- room: `4200 x 3600`;
-- entry door: 900 mm north-east quarter-circle swing from the south-west hinge;
+- default room: `4200 x 3600`;
+- default entry door: 900 mm north-east quarter-circle swing from the south-west hinge;
 - closet access zone: `x=3200..4200`, `y=450..2750`;
 - window clearance zone: `x=1400..2800`, `y=0..450`;
 - minimum furniture gap: 250 mm.
+
+The geometry type supports north-east, north-west, south-east, or south-west swings without
+hardcoded SVG paths. The current imported fixture and the default room each use one canonical swing.
 
 Checks:
 

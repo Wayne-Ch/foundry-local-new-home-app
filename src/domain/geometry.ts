@@ -246,21 +246,22 @@ export function evaluateLayoutOption(
       ["DOOR_SWING_OVERLAP"],
       "No footprint intersects a verified door swing.",
     ),
-    {
-      id: "closet-access",
-      label: "Closet access remains clear",
-      passed: !conflicts.some(
-        (conflict) => conflict.code === "RESERVED_ZONE_OVERLAP" && conflict.zoneId === "closet-access-zone",
-      ),
-      evidence:
-        conflicts
-          .filter(
-            (conflict) =>
-              conflict.code === "RESERVED_ZONE_OVERLAP" && conflict.zoneId === "closet-access-zone",
-          )
-          .map((conflict) => conflict.message)
-          .join(" ") || "No footprint enters the verified closet access zone.",
-    },
+    (() => {
+      const closetZone = room.reservedZones.find((zone) => zone.kind === "closet-access");
+      const closetConflicts = conflicts.filter(
+        (conflict) => conflict.code === "RESERVED_ZONE_OVERLAP" && conflict.zoneId === closetZone?.id,
+      );
+      return {
+        id: "closet-access",
+        label: closetZone === undefined ? "No fixed obstruction" : "Closet access remains clear",
+        passed: closetConflicts.length === 0,
+        evidence:
+          closetZone === undefined
+            ? "The imported fixture contains no fixed obstruction or closet-access zone."
+            : closetConflicts.map((conflict) => conflict.message).join(" ") ||
+              "No footprint enters the verified closet access zone.",
+      };
+    })(),
     {
       id: "window-clearance",
       label: "Window clearance remains clear",

@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { createInitialDemoState } from "../src/domain/demo-state";
-import { createImportedPlanningFixture, parseFloorPlanRecognition } from "../src/domain/floor-plan-import";
+import {
+  createImportedPlanningFixture,
+  floorPlanRecognitionJsonSchema,
+  parseFloorPlanRecognition,
+} from "../src/domain/floor-plan-import";
+import { rectangleIntersectsDoorSwing } from "../src/domain/geometry";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { evaluateManualPlacement } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
 
 const validRecognition =
-  '{"schema":"single-room-v1","room":{"shape":"rectangle","aspectPermille":1390},"doors":[{"wall":"north","startPermille":170,"endPermille":300,"hinge":"west","swing":"inward","quadrant":"south-east"},{"wall":"east","startPermille":150,"endPermille":320,"hinge":"south","swing":"inward","quadrant":"north-west"}],"window":{"wall":"east","startPermille":500,"endPermille":690},"fixedObstruction":{"kind":"none"},"movableFurnitureSymbols":"present"}';
+  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present","movableFurniture":"absent"}';
+
+const rejectedFamilyAttempt1 =
+  '{"schema":"single-room-v1","room":{"shape":"rectangle","aspectPermille":1000},"doors":[{"wall":"north","startPermille":100,"endPermille":100,"hinge":"south","swing":"inward","quadrant":"north-west"},{"wall":"east","startPermille":100,"endPermille":100,"hinge":"south","swing":"inward","quadrant":"north-west"}],"window":{"wall":"east","startPermille":100,"endPermille":100},"fixedObstruction":{"kind":"none"},"movableFurnitureSymbols":"present"}';
+
+const rejectedFamilyAttempt2 =
+  '{"schema":"single-room-v1","room":{"shape":"rectangle","aspectPermille":1000},"doors":[{"wall":"north","startPermille":100,"endPermille":100,"hinge":"south","swing":"inward","quadrant":"north-west"},{"wall":"east","startPermille":1000,"endPermille":1000,"hinge":"south","swing":"inward","quadrant":"north-west"}],"window":{"wall":"east","startPermille":1000,"endPermille":1000},"fixedObstruction":{"kind":"none"},"movableFurnitureSymbols":"present"}';
 
 function importedFixture() {
   const parsed = parseFloorPlanRecognition(validRecognition);
@@ -27,74 +38,81 @@ describe("strict floor-plan recognition contract", () => {
     const fixture = createImportedPlanningFixture(parsed.value);
     expect(fixture.mode).toBe("imported");
     expect(fixture.roomPlan).toMatchObject({
-      id: "imported-sample-family-room",
-      widthMm: 5000,
-      depthMm: 3600,
+      id: "imported-nara-master-bedroom",
+      widthMm: 3650,
+      depthMm: 3950,
       doorSwings: [
         {
-          hingeXmm: 850,
-          hingeYmm: 0,
-          radiusMm: 650,
+          hingeXmm: 0,
+          hingeYmm: 850,
+          radiusMm: 850,
           quadrant: "south-east",
-        },
-        {
-          hingeXmm: 5000,
-          hingeYmm: 1150,
-          radiusMm: 600,
-          quadrant: "north-west",
         },
       ],
       reservedZones: [
         {
+          kind: "closet-access",
+          rect: { xMm: 2400, yMm: 0, widthMm: 1250, depthMm: 700 },
+        },
+        {
           kind: "window-clearance",
-          rect: { xMm: 4550, yMm: 1800, widthMm: 450, depthMm: 700 },
+          rect: { xMm: 1100, yMm: 3500, widthMm: 1450, depthMm: 450 },
         },
       ],
     });
   });
 
-  it("accepts harmless object-key ordering while preserving strict door-array ordering", () => {
+  it("keeps every semantic schema alternative open instead of forcing success", () => {
+    expect(floorPlanRecognitionJsonSchema.properties.roomShape.enum).toEqual([
+      "rectangle",
+      "not_rectangle",
+      "uncertain",
+    ]);
+    for (const key of ["roomLabel", "doorOpening", "windowOpening", "movableFurniture"] as const) {
+      expect(floorPlanRecognitionJsonSchema.properties[key].enum).toEqual(["present", "absent", "uncertain"]);
+    }
+  });
+
+  it("accepts harmless object-key ordering", () => {
     const parsed = JSON.parse(validRecognition) as Record<string, unknown>;
     const reordered = JSON.stringify({
-      window: parsed.window,
-      doors: parsed.doors,
-      room: parsed.room,
-      movableFurnitureSymbols: parsed.movableFurnitureSymbols,
-      fixedObstruction: parsed.fixedObstruction,
+      movableFurniture: parsed.movableFurniture,
+      windowOpening: parsed.windowOpening,
+      roomShape: parsed.roomShape,
+      doorOpening: parsed.doorOpening,
+      roomLabel: parsed.roomLabel,
       schema: parsed.schema,
     });
 
     expect(parseFloorPlanRecognition(reordered).ok).toBe(true);
   });
 
+  it("checks the canonical imported entry-door swing", () => {
+    const room = importedFixture().roomPlan;
+
+    expect(rectangleIntersectsDoorSwing({ xMm: 50, yMm: 850, widthMm: 100, depthMm: 100 }, room)).toBe(true);
+    expect(rectangleIntersectsDoorSwing({ xMm: 2500, yMm: 2500, widthMm: 100, depthMm: 100 }, room)).toBe(
+      false,
+    );
+  });
+
   it.each([
     [
       "duplicate field",
-      validRecognition.replace('"aspectPermille":1390', '"aspectPermille":1390,"aspectPermille":1390'),
+      validRecognition.replace('"roomShape":"rectangle"', '"roomShape":"rectangle","roomShape":"rectangle"'),
     ],
-    ["missing window", validRecognition.replace(/,"window":\{[^}]+\}/, "")],
+    ["missing window", validRecognition.replace(/,"windowOpening":"present"/, "")],
+    ["non-rectangular room", validRecognition.replace('"rectangle"', '"not_rectangle"')],
+    ["uncertain room", validRecognition.replace('"rectangle"', '"uncertain"')],
+    ["missing bedroom label", validRecognition.replace('"roomLabel":"present"', '"roomLabel":"absent"')],
+    ["uncertain door", validRecognition.replace('"doorOpening":"present"', '"doorOpening":"uncertain"')],
+    ["missing window", validRecognition.replace('"windowOpening":"present"', '"windowOpening":"absent"')],
     [
-      "reversed door span",
-      validRecognition.replace(
-        '"startPermille":170,"endPermille":300',
-        '"startPermille":300,"endPermille":170',
-      ),
+      "movable furniture present",
+      validRecognition.replace('"movableFurniture":"absent"', '"movableFurniture":"present"'),
     ],
-    [
-      "reordered door array",
-      (() => {
-        const parsed = JSON.parse(validRecognition) as { doors: unknown[] };
-        parsed.doors.reverse();
-        return JSON.stringify(parsed);
-      })(),
-    ],
-    [
-      "overlapping east door and window",
-      validRecognition
-        .replace('"startPermille":150,"endPermille":320', '"startPermille":300,"endPermille":520')
-        .replace('"startPermille":500,"endPermille":690', '"startPermille":540,"endPermille":690'),
-    ],
-    ["wrong fixture topology", validRecognition.replace('"aspectPermille":1390', '"aspectPermille":1900')],
+    ["legacy bad Family attempt 1", rejectedFamilyAttempt1],
+    ["legacy bad Family attempt 2", rejectedFamilyAttempt2],
     ["extra prose", `${validRecognition}\nThe room is rectangular.`],
   ])("rejects %s", (_case, raw) => {
     expect(parseFloorPlanRecognition(raw).ok).toBe(false);
@@ -193,8 +211,8 @@ describe("imported deterministic planning chain", () => {
         priorStateRef: acceptedState.stateRef,
         sourceLayoutId: selected?.id ?? "",
         instanceId: "desk-main",
-        xMm: 3650,
-        yMm: 700,
+        xMm: 2850,
+        yMm: 850,
       },
       fixture,
     );

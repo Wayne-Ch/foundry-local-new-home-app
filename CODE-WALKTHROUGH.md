@@ -34,6 +34,39 @@ Message:
 > The app embeds the SDK. It does not shell out to the CLI and does not start a cloud or loopback
 > inference endpoint.
 
+## Optional enhanced branch — main-owned image intake and bounded VLM
+
+**Files:** `src/layout-import/image-security.ts`, `src/main/floor-plan-image-store.ts`,
+`src/domain/floor-plan-import.ts`, `src/main/demo-controller.ts`,
+`src/foundry/foundry-service.ts`, `src/renderer/renderer.ts`
+
+**Symbols:** `validateFloorPlanImageBytes`, `FloorPlanImageStore`, `parseFloorPlanRecognition`,
+`createImportedPlanningFixture`, `analyzeFloorPlan`, `prepareFloorPlanVision`
+
+Put on screen:
+
+- Electron `dialog.showOpenDialog` in main, with no renderer filesystem path;
+- PNG/JPEG/WebP magic parsing plus byte/dimension/pixel bounds before inference;
+- main-owned source bytes, per-request inference copy, preview data URL, and explicit zero-fill;
+- exact `qwen3.5-0.8b-generic-cpu:3` / CPU / `CPUExecutionProvider` resolution through the existing
+  `FoundryLocalManager`;
+- multimodal `Item.userMessage([Item.imageFromData(...), Item.text(...)])`;
+- 320-token deterministic JSON-schema request, terminal `stop` gate, repetition bound, and at most
+  one fresh-session correction with no token increase;
+- non-forced `rectangle|not_rectangle|uncertain` and
+  `present|absent|uncertain` alternatives, exact key counts, and fail-closed raw-output evidence in
+  Developer trace;
+- app-owned conversion to the documented `3650 x 3950 mm` fixture with one canonical entry swing,
+  closet/access zone, and exterior-window clearance zone;
+- Reset/default/reload/renderer-loss/close/shutdown cancellation and stale-generation rejection.
+
+Message:
+
+> The image is evidence, not authority. Foundry Local recognizes a tiny topology contract. Normal
+> code validates it, applies the documented demo scale, creates deterministic geometry, and then
+> reuses the existing placement engine. Filename, hash, OCR text, and cloud inference never decide
+> success.
+
 ## 5:30–6:10 — Minimal local audio checkpoint
 
 **Files:** `src/renderer/audio-capture.ts`, `src/audio/audio-contract.ts`,
@@ -175,7 +208,8 @@ Message:
 ## 10:50–11:15 — Acceptance proof and transition to app-owned adjustment
 
 **Files:** `scripts/run-foundry-integration.ts`, `scripts/run-layout-model-benchmarks.mjs`,
-`scripts/run-nemotron-integration.ts`, `scripts/run-audio-integration.ts`
+`scripts/run-nemotron-integration.ts`, `scripts/run-audio-integration.ts`,
+`scripts/run-floor-plan-integration.ts`
 
 Show only:
 
@@ -192,6 +226,9 @@ Show only:
 - explicit Whisper Tiny ID/CPU-EP assertion and transcript recall;
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
+- exact VLM ID/CPU EP, categorical bedroom/door/window evidence, canonical imported geometry,
+  Queen/King/recovery/manual chain,
+  and terminal `FLOOR_PLAN_INTEGRATION_OK`.
 
 The final checkpoint is recorded in `VALIDATION.md`. The real audio
 fixture produced 31 Nemotron revisions (first partial 1,304 ms, stop-to-final 91 ms, 6,102 ms cached
