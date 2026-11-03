@@ -19,14 +19,11 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
-import {
-  createImportedPlanningFixture,
-  type FloorPlanRecognition,
-} from "../domain/floor-plan-import";
 import { defaultPlanningFixture } from "../domain/fixture";
+import { createImportedPlanningFixture, type FloorPlanRecognition } from "../domain/floor-plan-import";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
 import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
-import { FoundryLayoutService } from "../foundry/foundry-service";
+import { FoundryFloorPlanVisionError, FoundryLayoutService } from "../foundry/foundry-service";
 import { stageTurnsForMode } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
@@ -284,6 +281,11 @@ export class DemoController {
         status: "error",
         error: detail,
       };
+      this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition rejected", {
+        attempts: error instanceof FoundryFloorPlanVisionError ? error.attempts : [],
+        defaultRoomStillActive: this.#planningFixture.mode === "default",
+        externalEndpointUsed: false,
+      });
       this.#pushTrace("error", "Floor-plan recognition failed closed", {
         message: detail,
         defaultRoomStillActive: this.#planningFixture.mode === "default",

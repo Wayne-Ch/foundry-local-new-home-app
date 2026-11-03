@@ -11,6 +11,7 @@ import type {
   AudioTranscriptionResult,
   PrepareAudioRequest,
 } from "../audio/audio-types";
+import type { FloorPlanRecognition } from "../domain/floor-plan-import";
 import type { ManualPlacementOutcome, ManualPlacementRequest } from "../domain/manual-placement";
 import type {
   DemoStateSnapshot,
@@ -21,7 +22,6 @@ import type {
   RoomPlan,
   RuntimeReadiness,
 } from "../domain/types";
-import type { FloorPlanRecognition } from "../domain/floor-plan-import";
 import type { FloorPlanImageMetadata } from "../layout-import/image-security";
 
 export const ipcChannels = {

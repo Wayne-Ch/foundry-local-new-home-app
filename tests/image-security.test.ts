@@ -1,15 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  FLOOR_PLAN_MAX_BYTES,
-  validateFloorPlanImageBytes,
-} from "../src/layout-import/image-security";
+import { FLOOR_PLAN_MAX_BYTES, validateFloorPlanImageBytes } from "../src/layout-import/image-security";
 import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 
-const samplePath = new URL(
-  "../public/assets/floor-plan/sample-family-room.png",
-  import.meta.url,
-);
+const samplePath = new URL("../public/assets/floor-plan/sample-family-room.png", import.meta.url);
 
 function oversizedPng(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(24);
@@ -84,4 +78,3 @@ describe("floor-plan image security", () => {
     expect(() => store.borrowBytes()).toThrow("No floor-plan image is loaded");
   });
 });
-

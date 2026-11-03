@@ -7,12 +7,12 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
+import { defaultPlanningFixture, roomPlan } from "../domain/fixture";
 import {
   createImportedPlanningFixture,
   FLOOR_PLAN_SAMPLE_ASSET_PATH,
   type FloorPlanRecognition,
 } from "../domain/floor-plan-import";
-import { defaultPlanningFixture, roomPlan } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import { evaluateManualPlacement } from "../domain/manual-placement";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
@@ -395,12 +395,7 @@ export function createPreviewApi(): DemoApi {
         ...bootstrap.state,
         lastToolResult: bootstrap.lastToolResult,
       };
-      const outcome = evaluateManualPlacement(
-        state,
-        bootstrap.selectedLayout,
-        request,
-        planningFixture,
-      );
+      const outcome = evaluateManualPlacement(state, bootstrap.selectedLayout, request, planningFixture);
       if (outcome.accepted) {
         bootstrap = {
           ...bootstrap,

@@ -122,12 +122,7 @@ function readWebp(bytes: Uint8Array): Omit<FloorPlanImageMetadata, "byteLength" 
     const b4 = bytes[24] ?? 0;
     width = 1 + b1 + ((b2 & 0x3f) << 8);
     height = 1 + (b2 >> 6) + (b3 << 2) + ((b4 & 0x0f) << 10);
-  } else if (
-    chunk === "VP8 " &&
-    bytes[23] === 0x9d &&
-    bytes[24] === 0x01 &&
-    bytes[25] === 0x2a
-  ) {
+  } else if (chunk === "VP8 " && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
     width = ((bytes[26] ?? 0) | ((bytes[27] ?? 0) << 8)) & 0x3fff;
     height = ((bytes[28] ?? 0) | ((bytes[29] ?? 0) << 8)) & 0x3fff;
   } else {
@@ -163,4 +158,3 @@ export function validateFloorPlanImageBytes(input: Uint8Array): ValidatedFloorPl
 export function zeroFill(bytes: Uint8Array): void {
   bytes.fill(0);
 }
-

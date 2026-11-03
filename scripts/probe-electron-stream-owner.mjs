@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import electron from "electron";
 
-const child = spawn(electron, ["."], {
+const electronArgs = process.getuid?.() === 0 ? ["--no-sandbox", "."] : ["."];
+const child = spawn(electron, electronArgs, {
   cwd: process.cwd(),
   env: {
     ...process.env,

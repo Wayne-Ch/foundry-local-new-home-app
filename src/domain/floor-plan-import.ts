@@ -43,12 +43,7 @@ export interface FloorPlanRecognition {
 }
 
 export interface FloorPlanRecognitionError {
-  readonly code:
-    | "INVALID_OUTPUT"
-    | "INVALID_ORDER"
-    | "OUT_OF_RANGE"
-    | "CONFLICTING_GEOMETRY"
-    | "REPETITION";
+  readonly code: "INVALID_OUTPUT" | "INVALID_ORDER" | "OUT_OF_RANGE" | "CONFLICTING_GEOMETRY" | "REPETITION";
   readonly message: string;
 }
 
@@ -85,14 +80,7 @@ export const floorPlanRecognitionJsonSchema = {
           swing: { type: "string", enum: ["inward"] },
           quadrant: { type: "string", enum: ["south-east", "north-west"] },
         },
-        required: [
-          "wall",
-          "startPermille",
-          "endPermille",
-          "hinge",
-          "swing",
-          "quadrant",
-        ],
+        required: ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"],
       },
     },
     window: {
@@ -115,14 +103,7 @@ export const floorPlanRecognitionJsonSchema = {
     },
     movableFurnitureSymbols: { type: "string", enum: ["present"] },
   },
-  required: [
-    "schema",
-    "room",
-    "doors",
-    "window",
-    "fixedObstruction",
-    "movableFurnitureSymbols",
-  ],
+  required: ["schema", "room", "doors", "window", "fixedObstruction", "movableFurnitureSymbols"],
 } as const;
 
 export const floorPlanVisionSystemPrompt = `
@@ -135,13 +116,27 @@ Do not add prose, Markdown, confidence, filenames, hashes, dimensions, or extra 
 `.trim();
 
 export const floorPlanVisionUserPrompt = `
-Recognize the single room topology. Preserve this exact key order:
-schema, room, doors, window, fixedObstruction, movableFurnitureSymbols.
-Within every object preserve the schema key order. Return JSON only.
+Recognize the single room topology. Include every required key exactly once.
+Order the doors array as north-wall door first and east-wall door second. Return JSON only.
 `.trim();
 
-const strictRecognitionPattern =
-  /^\{\s*"schema"\s*:\s*"single-room-v1"\s*,\s*"room"\s*:\s*\{\s*"shape"\s*:\s*"rectangle"\s*,\s*"aspectPermille"\s*:\s*(\d{1,4})\s*\}\s*,\s*"doors"\s*:\s*\[\s*\{\s*"wall"\s*:\s*"north"\s*,\s*"startPermille"\s*:\s*(\d{1,4})\s*,\s*"endPermille"\s*:\s*(\d{1,4})\s*,\s*"hinge"\s*:\s*"west"\s*,\s*"swing"\s*:\s*"inward"\s*,\s*"quadrant"\s*:\s*"south-east"\s*\}\s*,\s*\{\s*"wall"\s*:\s*"east"\s*,\s*"startPermille"\s*:\s*(\d{1,4})\s*,\s*"endPermille"\s*:\s*(\d{1,4})\s*,\s*"hinge"\s*:\s*"south"\s*,\s*"swing"\s*:\s*"inward"\s*,\s*"quadrant"\s*:\s*"north-west"\s*\}\s*\]\s*,\s*"window"\s*:\s*\{\s*"wall"\s*:\s*"east"\s*,\s*"startPermille"\s*:\s*(\d{1,4})\s*,\s*"endPermille"\s*:\s*(\d{1,4})\s*\}\s*,\s*"fixedObstruction"\s*:\s*\{\s*"kind"\s*:\s*"none"\s*\}\s*,\s*"movableFurnitureSymbols"\s*:\s*"present"\s*\}\s*$/;
+const expectedKeyCounts = {
+  schema: 1,
+  room: 1,
+  shape: 1,
+  aspectPermille: 1,
+  doors: 1,
+  wall: 3,
+  startPermille: 3,
+  endPermille: 3,
+  hinge: 2,
+  swing: 2,
+  quadrant: 2,
+  window: 1,
+  fixedObstruction: 1,
+  kind: 1,
+  movableFurnitureSymbols: 1,
+} as const;
 
 function repetitionDetected(raw: string): boolean {
   if (raw.length <= 384) {
@@ -160,8 +155,21 @@ function inRange(value: number, minimum: number, maximum: number): boolean {
   return Number.isInteger(value) && value >= minimum && value <= maximum;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
+}
+
+function keyCount(raw: string, key: string): number {
+  return raw.match(new RegExp(`"${key}"\\s*:`, "g"))?.length ?? 0;
+}
+
 export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResult {
-  if (Buffer.byteLength(raw, "utf8") > MAX_RECOGNITION_BYTES || raw.includes("\0")) {
+  if (new TextEncoder().encode(raw).byteLength > MAX_RECOGNITION_BYTES || raw.includes("\0")) {
     return {
       ok: false,
       error: {
@@ -180,36 +188,102 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
     };
   }
 
-  const match = strictRecognitionPattern.exec(raw);
-  if (match === null) {
+  if (Object.entries(expectedKeyCounts).some(([key, expected]) => keyCount(raw, key) !== expected)) {
     return {
       ok: false,
       error: {
-        code: "INVALID_ORDER",
-        message:
-          "Vision output was missing, duplicated, reordered, or extended beyond the exact single-room contract.",
+        code: "INVALID_OUTPUT",
+        message: "Vision output was missing, duplicated, or extended beyond the exact single-room contract.",
       },
     };
   }
 
-  const values = match.slice(1).map((value) => Number(value));
-  const [
-    aspectPermille,
-    northDoorStart,
-    northDoorEnd,
-    eastDoorStart,
-    eastDoorEnd,
-    windowStart,
-    windowEnd,
-  ] = values;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_OUTPUT",
+        message: `Vision output was not one complete JSON object: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      },
+    };
+  }
   if (
-    aspectPermille === undefined ||
-    northDoorStart === undefined ||
-    northDoorEnd === undefined ||
-    eastDoorStart === undefined ||
-    eastDoorEnd === undefined ||
-    windowStart === undefined ||
-    windowEnd === undefined
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, [
+      "schema",
+      "room",
+      "doors",
+      "window",
+      "fixedObstruction",
+      "movableFurnitureSymbols",
+    ]) ||
+    parsed.schema !== "single-room-v1" ||
+    parsed.movableFurnitureSymbols !== "present" ||
+    !isRecord(parsed.room) ||
+    !hasExactKeys(parsed.room, ["shape", "aspectPermille"]) ||
+    parsed.room.shape !== "rectangle" ||
+    !Array.isArray(parsed.doors) ||
+    parsed.doors.length !== 2 ||
+    !isRecord(parsed.window) ||
+    !hasExactKeys(parsed.window, ["wall", "startPermille", "endPermille"]) ||
+    parsed.window.wall !== "east" ||
+    !isRecord(parsed.fixedObstruction) ||
+    !hasExactKeys(parsed.fixedObstruction, ["kind"]) ||
+    parsed.fixedObstruction.kind !== "none"
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_OUTPUT",
+        message: "Vision output did not match the exact single-room object shape.",
+      },
+    };
+  }
+
+  const [northDoor, eastDoor] = parsed.doors;
+  if (
+    !isRecord(northDoor) ||
+    !isRecord(eastDoor) ||
+    !hasExactKeys(northDoor, ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"]) ||
+    !hasExactKeys(eastDoor, ["wall", "startPermille", "endPermille", "hinge", "swing", "quadrant"]) ||
+    northDoor.wall !== "north" ||
+    northDoor.hinge !== "west" ||
+    northDoor.swing !== "inward" ||
+    northDoor.quadrant !== "south-east" ||
+    eastDoor.wall !== "east" ||
+    eastDoor.hinge !== "south" ||
+    eastDoor.swing !== "inward" ||
+    eastDoor.quadrant !== "north-west"
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_ORDER",
+        message: "Vision output reordered or conflicted with the required north/east door semantics.",
+      },
+    };
+  }
+
+  const aspectPermille = parsed.room.aspectPermille;
+  const northDoorStart = northDoor.startPermille;
+  const northDoorEnd = northDoor.endPermille;
+  const eastDoorStart = eastDoor.startPermille;
+  const eastDoorEnd = eastDoor.endPermille;
+  const windowStart = parsed.window.startPermille;
+  const windowEnd = parsed.window.endPermille;
+  if (
+    typeof aspectPermille !== "number" ||
+    typeof northDoorStart !== "number" ||
+    typeof northDoorEnd !== "number" ||
+    typeof eastDoorStart !== "number" ||
+    typeof eastDoorEnd !== "number" ||
+    typeof windowStart !== "number" ||
+    typeof windowEnd !== "number"
   ) {
     return {
       ok: false,
@@ -299,12 +373,9 @@ function importedRoomPlan(recognition: FloorPlanRecognition): RoomPlan {
   const eastDoorRadius = snap50(
     ((eastDoor.endPermille - eastDoor.startPermille) / 1000) * IMPORTED_ROOM_DEPTH_MM,
   );
-  const windowStart = snap50(
-    (recognition.window.startPermille / 1000) * IMPORTED_ROOM_DEPTH_MM,
-  );
+  const windowStart = snap50((recognition.window.startPermille / 1000) * IMPORTED_ROOM_DEPTH_MM);
   const windowDepth = snap50(
-    ((recognition.window.endPermille - recognition.window.startPermille) / 1000) *
-      IMPORTED_ROOM_DEPTH_MM,
+    ((recognition.window.endPermille - recognition.window.startPermille) / 1000) * IMPORTED_ROOM_DEPTH_MM,
   );
 
   return {
@@ -471,13 +542,10 @@ const importedKnownLayoutOptions: readonly LayoutOption[] = [
   },
 ] as const;
 
-export function createImportedPlanningFixture(
-  recognition: FloorPlanRecognition,
-): PlanningFixture {
+export function createImportedPlanningFixture(recognition: FloorPlanRecognition): PlanningFixture {
   return {
     mode: "imported",
     roomPlan: importedRoomPlan(recognition),
     knownLayoutOptions: importedKnownLayoutOptions,
   };
 }
-

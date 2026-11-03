@@ -746,8 +746,7 @@ function renderFloorPlanImport(): void {
   chooseFloorPlanButton.disabled = controlsBlocked;
   analyzeFloorPlanButton.disabled =
     controlsBlocked || preview === null || !["image_ready", "error"].includes(imported.status);
-  useDefaultRoomButton.disabled =
-    controlsBlocked || (viewState.roomMode === "default" && preview === null);
+  useDefaultRoomButton.disabled = controlsBlocked || (viewState.roomMode === "default" && preview === null);
 }
 
 function nextStageTurnIndex(): number {
@@ -1639,6 +1638,8 @@ function renderTrace(): void {
   runtimeTrace.textContent = pretty({
     readiness: viewState.readiness,
     audioReadiness: viewState.audioReadiness,
+    visionReadiness: viewState.visionReadiness,
+    floorPlanVision: lastTracePayload("floor-plan-vision") ?? "No floor-plan image has been analyzed.",
     currentState: viewState.state,
   });
   audioTrace.textContent = pretty({

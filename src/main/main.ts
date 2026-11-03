@@ -20,11 +20,7 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
-import {
-  ipcChannels,
-  type MicrophoneAuthorizationRequest,
-  type RunTurnRequest,
-} from "../shared/contracts";
+import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import {
   type AudioStreamLease,
   type AudioStreamOwnerIdentity,

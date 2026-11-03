@@ -39,16 +39,17 @@ import {
   WHISPER_AUDIO_MODEL_ID,
 } from "../audio/audio-types";
 import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
+import { defaultPlanningFixture } from "../domain/fixture";
 import {
-  floorPlanRecognitionJsonSchema,
-  floorPlanVisionSystemPrompt,
-  floorPlanVisionUserPrompt,
   FLOOR_PLAN_VISION_EXECUTION_PROVIDER,
   FLOOR_PLAN_VISION_MODEL_ID,
   type FloorPlanRecognition,
+  type FloorPlanRecognitionError,
+  floorPlanRecognitionJsonSchema,
+  floorPlanVisionSystemPrompt,
+  floorPlanVisionUserPrompt,
   parseFloorPlanRecognition,
 } from "../domain/floor-plan-import";
-import { defaultPlanningFixture } from "../domain/fixture";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import {
   type CompareLayoutOptionsInput,
@@ -83,6 +84,7 @@ import {
 const MAX_TOOL_ATTEMPTS = 3;
 const MAX_INTENT_OUTPUT_TOKENS = 256;
 const MAX_VISION_OUTPUT_TOKENS = 320;
+const MAX_VISION_ATTEMPTS = 2;
 const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
 const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding", "vision-language-chat"]);
 
@@ -147,6 +149,7 @@ export interface FoundryLayoutServiceOptions {
   readonly createAudioSession?: (model: IModel) => FoundryAudioSessionHandle;
   readonly audioTempStore?: TempAudioStore;
   readonly operationDrainTimeoutMs?: number;
+  readonly onVisionBufferZeroed?: (bytes: Uint8Array) => void;
 }
 
 export interface FoundryTurnOutcome {
@@ -195,12 +198,20 @@ export interface FoundryFloorPlanOutcome {
   readonly preflight: RequestPreflightResult;
   readonly response: Response;
   readonly model: ModelIdentity;
+  readonly attempts: readonly FoundryFloorPlanAttempt[];
   readonly performance: {
     readonly totalMs: number;
     readonly preflightMs: number;
     readonly generationMs: number;
     readonly outputBytes: number;
   };
+}
+
+export interface FoundryFloorPlanAttempt {
+  readonly attempt: number;
+  readonly rawOutput: string;
+  readonly finishReason: Response["finishReason"] | "runtime_error";
+  readonly error: FloorPlanRecognitionError | null;
 }
 
 export class FoundryRuntimeError extends Error {
@@ -221,6 +232,17 @@ export class FoundryRuntimeError extends Error {
   ) {
     super(message, options);
     this.name = "FoundryRuntimeError";
+  }
+}
+
+export class FoundryFloorPlanVisionError extends FoundryRuntimeError {
+  constructor(
+    message: string,
+    readonly attempts: readonly FoundryFloorPlanAttempt[],
+    options?: ErrorOptions,
+  ) {
+    super(message, "MODEL_RESPONSE_INVALID", options);
+    this.name = "FoundryFloorPlanVisionError";
   }
 }
 
@@ -334,6 +356,10 @@ function extractDefaultText(response: Response): string {
   return parts.join("").trim();
 }
 
+function redactVisionOutput(raw: string): string {
+  return raw.replace(/[^\x20-\x7e\r\n\t]/g, "?").slice(0, 2048);
+}
+
 function defaultRuntimeTarget(): RuntimeTargetIdentity {
   return {
     modelId: VALIDATED_MODEL_ID,
@@ -415,6 +441,7 @@ export class FoundryLayoutService {
   readonly #visionSessionFactory: (model: IModel) => FoundrySessionHandle;
   readonly #audioSessionFactory: (model: IModel) => FoundryAudioSessionHandle;
   readonly #operationDrainTimeoutMs: number;
+  readonly #onVisionBufferZeroed: ((bytes: Uint8Array) => void) | undefined;
   #audioTempStore: TempAudioStore | null;
   #paths: FoundryPaths | null = null;
   #manager: FoundryManagerHandle | null = null;
@@ -477,6 +504,7 @@ export class FoundryLayoutService {
       1,
       options.operationDrainTimeoutMs ?? DEFAULT_OPERATION_DRAIN_TIMEOUT_MS,
     );
+    this.#onVisionBufferZeroed = options.onVisionBufferZeroed;
     this.#audioTempStore = options.audioTempStore ?? null;
     this.#readiness = initialReadiness(target, configurationError);
   }
@@ -1389,9 +1417,7 @@ export class FoundryLayoutService {
     }
   }
 
-  prepareFloorPlanVision(
-    onProgress?: (detail: string) => void,
-  ): Promise<FloorPlanVisionReadiness> {
+  prepareFloorPlanVision(onProgress?: (detail: string) => void): Promise<FloorPlanVisionReadiness> {
     this.#assertRuntimeLifecycleAvailable();
     if (this.#visionPreparePromise !== null) {
       return this.#visionPreparePromise;
@@ -1541,85 +1567,123 @@ export class FoundryLayoutService {
     const model = this.#requireVisionModel();
     this.#assertVisionModel(model);
 
-    const requestBytes = new Uint8Array(imageBytes);
-    const session = this.#visionSessionFactory(model);
-    const request = new Request()
-      .addItem(Item.systemMessage(floorPlanVisionSystemPrompt))
-      .addItem(
-        Item.userMessage([
-          Item.imageFromData(format, requestBytes),
-          Item.text(floorPlanVisionUserPrompt),
-        ]),
-      )
-      .setOptions({
-        search: {
-          doSample: false,
-          temperature: 0,
-          seed: 42,
-          maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
-        },
-        toolChoice: "none",
-        additionalOptions: {
-          guidance_type: "json_schema",
-          guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
-          chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
-        },
-      });
+    const attempts: FoundryFloorPlanAttempt[] = [];
+    let totalPreflightMs = 0;
+    let totalGenerationMs = 0;
+    let totalOutputBytes = 0;
+    let correction = "";
 
-    try {
-      onProgress?.("Checking the bounded image request against the local context window.");
-      const preflightStarted = performance.now();
-      const preflight = await this.#executeVisionRequest(request, generation, () =>
-        session.preflightRequest(request),
-      );
-      const preflightMs = performance.now() - preflightStarted;
-      if (!preflight.fits) {
-        throw new FoundryRuntimeError(
-          `Floor-plan request needs ${preflight.requiredTokens} tokens but the context limit is ${preflight.contextLimitTokens}.`,
-          "CONTEXT_LIMIT",
-        );
-      }
+    for (let attempt = 1; attempt <= MAX_VISION_ATTEMPTS; attempt += 1) {
+      const requestBytes = new Uint8Array(imageBytes);
+      const session = this.#visionSessionFactory(model);
+      const request = new Request()
+        .addItem(Item.systemMessage(floorPlanVisionSystemPrompt))
+        .addItem(
+          Item.userMessage([
+            Item.imageFromData(format, requestBytes),
+            Item.text(`${floorPlanVisionUserPrompt}${correction}`),
+          ]),
+        )
+        .setOptions({
+          search: {
+            doSample: false,
+            temperature: 0,
+            seed: 42,
+            maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
+          },
+          toolChoice: "none",
+          additionalOptions: {
+            guidance_type: "json_schema",
+            guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
+            chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
+          },
+        });
 
-      onProgress?.("Recognizing room walls, both doors, and the east window locally.");
-      const generationStarted = performance.now();
-      const response = await this.#executeVisionRequest(request, generation, () =>
-        session.processRequest(request),
-      );
-      const generationMs = performance.now() - generationStarted;
-      if (response.finishReason !== "stop") {
-        throw new FoundryRuntimeError(
-          response.finishReason === "length"
-            ? "Floor-plan vision hit its bounded output limit; partial JSON is never accepted."
-            : `Floor-plan vision returned unexpected finish reason ${response.finishReason}.`,
-          "MODEL_RESPONSE_INVALID",
+      try {
+        onProgress?.(
+          `Checking bounded floor-plan request ${attempt} of ${MAX_VISION_ATTEMPTS} against the local context window.`,
         );
+        const preflightStarted = performance.now();
+        const preflight = await this.#executeVisionRequest(request, generation, () =>
+          session.preflightRequest(request),
+        );
+        totalPreflightMs += performance.now() - preflightStarted;
+        if (!preflight.fits) {
+          throw new FoundryRuntimeError(
+            `Floor-plan request needs ${preflight.requiredTokens} tokens but the context limit is ${preflight.contextLimitTokens}.`,
+            "CONTEXT_LIMIT",
+          );
+        }
+
+        onProgress?.(`Recognizing room walls, both doors, and the east window locally (attempt ${attempt}).`);
+        const generationStarted = performance.now();
+        const response = await this.#executeVisionRequest(request, generation, () =>
+          session.processRequest(request),
+        );
+        totalGenerationMs += performance.now() - generationStarted;
+        const rawOutput = redactVisionOutput(extractDefaultText(response));
+        totalOutputBytes += Buffer.byteLength(rawOutput, "utf8");
+
+        let error: FloorPlanRecognitionError | null = null;
+        if (response.finishReason !== "stop") {
+          error = {
+            code: "INVALID_OUTPUT",
+            message:
+              response.finishReason === "length"
+                ? "Floor-plan vision hit its bounded output limit; partial JSON is never accepted."
+                : `Floor-plan vision returned unexpected finish reason ${response.finishReason}.`,
+          };
+        } else {
+          const parsed = parseFloorPlanRecognition(rawOutput);
+          if (parsed.ok) {
+            attempts.push({
+              attempt,
+              rawOutput,
+              finishReason: response.finishReason,
+              error: null,
+            });
+            this.#assertVisionOperationCurrent(generation);
+            return {
+              recognition: parsed.value,
+              rawOutput,
+              preflight,
+              response,
+              model: modelIdentity(model),
+              attempts,
+              performance: {
+                totalMs: performance.now() - started,
+                preflightMs: totalPreflightMs,
+                generationMs: totalGenerationMs,
+                outputBytes: totalOutputBytes,
+              },
+            };
+          }
+          error = parsed.error;
+        }
+
+        attempts.push({
+          attempt,
+          rawOutput,
+          finishReason: response.finishReason,
+          error,
+        });
+        correction = `\nThe previous attempt was rejected (${error.code}: ${error.message}). Re-emit one complete JSON object with every required key exactly once and the north door before the east door. Do not increase detail or add prose.`;
+      } finally {
+        if (this.#activeVisionRequest === request) {
+          this.#activeVisionRequest = null;
+        }
+        session.dispose();
+        zeroFill(requestBytes);
+        this.#onVisionBufferZeroed?.(requestBytes);
       }
-      const rawOutput = extractDefaultText(response);
-      const parsed = parseFloorPlanRecognition(rawOutput);
-      if (!parsed.ok) {
-        throw new FoundryRuntimeError(parsed.error.message, "MODEL_RESPONSE_INVALID");
-      }
-      this.#assertVisionOperationCurrent(generation);
-      return {
-        recognition: parsed.value,
-        rawOutput,
-        preflight,
-        response,
-        model: modelIdentity(model),
-        performance: {
-          totalMs: performance.now() - started,
-          preflightMs,
-          generationMs,
-          outputBytes: Buffer.byteLength(rawOutput, "utf8"),
-        },
-      };
-    } finally {
-      if (this.#activeVisionRequest === request) {
-        this.#activeVisionRequest = null;
-      }
-      session.dispose();
-      zeroFill(requestBytes);
     }
+
+    const lastError = attempts.at(-1)?.error;
+    throw new FoundryFloorPlanVisionError(
+      lastError?.message ??
+        `Floor-plan vision did not satisfy the bounded contract after ${MAX_VISION_ATTEMPTS} attempts.`,
+      attempts,
+    );
   }
 
   async cancelFloorPlanAnalysis(): Promise<void> {
@@ -1656,10 +1720,10 @@ export class FoundryLayoutService {
       currentAcceptedLayout,
       planningFixture,
     ).finally(() => {
-        if (this.#turnPromise === trackedPromise) {
-          this.#turnPromise = null;
-        }
-      });
+      if (this.#turnPromise === trackedPromise) {
+        this.#turnPromise = null;
+      }
+    });
     this.#turnPromise = trackedPromise;
     return trackedPromise;
   }
@@ -1848,12 +1912,7 @@ export class FoundryLayoutService {
         "The application is validating intent and deriving IDs, state, units, and locked constraints.",
       );
       const validationStarted = performance.now();
-      const validation = parseAndValidateIntentDelta(
-        rawArguments,
-        state,
-        userPrompt,
-        planningFixture,
-      );
+      const validation = parseAndValidateIntentDelta(rawArguments, state, userPrompt, planningFixture);
       const validationMs = performance.now() - validationStarted;
       attemptPerformance.push({
         attempt,

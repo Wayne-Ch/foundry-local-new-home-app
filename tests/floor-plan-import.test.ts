@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialDemoState } from "../src/domain/demo-state";
-import {
-  createImportedPlanningFixture,
-  parseFloorPlanRecognition,
-} from "../src/domain/floor-plan-import";
+import { createImportedPlanningFixture, parseFloorPlanRecognition } from "../src/domain/floor-plan-import";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { evaluateManualPlacement } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
@@ -56,19 +53,40 @@ describe("strict floor-plan recognition contract", () => {
     });
   });
 
+  it("accepts harmless object-key ordering while preserving strict door-array ordering", () => {
+    const parsed = JSON.parse(validRecognition) as Record<string, unknown>;
+    const reordered = JSON.stringify({
+      window: parsed.window,
+      doors: parsed.doors,
+      room: parsed.room,
+      movableFurnitureSymbols: parsed.movableFurnitureSymbols,
+      fixedObstruction: parsed.fixedObstruction,
+      schema: parsed.schema,
+    });
+
+    expect(parseFloorPlanRecognition(reordered).ok).toBe(true);
+  });
+
   it.each([
-    ["reordered keys", validRecognition.replace('"schema":"single-room-v1",', "") + '"schema":"single-room-v1"}'],
     [
       "duplicate field",
-      validRecognition.replace(
-        '"aspectPermille":1390',
-        '"aspectPermille":1390,"aspectPermille":1390',
-      ),
+      validRecognition.replace('"aspectPermille":1390', '"aspectPermille":1390,"aspectPermille":1390'),
     ],
     ["missing window", validRecognition.replace(/,"window":\{[^}]+\}/, "")],
     [
       "reversed door span",
-      validRecognition.replace('"startPermille":170,"endPermille":300', '"startPermille":300,"endPermille":170'),
+      validRecognition.replace(
+        '"startPermille":170,"endPermille":300',
+        '"startPermille":300,"endPermille":170',
+      ),
+    ],
+    [
+      "reordered door array",
+      (() => {
+        const parsed = JSON.parse(validRecognition) as { doors: unknown[] };
+        parsed.doors.reverse();
+        return JSON.stringify(parsed);
+      })(),
     ],
     [
       "overlapping east door and window",
@@ -187,4 +205,3 @@ describe("imported deterministic planning chain", () => {
     });
   });
 });
-

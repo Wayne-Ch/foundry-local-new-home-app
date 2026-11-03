@@ -52,9 +52,7 @@ export const importedStageTurns: readonly StageTurnDefinition[] = [
 
 export const stageTurns = defaultStageTurns;
 
-export function stageTurnsForMode(
-  mode: "default" | "imported",
-): readonly StageTurnDefinition[] {
+export function stageTurnsForMode(mode: "default" | "imported"): readonly StageTurnDefinition[] {
   return mode === "imported" ? importedStageTurns : defaultStageTurns;
 }
 

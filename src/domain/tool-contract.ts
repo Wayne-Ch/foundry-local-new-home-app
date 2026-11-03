@@ -21,12 +21,7 @@ import {
   parseTableClauseOccurrences,
   type TableClauseOccurrence,
 } from "./table-clause-parser";
-import {
-  type DemoStateSnapshot,
-  type FurnitureId,
-  furnitureIds,
-  type PlanningFixture,
-} from "./types";
+import { type DemoStateSnapshot, type FurnitureId, furnitureIds, type PlanningFixture } from "./types";
 
 const bedIds = ["bed-queen", "bed-king"] as const;
 const deskIds = ["desk-standard", "desk-compact"] as const;
@@ -2221,12 +2216,7 @@ export function parseAndValidateIntentDelta(
     };
   }
 
-  const toolValidation = parseAndValidateToolInput(
-    JSON.stringify(toolInput),
-    state,
-    prompt,
-    planningFixture,
-  );
+  const toolValidation = parseAndValidateToolInput(JSON.stringify(toolInput), state, prompt, planningFixture);
   if (!toolValidation.ok) {
     return toolValidation;
   }
