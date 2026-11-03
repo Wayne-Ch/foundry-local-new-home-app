@@ -33,6 +33,17 @@ export interface LayoutPresentation {
 
 export type LayoutEvidenceView = "accepted" | "rejected";
 
+export function defaultLayoutEvidenceView(result: LayoutToolResult | null): LayoutEvidenceView {
+  if (
+    result?.status === "no_feasible_option" &&
+    result.evidenceOptionId !== null &&
+    result.rejectedOptions.some((option) => option.id === result.evidenceOptionId)
+  ) {
+    return "rejected";
+  }
+  return "accepted";
+}
+
 function optionById(
   options: readonly EvaluatedLayoutOption[],
   optionId: string | null,
@@ -43,7 +54,7 @@ function optionById(
 export function createLayoutPresentation(
   result: LayoutToolResult | null,
   selectedLayout: EvaluatedLayoutOption | null,
-  requestedView: LayoutEvidenceView = "accepted",
+  requestedView: LayoutEvidenceView = defaultLayoutEvidenceView(result),
 ): LayoutPresentation {
   if (result === null) {
     return {
@@ -128,10 +139,10 @@ export function createLayoutPresentation(
         evidenceLayout: rejectedOption,
         roomConflicts: selectedLayout.conflicts,
         resultBadgeClass: "result-badge is-warning",
-        resultBadgeText: "Request rejected · accepted retained",
-        layoutTitle: `${selectedLayout.label} · accepted layout retained`,
+        resultBadgeText: "Request rejected · accepted preserved",
+        layoutTitle: `${selectedLayout.label} · accepted layout preserved`,
         layoutNotice:
-          'Showing the prior accepted layout. The rejected request did not replace it; exact rejected-option checks, measurements, and conflicts remain visible at right. Select "Inspect rejected option" for its visual preview.',
+          'Showing the preserved accepted layout. The rejected request did not replace it; exact rejected-option checks, measurements, and conflicts remain visible at right. Select "Inspect rejected option" to return to its visual preview without rerunning inference.',
         verdictTitle: "Requested option rejected",
         checksLabel: "Rejected option checks",
         conflictsLabel: "Rejected option conflicts",
@@ -142,7 +153,7 @@ export function createLayoutPresentation(
     const acceptedLayoutNote =
       selectedLayout === null
         ? " No layout has been accepted."
-        : ' The prior accepted layout remains active; select "Show accepted layout" to return to it.';
+        : ` Accepted layout preserved: ${selectedLayout.label} (${selectedLayout.id}); select "Show accepted layout" to display it.`;
     return {
       mode: "rejected_option",
       activeView: "rejected",
@@ -152,14 +163,14 @@ export function createLayoutPresentation(
       evidenceLayout: rejectedOption,
       roomConflicts: rejectedOption.conflicts,
       resultBadgeClass: "result-badge is-error",
-      resultBadgeText: "No feasible known option",
-      layoutTitle: `${rejectedOption.label} · rejected option preview`,
-      layoutNotice: `The preview, checks, and conflicts below all belong to this exact rejected option.${aggregateNote}${acceptedLayoutNote}`,
+      resultBadgeText: "Rejected preview · not accepted",
+      layoutTitle: `Rejected preview · ${rejectedOption.label}`,
+      layoutNotice: `This rejected preview, its checks, measurements, and conflicts all belong to the same exact rejected option and are not accepted.${aggregateNote}${acceptedLayoutNote}`,
       verdictTitle: "Deterministic conflict",
-      checksLabel: "Preview option checks",
-      conflictsLabel: "Preview option conflicts",
-      checks: result.checkedStates,
-      conflicts: result.conflicts,
+      checksLabel: "Rejected preview checks",
+      conflictsLabel: "Rejected preview conflicts",
+      checks: rejectedOption.checkedStates,
+      conflicts: rejectedOption.conflicts,
     };
   }
 

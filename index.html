@@ -171,6 +171,7 @@
 
           <div class="layout-content">
             <fieldset
+              id="roomCard"
               class="room-card"
               aria-label="Interactive bedroom layout diagram. Accepted furniture can be adjusted with arrow keys."
             >
@@ -179,9 +180,15 @@
                 class="layout-view-actions"
                 hidden
               >
+                <p
+                  id="layoutViewStatus"
+                  class="layout-view-status"
+                  role="status"
+                  aria-live="polite"
+                ></p>
                 <button
                   id="showAcceptedLayoutButton"
-                  class="layout-view-button"
+                  class="layout-view-button is-accepted-action"
                   type="button"
                   aria-pressed="false"
                 >

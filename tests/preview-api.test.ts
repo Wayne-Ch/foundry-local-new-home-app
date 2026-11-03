@@ -58,4 +58,84 @@ describe("renderer preview scenarios", () => {
       });
     },
   );
+
+  it.each([
+    {
+      label: "B after A",
+      search: "?preview=1&room=imported&step=conflict",
+      stateVersion: 2,
+      acceptedLayoutId: "imported-queen-desk-standard-v1",
+      evidenceLayoutId: "imported-king-desk-standard-v1",
+      evaluatedLayoutIds: ["imported-king-desk-standard-v1"],
+      measurements: [[70, 250]],
+      turnIndex: 1,
+      evidenceVerdict:
+        "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+    },
+    {
+      label: "E after recovery C",
+      search: "?preview=1&room=imported",
+      stateVersion: 4,
+      acceptedLayoutId: "imported-queen-crib-compact-v1",
+      evidenceLayoutId: "imported-king-crib-compact-east-v1",
+      evaluatedLayoutIds: ["imported-king-crib-compact-east-v1", "imported-king-crib-compact-door-v1"],
+      measurements: [
+        [70, 250],
+        [170, 250],
+        [350, 250],
+      ],
+      turnIndex: 3,
+      evidenceVerdict:
+        "No feasible known option. The prior accepted layout remains active on the main canvas. Exact rejected-option evidence remains visible, and Inspect rejected option opens its preview without accepting it.",
+    },
+  ])(
+    "preserves accepted state and exact rejected evidence for $label",
+    async ({
+      search,
+      stateVersion,
+      acceptedLayoutId,
+      evidenceLayoutId,
+      evaluatedLayoutIds,
+      measurements,
+      turnIndex,
+      evidenceVerdict,
+    }) => {
+      vi.stubGlobal("window", { location: { search } });
+      const expectedPrompt = stageTurnsForMode("imported")[turnIndex]?.prompt ?? "";
+
+      const bootstrap = await createPreviewApi().getBootstrap();
+      const evidenceLayout = bootstrap.lastToolResult?.rejectedOptions.find(
+        (option) => option.id === bootstrap.lastToolResult?.evidenceOptionId,
+      );
+
+      expect(bootstrap.state).toMatchObject({
+        version: stateVersion,
+        currentLayoutId: acceptedLayoutId,
+        currentLayoutSource: "known-option",
+        lastResultStatus: "no_feasible_option",
+      });
+      expect(bootstrap.selectedLayout).toMatchObject({
+        id: acceptedLayoutId,
+        status: "feasible",
+      });
+      expect(bootstrap.lastToolResult).toMatchObject({
+        status: "no_feasible_option",
+        selectedOptionId: null,
+        evidenceOptionId: evidenceLayoutId,
+        provenance: {
+          roomPlanId: "imported-nara-master-bedroom",
+          evaluatedLayoutIds,
+        },
+      });
+      expect(
+        evidenceLayout?.measurements.map((measurement) => [
+          measurement.actualDistanceMm,
+          measurement.requiredDistanceMm,
+        ]),
+      ).toEqual(measurements);
+      expect(bootstrap.messages.at(-1)?.text).toBe(
+        `${evidenceVerdict} User request: ${expectedPrompt}`,
+      );
+    },
+  );
 });

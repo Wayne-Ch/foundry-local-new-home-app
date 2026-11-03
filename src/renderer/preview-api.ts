@@ -102,11 +102,11 @@ const previewRecognition: FloorPlanRecognition = {
   windowOpening: "present",
 };
 
-type PreviewStep = "queen" | "recovery" | "failure";
+type PreviewStep = "queen" | "conflict" | "recovery" | "failure";
 
 function requestedPreviewStep(): PreviewStep {
   const step = new URLSearchParams(window.location.search).get("step");
-  return step === "queen" || step === "recovery" ? step : "failure";
+  return step === "queen" || step === "conflict" || step === "recovery" ? step : "failure";
 }
 
 function requestedPlanningFixture(): PlanningFixture {
@@ -205,13 +205,33 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
   const controlledFailure = compareKnownLayoutOptions(failureInput, state, recoveryLayout, planningFixture);
   const failureState = applyToolResult(state, controlledFailure);
   const evidenceInput =
-    previewStep === "queen" ? turnAInput : previewStep === "recovery" ? turnCInput : failureInput;
+    previewStep === "queen"
+      ? turnAInput
+      : previewStep === "conflict"
+        ? turnBInput
+        : previewStep === "recovery"
+          ? turnCInput
+          : failureInput;
   const evidenceResult =
-    previewStep === "queen" ? turnA : previewStep === "recovery" ? turnC : controlledFailure;
+    previewStep === "queen"
+      ? turnA
+      : previewStep === "conflict"
+        ? turnB
+        : previewStep === "recovery"
+          ? turnC
+          : controlledFailure;
   const evidencePrompt =
-    stageTurns[previewStep === "queen" ? 0 : previewStep === "recovery" ? 2 : 3]?.prompt ?? "";
+    stageTurns[
+      previewStep === "queen" ? 0 : previewStep === "conflict" ? 1 : previewStep === "recovery" ? 2 : 3
+    ]?.prompt ?? "";
   const evidencePriorState =
-    previewStep === "queen" ? initialState : previewStep === "recovery" ? afterBState : recoveryState;
+    previewStep === "queen"
+      ? initialState
+      : previewStep === "conflict"
+        ? queenState
+        : previewStep === "recovery"
+          ? afterBState
+          : recoveryState;
   const messages = [
     {
       id: "preview-system",
@@ -259,13 +279,27 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
       text: `No feasible known option. The prior accepted layout remains active on the main canvas. Exact rejected-option evidence remains visible, and Inspect rejected option opens its preview without accepting it. User request: ${stageTurns[3]?.prompt ?? ""}`,
     },
   ];
-  const messageCount = previewStep === "queen" ? 3 : previewStep === "recovery" ? 7 : messages.length;
+  const messageCount =
+    previewStep === "queen"
+      ? 3
+      : previewStep === "conflict"
+        ? 5
+        : previewStep === "recovery"
+          ? 7
+          : messages.length;
 
   return {
     conversationGeneration,
     roomMode: planningFixture.mode,
     roomPlan: planningFixture.roomPlan,
-    state: previewStep === "queen" ? queenState : previewStep === "recovery" ? recoveryState : failureState,
+    state:
+      previewStep === "queen"
+        ? queenState
+        : previewStep === "conflict"
+          ? afterBState
+          : previewStep === "recovery"
+            ? recoveryState
+            : failureState,
     readiness,
     audioReadiness,
     visionReadiness,
@@ -274,11 +308,13 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
     completedStageTurnIds:
       previewStep === "queen"
         ? ["turn-a"]
-        : previewStep === "recovery"
-          ? ["turn-a", "turn-b", "turn-c"]
-          : stageTurns.map((turn) => turn.id),
+        : previewStep === "conflict"
+          ? ["turn-a", "turn-b"]
+          : previewStep === "recovery"
+            ? ["turn-a", "turn-b", "turn-c"]
+            : stageTurns.map((turn) => turn.id),
     lastInteraction: "turn",
-    selectedLayout: previewStep === "queen" ? queenLayout : recoveryLayout,
+    selectedLayout: previewStep === "queen" || previewStep === "conflict" ? queenLayout : recoveryLayout,
     lastToolResult: evidenceResult,
     messages: messages.slice(0, messageCount),
     trace: [
