@@ -133,9 +133,23 @@ async function navigate(client, url, expectedPlacementCount) {
   );
 }
 
+async function navigateToRejectedPreview(client, url, expectedRenderedPlacementCount) {
+  await client.send("Page.navigate", { url });
+  await waitFor("automatic rejected preview", async () =>
+    client.evaluate(`(() => {
+      return document.readyState === "complete"
+        && window.location.href === ${JSON.stringify(url)}
+        && document.querySelector("#resultBadge")?.textContent === "Rejected preview · not accepted"
+        && document.querySelectorAll("rect.furniture-placement").length === ${expectedRenderedPlacementCount}
+        && document.querySelectorAll("rect[data-placement-id]").length === 0;
+    })()`),
+  );
+}
+
 async function snapshot(client) {
   return client.evaluate(`(() => {
     const placementElements = [...document.querySelectorAll("rect[data-placement-id]")];
+    const renderedPlacementElements = [...document.querySelectorAll("rect.furniture-placement")];
     const svg = document.querySelector("#roomSvg");
     const matrix = svg?.getScreenCTM();
     return {
@@ -148,9 +162,19 @@ async function snapshot(client) {
       resultBadge: document.querySelector("#resultBadge")?.textContent ?? "",
       layoutTitle: document.querySelector("#layoutTitle")?.textContent ?? "",
       layoutNotice: document.querySelector("#layoutNotice")?.textContent ?? "",
+      layoutViewStatus: document.querySelector("#layoutViewStatus")?.textContent ?? "",
+      layoutViewActionsHidden: document.querySelector("#layoutViewActions")?.hidden ?? true,
+      showAcceptedHidden: document.querySelector("#showAcceptedLayoutButton")?.hidden ?? true,
+      showRejectedHidden: document.querySelector("#showRejectedLayoutButton")?.hidden ?? true,
       importStatus: document.querySelector("#floorPlanImportStatus")?.textContent ?? "",
       manualStatus: document.querySelector("#manualPlacementStatus")?.textContent ?? "",
       measurementText: document.querySelector("#measurementList")?.textContent ?? "",
+      measurements: [...document.querySelectorAll("#measurementList .measurement-item")].map(
+        (element) => element.textContent?.trim() ?? "",
+      ),
+      conflictText: document.querySelector("#conflictList")?.textContent ?? "",
+      requirementText: document.querySelector("#requirementSummary")?.textContent ?? "",
+      messageCount: document.querySelectorAll("#messages .message").length,
       applyDisabled: document.querySelector("#manualApplyButton")?.disabled ?? true,
       revertDisabled: document.querySelector("#manualRevertButton")?.disabled ?? true,
       scaleX: matrix?.a ?? 0,
@@ -170,6 +194,20 @@ async function snapshot(client) {
           centerY: rect.top + rect.height / 2,
         };
       }),
+      renderedPlacements: renderedPlacementElements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          id: element.getAttribute("data-rendered-placement-id"),
+          layoutStatus: element.getAttribute("data-layout-status"),
+          interactive: element.getAttribute("data-interactive"),
+          role: element.getAttribute("role"),
+          tabindex: element.getAttribute("tabindex"),
+          xMm: Number(element.getAttribute("x")),
+          yMm: Number(element.getAttribute("y")),
+          centerX: rect.left + rect.width / 2,
+          centerY: rect.top + rect.height / 2,
+        };
+      }),
       captureEvents: window.__placementCaptureEvents ?? [],
     };
   })()`);
@@ -178,6 +216,12 @@ async function snapshot(client) {
 function placement(snapshotValue, instanceId) {
   const result = snapshotValue.placements.find((candidate) => candidate.id === instanceId);
   assert.ok(result, `Missing interactive placement ${instanceId}`);
+  return result;
+}
+
+function renderedPlacement(snapshotValue, instanceId) {
+  const result = snapshotValue.renderedPlacements.find((candidate) => candidate.id === instanceId);
+  assert.ok(result, `Missing rendered placement ${instanceId}`);
   return result;
 }
 
@@ -277,6 +321,40 @@ async function dragPlacement(client, instanceId, deltaMm) {
   });
 }
 
+async function attemptRenderedDrag(client, instanceId, deltaMm) {
+  const before = await snapshot(client);
+  const target = renderedPlacement(before, instanceId);
+  const deltaX = before.scaleX * deltaMm;
+  assert.ok(deltaX > 0, "Invalid SVG scale");
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: target.centerX,
+    y: target.centerY,
+  });
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: target.centerX,
+    y: target.centerY,
+    button: "left",
+    clickCount: 1,
+  });
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: target.centerX + deltaX,
+    y: target.centerY,
+    button: "left",
+    buttons: 1,
+  });
+  await client.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: target.centerX + deltaX,
+    y: target.centerY,
+    button: "left",
+    clickCount: 1,
+  });
+  await wait(100);
+}
+
 const arrowVirtualKeyCodes = {
   ArrowUp: 38,
   ArrowDown: 40,
@@ -371,50 +449,117 @@ async function verifyPointerScenario(client, baseUrl, scenario) {
   assert.equal(reverted.revertDisabled, true, `${scenario.name} Revert should disable`);
 }
 
-async function verifyRetainedFailureScenario(client, baseUrl) {
-  const url = `${baseUrl}/?preview=1`;
-  await navigate(client, url, 3);
-  const accepted = await snapshot(client);
-  assertAccessiblePlacements(accepted, ["bed-main", "desk-main", "crib-main"]);
-  assert.match(accepted.resultBadge, /Request rejected · accepted retained/);
-  assert.match(accepted.layoutTitle, /accepted layout retained/);
-  assert.match(accepted.layoutNotice, /rejected request did not replace it/);
-  assert.match(accepted.measurementText, /70 mm \/ required 250 mm/);
-  assert.match(accepted.measurementText, /170 mm \/ required 250 mm/);
+async function verifyRetainedFailureScenario(client, baseUrl, scenario) {
+  const url = `${baseUrl}/${scenario.query}`;
+  await navigateToRejectedPreview(client, url, scenario.expectedAcceptedIds.length);
+  await installCaptureProbe(client);
+  const rejected = await snapshot(client);
 
-  const deskOrigin = placement(accepted, "desk-main").xMm;
+  assert.equal(rejected.importStatus.includes("VLM visible-topology recognition passed"), true);
+  assert.equal(rejected.resultBadge, "Rejected preview · not accepted");
+  assert.equal(rejected.layoutTitle, `Rejected preview · ${scenario.rejectedLabel}`);
+  assert.match(rejected.layoutNotice, /same exact rejected option and are not accepted/);
+  assert.equal(rejected.layoutViewActionsHidden, false);
+  assert.equal(rejected.showAcceptedHidden, false);
+  assert.equal(rejected.showRejectedHidden, true);
+  assert.match(rejected.layoutViewStatus, /Rejected preview is displayed and is not accepted/);
+  assert.equal(
+    rejected.layoutViewStatus.includes(
+      `Accepted layout preserved: ${scenario.acceptedLabel} (${scenario.acceptedLayoutId})`,
+    ),
+    true,
+  );
+  assert.equal(rejected.placements.length, 0);
+  assert.deepEqual(
+    rejected.renderedPlacements.map((candidate) => candidate.id),
+    scenario.expectedAcceptedIds,
+  );
+  for (const rendered of rejected.renderedPlacements) {
+    assert.equal(rendered.layoutStatus, "rejected");
+    assert.equal(rendered.interactive, "false");
+    assert.equal(rendered.role, null);
+    assert.equal(rendered.tabindex, null);
+  }
+  assert.deepEqual(rejected.measurements, scenario.measurements);
+  for (const conflict of scenario.conflicts) {
+    assert.match(rejected.conflictText, new RegExp(conflict));
+  }
+  assert.match(
+    rejected.requirementText,
+    new RegExp(`Accepted provenance: known option · ${scenario.acceptedLayoutId}`),
+  );
+  assert.match(rejected.manualStatus, /cannot be edited or applied/);
+  assert.equal(rejected.applyDisabled, true);
+  assert.equal(rejected.revertDisabled, true);
+
+  const rejectedDeskOrigin = renderedPlacement(rejected, "desk-main").xMm;
+  await attemptRenderedDrag(client, "desk-main", 50);
+  const rejectedAfterDrag = await snapshot(client);
+  assert.equal(renderedPlacement(rejectedAfterDrag, "desk-main").xMm, rejectedDeskOrigin);
+  assert.equal(rejectedAfterDrag.placements.length, 0);
+  assert.equal(rejectedAfterDrag.applyDisabled, true);
+  assert.equal(rejectedAfterDrag.revertDisabled, true);
+  assert.equal(
+    rejectedAfterDrag.captureEvents.some((event) => event.type === "gotpointercapture"),
+    false,
+  );
+
+  await clickSelector(client, "#showAcceptedLayoutButton");
+  const accepted = await waitFor("preserved accepted layout", async () => {
+    const current = await snapshot(client);
+    return current.placements.length === scenario.expectedAcceptedIds.length &&
+      /accepted layout preserved/.test(current.layoutTitle)
+      ? current
+      : null;
+  });
+  assertAccessiblePlacements(accepted, scenario.expectedAcceptedIds);
+  assert.equal(accepted.layoutViewActionsHidden, false);
+  assert.equal(accepted.showAcceptedHidden, true);
+  assert.equal(accepted.showRejectedHidden, false);
+  assert.equal(
+    accepted.layoutViewStatus.includes(
+      `Accepted layout preserved: ${scenario.acceptedLabel} (${scenario.acceptedLayoutId})`,
+    ),
+    true,
+  );
+  assert.match(accepted.layoutViewStatus, /without rerunning inference/);
+  assert.equal(accepted.stateText, rejected.stateText);
+  assert.equal(accepted.messageCount, rejected.messageCount);
+  assert.deepEqual(accepted.measurements, scenario.measurements);
+  assert.match(
+    accepted.requirementText,
+    new RegExp(`Accepted provenance: known option · ${scenario.acceptedLayoutId}`),
+  );
+
+  const acceptedDeskOrigin = placement(accepted, "desk-main").xMm;
   await dragPlacement(client, "desk-main", 50);
   const adjustable = await snapshot(client);
-  assert.equal(placement(adjustable, "desk-main").xMm, deskOrigin + 50);
+  assert.equal(placement(adjustable, "desk-main").xMm, acceptedDeskOrigin + 50);
+  assert.equal(adjustable.applyDisabled, false);
+  assert.equal(adjustable.revertDisabled, false);
+  assert.equal(adjustable.stateText, rejected.stateText);
   await clickSelector(client, "#manualRevertButton");
-  await waitFor("retained accepted layout revert", async () => {
+  await waitFor("preserved accepted layout revert", async () => {
     const current = await snapshot(client);
-    return placement(current, "desk-main").xMm === deskOrigin && current.revertDisabled ? current : null;
+    return placement(current, "desk-main").xMm === acceptedDeskOrigin && current.revertDisabled
+      ? current
+      : null;
   });
 
   await clickSelector(client, "#showRejectedLayoutButton");
-  const rejected = await waitFor("rejected option preview", async () => {
+  const restoredRejected = await waitFor("rejected preview restoration", async () => {
     const current = await snapshot(client);
-    return current.placements.length === 0 && /rejected option preview/i.test(current.layoutTitle)
+    return current.placements.length === 0 &&
+      current.renderedPlacements.length === scenario.expectedAcceptedIds.length &&
+      current.resultBadge === "Rejected preview · not accepted"
       ? current
       : null;
   });
-  assert.match(rejected.resultBadge, /No feasible known option/);
-  assert.match(rejected.layoutTitle, /rejected option/);
-  assert.match(rejected.layoutNotice, /exact rejected option/);
-  assert.match(rejected.layoutNotice, /prior accepted layout remains active/);
-  assert.match(rejected.layoutNotice, /Show accepted layout/);
-  assert.match(rejected.measurementText, /70 mm \/ required 250 mm/);
-  assert.match(rejected.measurementText, /170 mm \/ required 250 mm/);
-
-  await clickSelector(client, "#showAcceptedLayoutButton");
-  const restored = await waitFor("accepted layout restoration", async () => {
-    const current = await snapshot(client);
-    return current.placements.length === 3 && /accepted layout retained/.test(current.layoutTitle)
-      ? current
-      : null;
-  });
-  assertAccessiblePlacements(restored, ["bed-main", "desk-main", "crib-main"]);
+  assert.equal(restoredRejected.showAcceptedHidden, false);
+  assert.equal(restoredRejected.showRejectedHidden, true);
+  assert.deepEqual(restoredRejected.measurements, scenario.measurements);
+  assert.equal(restoredRejected.stateText, rejected.stateText);
+  assert.equal(restoredRejected.messageCount, rejected.messageCount);
 }
 
 async function verifyKeyboardApplyAndRevert(client, baseUrl) {
@@ -551,7 +696,38 @@ try {
   for (const scenario of scenarios) {
     await verifyPointerScenario(client, baseUrl, scenario);
   }
-  await verifyRetainedFailureScenario(client, baseUrl);
+  const retainedFailureScenarios = [
+    {
+      name: "imported B after A",
+      query: "?preview=1&room=imported&step=conflict",
+      acceptedLayoutId: "imported-queen-desk-standard-v1",
+      acceptedLabel: "Imported room · Queen + rotated standard desk",
+      rejectedLabel: "Imported room · King + rotated standard desk",
+      expectedAcceptedIds: ["bed-main", "desk-main"],
+      measurements: ["Rejected evidence · King bed ↔ Standard desk: 70 mm / required 250 mm · 180 mm short"],
+      conflicts: ["King bed and Standard desk have 70 mm clearance; 250 mm is required\\."],
+    },
+    {
+      name: "imported E after recovery C",
+      query: "?preview=1&room=imported",
+      acceptedLayoutId: "imported-queen-crib-compact-v1",
+      acceptedLabel: "Imported room · Queen + baby bed + compact desk",
+      rejectedLabel: "Imported room · King + baby bed + compact desk",
+      expectedAcceptedIds: ["bed-main", "desk-main", "crib-main"],
+      measurements: [
+        "Rejected evidence · King bed ↔ Compact desk: 70 mm / required 250 mm · 180 mm short",
+        "Rejected evidence · King bed ↔ Baby bed: 170 mm / required 250 mm · 80 mm short",
+        "Rejected evidence · Compact desk ↔ Baby bed: 350 mm / required 250 mm",
+      ],
+      conflicts: [
+        "King bed and Compact desk have 70 mm clearance; 250 mm is required\\.",
+        "King bed and Baby bed have 170 mm clearance; 250 mm is required\\.",
+      ],
+    },
+  ];
+  for (const scenario of retainedFailureScenarios) {
+    await verifyRetainedFailureScenario(client, baseUrl, scenario);
+  }
   await verifyKeyboardApplyAndRevert(client, baseUrl);
 } finally {
   if (client !== undefined) {
@@ -581,5 +757,5 @@ try {
 }
 
 console.log(
-  "Furniture controls probe passed for default/imported layouts A and C, retained/rejected switching, all furniture drag, pointer capture, keyboard focus, Apply, and invalid Revert.",
+  "Furniture controls probe passed for default/imported layouts A and C, automatic imported B/E rejected previews, preserved-layout banners, no-inference toggles, rejected drag blocking, accepted drag, pointer capture, keyboard focus, Apply, and invalid Revert.",
 );

@@ -52,7 +52,11 @@ import {
   releaseMediaStream,
   shouldOfferWhisperFallback,
 } from "./audio-capture";
-import { createLayoutPresentation, type LayoutEvidenceView } from "./layout-presentation";
+import {
+  createLayoutPresentation,
+  defaultLayoutEvidenceView,
+  type LayoutEvidenceView,
+} from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
 import {
   clientPointToRoomPoint,
@@ -115,8 +119,7 @@ let resetRecoveryMonitor: {
 } | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
-let layoutEvidenceView: LayoutEvidenceView =
-  previewMode && previewParameters.get("layoutView") === "rejected" ? "rejected" : "accepted";
+let layoutEvidenceView: LayoutEvidenceView = "accepted";
 let focusedPlacementInstanceId: string | null = null;
 let speechCorrection: SpeechSuggestionState | null = null;
 let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
@@ -164,8 +167,10 @@ const stageSteps = requiredElement("stageSteps");
 const turnCounter = requiredElement("turnCounter");
 const resultBadge = requiredElement("resultBadge");
 const layoutTitle = requiredElement("layoutTitle");
+const roomCard = requiredElement("roomCard");
 const layoutNotice = requiredElement("layoutNotice");
 const layoutViewActions = requiredElement("layoutViewActions");
+const layoutViewStatus = requiredElement("layoutViewStatus");
 const showAcceptedLayoutButton = requiredButton("showAcceptedLayoutButton");
 const showRejectedLayoutButton = requiredButton("showRejectedLayoutButton");
 const roomSvg = requiredSvg("roomSvg");
@@ -230,6 +235,7 @@ async function initialize(): Promise<void> {
   previewBanner.hidden = !previewMode;
   viewState = await demoApi.getBootstrap();
   latestToolResult = viewState.lastToolResult;
+  layoutEvidenceView = initialLayoutEvidenceView(latestToolResult);
   renderAll();
   demoApi.onProgress(renderProgress);
   demoApi.onAudioPartial(handleAudioPartial);
@@ -256,6 +262,14 @@ async function initialize(): Promise<void> {
       renderAudio();
     }
   }
+}
+
+function initialLayoutEvidenceView(result: LayoutToolResult | null): LayoutEvidenceView {
+  const requestedView = previewMode ? previewParameters.get("layoutView") : null;
+  if (requestedView === "accepted" || requestedView === "rejected") {
+    return requestedView;
+  }
+  return defaultLayoutEvidenceView(result);
 }
 
 prepareButton.addEventListener("click", async () => {
@@ -482,7 +496,7 @@ resetButton.addEventListener("click", async () => {
       ) {
         viewState = bootstrap;
         latestToolResult = bootstrap.lastToolResult;
-        layoutEvidenceView = "accepted";
+        layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
         renderAll();
       }
     } catch {
@@ -698,7 +712,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
 
 function applyTurnResponse(response: RunTurnResponse): void {
   latestToolResult = response.toolResult;
-  layoutEvidenceView = "accepted";
+  layoutEvidenceView = defaultLayoutEvidenceView(response.toolResult);
   viewState = {
     ...viewState,
     state: response.state,
@@ -717,7 +731,7 @@ function applyBootstrap(bootstrap: BootstrapPayload): void {
   focusedPlacementInstanceId = null;
   viewState = bootstrap;
   latestToolResult = bootstrap.lastToolResult;
-  layoutEvidenceView = "accepted";
+  layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
   manualPreview = null;
   manualPreviewOrigin = null;
   renderAll();
@@ -1077,7 +1091,28 @@ function renderLayout(): void {
     viewState.lastInteraction === "turn" &&
     base.canShowAcceptedLayout &&
     base.canShowRejectedOption;
+  const showingRejectedResultPreview =
+    manualPreview === null && base.mode === "rejected_option" && base.activeView === "rejected";
   layoutViewActions.hidden = !layoutViewSwitchVisible;
+  layoutViewActions.classList.toggle(
+    "is-rejected-preview",
+    layoutViewSwitchVisible && base.activeView === "rejected",
+  );
+  layoutViewActions.classList.toggle(
+    "is-accepted-preserved",
+    layoutViewSwitchVisible && base.activeView === "accepted",
+  );
+  if (layoutViewSwitchVisible && viewState.selectedLayout !== null) {
+    const acceptedIdentity = `${viewState.selectedLayout.label} (${viewState.selectedLayout.id})`;
+    layoutViewStatus.textContent =
+      base.activeView === "rejected"
+        ? `Rejected preview is displayed and is not accepted. Accepted layout preserved: ${acceptedIdentity}.`
+        : `Accepted layout preserved: ${acceptedIdentity}. The rejected preview remains available without rerunning inference.`;
+  } else {
+    layoutViewStatus.textContent = "";
+  }
+  showAcceptedLayoutButton.hidden = !layoutViewSwitchVisible || base.activeView !== "rejected";
+  showRejectedLayoutButton.hidden = !layoutViewSwitchVisible || base.activeView !== "accepted";
   showAcceptedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
   showRejectedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
   showAcceptedLayoutButton.setAttribute(
@@ -1089,6 +1124,13 @@ function renderLayout(): void {
     String(layoutViewSwitchVisible && base.activeView === "rejected"),
   );
 
+  roomCard.setAttribute(
+    "aria-label",
+    showingRejectedResultPreview
+      ? "Rejected bedroom layout preview. Furniture is not accepted and cannot be adjusted."
+      : "Interactive accepted bedroom layout diagram. Accepted furniture can be adjusted with arrow keys.",
+  );
+  roomSvg.classList.toggle("is-rejected-preview", showingRejectedResultPreview);
   renderRoomSvg(displayLayout, roomConflicts, manualPreview !== null);
   resultBadge.className = badgeClass;
   resultBadge.textContent = badgeText;
@@ -1229,7 +1271,12 @@ function renderRoomSvg(
       "stroke-width": conflicted ? "34" : "22",
       opacity: isManualPreview ? "0.82" : "1",
     });
-    if (placementIsAdjustable(layout, placement)) {
+    const adjustable = placementIsAdjustable(layout, placement);
+    placementRect.classList.add("furniture-placement");
+    placementRect.setAttribute("data-rendered-placement-id", placement.instanceId);
+    placementRect.setAttribute("data-layout-status", layout?.status ?? "unknown");
+    placementRect.setAttribute("data-interactive", String(adjustable));
+    if (adjustable) {
       placementRect.classList.add("draggable-placement");
       if (placementDrag?.instanceId === placement.instanceId) {
         placementRect.classList.add("is-dragging");
@@ -1427,7 +1474,7 @@ function renderManualPlacement(): void {
     manualPlacementStatus.textContent = "Accept a feasible layout before using direct manipulation.";
   } else if (latestToolResult?.status === "no_feasible_option" && layoutEvidenceView === "rejected") {
     manualPlacementStatus.textContent =
-      'Rejected evidence is displayed and cannot be edited. Select "Show accepted layout" to return to the active layout.';
+      'Rejected preview is displayed and cannot be edited or applied. Select "Show accepted layout" to return to the preserved active layout.';
   } else if (latestToolResult?.status === "no_feasible_option") {
     manualPlacementCard.classList.add("is-valid");
     manualPlacementStatus.textContent =
@@ -1454,6 +1501,9 @@ function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: 
   }
   const displaysAcceptedLayout = layout.id === viewState.selectedLayout.id;
   const displaysManualPreview = manualPreview?.preview?.id === layout.id;
+  if (layout.status === "rejected" && !displaysManualPreview) {
+    return false;
+  }
   if (!displaysAcceptedLayout && !displaysManualPreview) {
     return false;
   }
