@@ -1,7 +1,7 @@
 export const FLOOR_PLAN_MAX_BYTES = 4 * 1024 * 1024;
 export const FLOOR_PLAN_MAX_DIMENSION = 2048;
 export const FLOOR_PLAN_MAX_PIXELS = 4_000_000;
-export const FLOOR_PLAN_INFERENCE_MAX_DIMENSION = 1024;
+export const FLOOR_PLAN_INFERENCE_MAX_DIMENSION = 1280;
 
 export type FloorPlanImageFormat = "png" | "jpeg" | "webp";
 

@@ -81,6 +81,8 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 This feature branch adds an optional **Load sample floor plan** -> **Analyze layout** flow without
 replacing the verified default room. The main process owns image selection and bytes; the renderer
 receives only a bounded data-URL preview and recognized facts, never a filesystem path.
+**Choose fixture copy** exists for a renamed/re-encoded copy of this same supported plan, not for
+arbitrary architectural drawings.
 
 - Exact vision model: `qwen3.5-0.8b-generic-cpu:3`.
 - Task / device / EP: `vision-language-chat` / CPU / `CPUExecutionProvider`.
@@ -89,7 +91,7 @@ receives only a bounded data-URL preview and recognized facts, never a filesyste
 - Input gate: PNG, JPEG, or WebP magic signature; at most 4 MiB, 2,048 px per side, and 4,000,000
   pixels. SVG, HTML, PDF, Office/ZIP, mislabeled files, and `SharedArrayBuffer` views are rejected.
 - Main decodes and re-encodes the preview as PNG, verifies decoded/header dimensions agree, and
-  creates a separate inference PNG capped at 1,024 px on its longest side. Preparation buffers,
+  creates a separate inference PNG capped at 1,280 px on its longest side. Preparation buffers,
   preview bytes after data-URL creation, inference copies, and staged source bytes have independent
   zero-fill ownership.
 - Contract: non-forced categorical alternatives. `roomShape` is

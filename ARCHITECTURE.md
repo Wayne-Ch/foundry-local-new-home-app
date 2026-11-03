@@ -80,7 +80,7 @@ The renderer never sends or receives a filesystem path. Main accepts only PNG/JP
 limits input to 4 MiB / 2,048 px per side / 4,000,000 pixels, and rejects SVG, HTML, PDF, Office/ZIP,
 renamed content, and shared mutable buffers. Electron decodes and re-encodes a sanitized PNG,
 requires decoded and header dimensions to agree, retains original preview dimensions/metadata, and
-creates a separate inference PNG capped at 1,024 px on its longest side. The preview is a data URL;
+creates a separate inference PNG capped at 1,280 px on its longest side. The preview is a data URL;
 source, decode-preparation, preview-byte, and inference-byte owners are independently zero-filled.
 
 The exact optional slot is `qwen3.5-0.8b-generic-cpu:3`,

@@ -455,7 +455,7 @@ function registerIpc(): void {
       throw new Error("The application window is unavailable.");
     }
     const selection = await dialog.showOpenDialog(window, {
-      title: "Choose the experimental single-room floor plan",
+      title: "Choose a copy of the supported NARA master-bedroom fixture",
       properties: ["openFile"],
       filters: [{ name: "Supported room images", extensions: ["png", "jpg", "jpeg", "webp"] }],
     });
