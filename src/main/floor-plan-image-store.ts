@@ -1,6 +1,7 @@
 import {
   type FloorPlanImageFormat,
   validateFloorPlanImageBytes,
+  validateSupportedFloorPlanFixtureBytes,
   zeroFill,
 } from "../layout-import/image-security";
 import type { FloorPlanImageDescriptor } from "../shared/contracts";
@@ -44,7 +45,7 @@ export class FloorPlanImageStore {
     source: FloorPlanImageDescriptor["source"],
     displayName: string,
   ): FloorPlanImageDescriptor {
-    const sourceImage = validateFloorPlanImageBytes(input);
+    const sourceImage = validateSupportedFloorPlanFixtureBytes(input);
     let previewImage = sourceImage;
     let inferenceImage = sourceImage;
     if (this.#prepare !== undefined) {

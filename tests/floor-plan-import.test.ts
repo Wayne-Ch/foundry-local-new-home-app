@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createInitialDemoState } from "../src/domain/demo-state";
 import {
+  createFloorPlanVisionRequestOptions,
   createImportedPlanningFixture,
   floorPlanRecognitionJsonSchema,
+  floorPlanVisionSystemPrompt,
+  floorPlanVisionUserPrompt,
   parseFloorPlanRecognition,
 } from "../src/domain/floor-plan-import";
 import { rectangleIntersectsDoorSwing } from "../src/domain/geometry";
@@ -28,6 +31,29 @@ function importedFixture() {
 }
 
 describe("strict floor-plan recognition contract", () => {
+  it("uses the exact neutral evidence prompts and deterministic request options", () => {
+    expect(floorPlanVisionSystemPrompt).toBe(
+      "You are a visual evidence classifier. Inspect only the supplied image and do not assume it is a floor plan. Every recognition field allows positive, negative, or uncertain evidence. Use roomShape=rectangle only for a clearly visible rectangular room-like boundary, roomShape=not_rectangle only for a clearly visible non-rectangular room-like boundary, and roomShape=uncertain otherwise. Use present only when the named feature is directly visible, absent only when clearly not visible, and uncertain when ambiguous or unreadable. Do not infer hidden content, expected fixtures, dimensions, scale, filename identity, or a fit verdict. Return exactly one compact JSON object matching the supplied schema and no prose.",
+    );
+    expect(floorPlanVisionUserPrompt).toBe(
+      "Classify the independent visible evidence for room shape, a printed room label, at least one architectural door opening or swing, and at least one architectural window opening. Include every required key exactly once and return JSON only.",
+    );
+    expect(createFloorPlanVisionRequestOptions()).toEqual({
+      search: {
+        doSample: false,
+        temperature: 0,
+        seed: 42,
+        maxOutputTokens: 320,
+      },
+      toolChoice: "none",
+      additionalOptions: {
+        guidance_type: "json_schema",
+        guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
+        chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
+      },
+    });
+  });
+
   it("accepts the bounded ordered two-door fixture and converts it to app geometry", () => {
     const parsed = parseFloorPlanRecognition(validRecognition);
     expect(parsed.ok).toBe(true);

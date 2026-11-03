@@ -1,0 +1,23 @@
+{
+  "case": "white-control",
+  "image": {
+    "path": "tests/fixtures/floor-plan/white-control.png",
+    "sha256": "2b82db6fb573536887fb8d572a5048da857c2a177c2d04f8b54902c026e74066",
+    "width": 1020,
+    "height": 1080
+  },
+  "runs": [
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    }
+  ]
+}

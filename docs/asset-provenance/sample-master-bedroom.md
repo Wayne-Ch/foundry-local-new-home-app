@@ -39,4 +39,17 @@ The recipe was run with Pillow `12.3.0`. No annotation, inpainting, geometry cha
 
 The crop was visually inspected and contains the empty `MASTER BEDROOM`, one inward-swinging door, exterior window/wall detail, and the printed room dimensions of approximately `11'-10 3/4"` by `13'-0"`.
 
+## Application support boundary
+
+The optional New Home demo accepts only these exact committed PNG bytes. The main process requires
+the documented PNG format, `1020 x 1080` dimensions, `194,686`-byte length, and SHA-256 before
+analysis or import. A renamed byte-identical copy is allowed; modified, re-encoded, or arbitrary
+images are rejected and never receive the fixture's canonical geometry.
+
+The local VLM classifies only independent visible evidence for a rectangular room-like boundary, a
+printed room label, an architectural door opening or swing, and an architectural window opening.
+The application—not the VLM—applies the documented `3650 x 3950 mm` scale and canonical
+door/window/closet/clearance geometry. No VLM output supplies millimetres, hinges, coordinates, or a
+fit verdict.
+
 This derived asset is for use only as a private demo fixture for the optional New Home feature unless legal review approves wider distribution.

@@ -455,9 +455,9 @@ function registerIpc(): void {
       throw new Error("The application window is unavailable.");
     }
     const selection = await dialog.showOpenDialog(window, {
-      title: "Choose a copy of the supported NARA master-bedroom fixture",
+      title: "Choose an exact byte-for-byte copy of the supported NARA fixture",
       properties: ["openFile"],
-      filters: [{ name: "Supported room images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      filters: [{ name: "Exact supported PNG fixture", extensions: ["png"] }],
     });
     if (selection.canceled || selection.filePaths.length !== 1) {
       return { cancelled: true, bootstrap: controller.bootstrap() };

@@ -81,28 +81,34 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 This feature branch adds an optional **Load sample floor plan** -> **Analyze layout** flow without
 replacing the verified default room. The main process owns image selection and bytes; the renderer
 receives only a bounded data-URL preview and recognized facts, never a filesystem path.
-**Choose fixture copy** exists for a renamed/re-encoded copy of this same supported plan, not for
-arbitrary architectural drawings.
+**Choose exact fixture copy** exists only for a byte-for-byte copy of the same packaged PNG. A
+renamed file is acceptable only when its bytes remain identical; re-encoded or arbitrary drawings
+are rejected before analysis.
 
 - Exact vision model: `qwen3.5-0.8b-generic-cpu:3`.
 - Task / device / EP: `vision-language-chat` / CPU / `CPUExecutionProvider`.
 - SDK path: the existing in-process `foundry-local-sdk@2.2.1` manager plus a separate short-lived
   `ChatSession`; no cloud or loopback endpoint.
-- Input gate: PNG, JPEG, or WebP magic signature; at most 4 MiB, 2,048 px per side, and 4,000,000
-  pixels. SVG, HTML, PDF, Office/ZIP, mislabeled files, and `SharedArrayBuffer` views are rejected.
-- Main decodes and re-encodes the preview as PNG, verifies decoded/header dimensions agree, and
-  creates a separate inference PNG capped at 1,280 px on its longest side. Preparation buffers,
-  preview bytes after data-URL creation, inference copies, and staged source bytes have independent
-  zero-fill ownership.
+- Input gate: general magic/byte/dimension/pixel checks run first, then the app requires the exact
+  packaged PNG identity: `1020 x 1080`, `194,686` bytes, and SHA-256
+  `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587`.
+  White, rectangle-only, re-encoded, modified, JPEG, WebP, SVG, HTML, PDF, Office/ZIP, mislabeled,
+  and `SharedArrayBuffer` inputs cannot receive canonical geometry.
+- After exact source identity passes, main decodes and re-encodes the preview as PNG, verifies
+  decoded/header dimensions agree, and creates a separate inference PNG capped at 1,280 px on its
+  longest side. Preparation buffers, preview bytes after data-URL creation, inference copies, and
+  staged source bytes have independent zero-fill ownership.
 - Contract: non-forced categorical alternatives. `roomShape` is
   `rectangle|not_rectangle|uncertain`; room label, door opening, and window opening are each
   `present|absent|uncertain`. Import requires a visible rectangular labeled room with a door and
   window. Missing, negative, uncertain, duplicate, or extra evidence rejects.
-- Output is bounded to 320 tokens, must finish with `stop`, gets at most one same-budget
-  fresh-session correction attempt, and fails closed on invalid JSON, repetition, truncation, or
-  content mismatch. The schema does not force the expected answer and does not ask the 0.8B model
-  for coordinates, hinge direction, dimensions, or OCR text.
-- Geometry: after topology acceptance, the app applies this one fixture's documented
+- The exact neutral prompt treats each field as independent visible evidence and does not assume the
+  image is a floor plan. Output is deterministic (`temperature=0`, `seed=42`), bounded to 320
+  tokens, JSON-schema guided, tool-free, and thinking-disabled. It must finish with `stop`; at most
+  one fresh-session retry uses the identical prompt and budget. Invalid JSON, repetition,
+  truncation, or content mismatch fails closed.
+- Geometry: only after exact fixture identity and visible-topology acceptance, the app applies this
+  one fixture's documented
   approximately `11'-10 3/4" x 13'-0"` scale as `3650 x 3950 mm` and canonical one-door,
   closet-access, and exterior-window zones. Existing collision, door-swing, clearance, manual
   placement, voice intent, Reset, and stale-result rules remain authoritative.
@@ -283,10 +289,12 @@ npm run probe:microphone-permission
 npm run capture:ui
 ```
 
-`npm run test:floor-plan-integration` is a Windows-native gate. It loads the packaged fixture
-through the exact VLM, requires the non-forced bedroom/door/window categories to pass, asserts no
-external endpoint, then runs the imported Queen success, exact King `70 / 250 mm` conflict,
-Queen + compact desk + baby-bed recovery, and valid app-owned manual move. Success ends with:
+`npm run test:floor-plan-integration` is a Windows-native gate. It requires the exact packaged
+fixture identity, runs it through the exact VLM, requires the non-forced
+rectangle/label/door/window conjunction, then requires white and rectangle-only controls to reject
+with structured `CONTENT_MISMATCH` attempts. It asserts no external endpoint and runs the imported
+Queen success, exact King `70 / 250 mm` conflict, Queen + compact desk + baby-bed recovery, and valid
+app-owned manual move. Success ends with:
 
 ```text
 FLOOR_PLAN_INTEGRATION_OK
@@ -327,7 +335,8 @@ exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed.
 Qwen2.5 path measured **23.955–38.893 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
-in [VALIDATION.md](VALIDATION.md).
+in [VALIDATION.md](VALIDATION.md). A failed floor-plan gate writes
+`artifacts/floor-plan-integration-failure.json` with every retained raw validator attempt.
 
 `smoke:electron` launches the actual Electron app and exits after SDK/catalog initialization.
 `probe:reset` uses Chromium's controlled WAV-backed microphone device, clicks the real renderer

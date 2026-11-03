@@ -46,13 +46,14 @@ Message:
 Put on screen:
 
 - Electron `dialog.showOpenDialog` in main, with no renderer filesystem path;
-- PNG/JPEG/WebP magic parsing plus byte/dimension/pixel bounds before inference;
+- general image safety parsing followed by exact PNG identity: `1020 x 1080`, `194,686` bytes, and
+  SHA-256 `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587`;
 - main-owned source bytes, per-request inference copy, preview data URL, and explicit zero-fill;
 - exact `qwen3.5-0.8b-generic-cpu:3` / CPU / `CPUExecutionProvider` resolution through the existing
   `FoundryLocalManager`;
 - multimodal `Item.userMessage([Item.imageFromData(...), Item.text(...)])`;
-- 320-token deterministic JSON-schema request, terminal `stop` gate, repetition bound, and at most
-  one fresh-session correction with no token increase;
+- exact neutral evidence-classifier system/user prompts, 320-token deterministic JSON-schema
+  request, terminal `stop` gate, repetition bound, and at most one identical fresh-session retry;
 - non-forced `rectangle|not_rectangle|uncertain` and
   `present|absent|uncertain` alternatives, exact key counts, and fail-closed raw-output evidence in
   Developer trace;
@@ -64,8 +65,9 @@ Message:
 
 > The image is evidence, not authority. Foundry Local recognizes a tiny topology contract. Normal
 > code validates it, applies the documented demo scale, creates deterministic geometry, and then
-> reuses the existing placement engine. Filename, hash, OCR text, and cloud inference never decide
-> success.
+> reuses the existing placement engine. SHA-256 decides only whether the one supported fixture may
+> enter the demo; the VLM decides only visible topology. The app, not the VLM, owns millimetres,
+> hinges, coordinates, clearance, and every fit verdict.
 
 ## 5:30–6:10 — Minimal local audio checkpoint
 

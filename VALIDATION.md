@@ -75,10 +75,15 @@ The first Windows checkpoint exposed why the Family-room numeric design was inva
 open alternatives, the model did not confirm the requested openings, while the forced schema had
 made the expected answer the only legal output. Those two exact numeric attempts are committed as
 negative parser regressions. The replacement schema keeps positive, negative, and uncertain
-alternatives open and asks only for room shape, room label, door, and window presence. Application
-code applies the documented dimensions and canonical geometry. Every bounded
-redacted raw attempt remains visible in Developer trace. The final Windows-native gate is
-authoritative; a mocked parser pass is insufficient.
+alternatives open and asks only for independent visible room shape, room label, door, and window
+evidence without assuming the image is a floor plan. The authoritative target-Windows validator
+ran the exact neutral prompt three times per image with `finishReason=stop`: the committed NARA
+fixture produced rectangle plus label/door/window present, while white and rectangle-only controls
+produced rectangle plus label/door/window uncertain and rejected. The exact payloads and control
+PNGs are committed as regressions; tests replay the observed payloads rather than narrowing the
+schema alternatives. Application code alone applies the documented scale, door/window/closet
+geometry, and clearance. Every bounded redacted raw attempt remains visible in Developer trace.
+The final Windows-native app gate is authoritative; a mocked parser pass is insufficient.
 
 Speech suggestions require a direct local governing action in a small token span before the
 candidate. Punctuation, coordinators, subordinators, or an explicit new subject between the action
@@ -129,7 +134,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 28 files / 704 tests pass |
+| Unit tests | 29 files / 714 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
@@ -173,10 +178,10 @@ npm run capture:ui
 | Audio temp cleanup | Pass; real integration capture files before/after both empty |
 | Shutdown orphan recovery | Pass; locked owned capture remains reported, a new store purges it, nonmatching files remain, and path escape is rejected |
 | Audio external endpoint | No |
-| Floor-plan image security | Pass; magic type, bytes, dimensions, pixels, disallowed content, main ownership, no path, and zero-fill covered |
-| Floor-plan parser | Pass; open positive/negative/uncertain alternatives, exact keys/counts, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
+| Floor-plan image security | Pass; general magic/byte/dimension/pixel checks plus exact PNG dimensions, byte length, SHA-256 identity, modified/control rejection, main ownership, no path, and zero-fill covered |
+| Floor-plan parser | Pass; exact neutral prompts, open positive/negative/uncertain alternatives, exact keys/counts, authoritative positive/white/rectangle-only payload replay, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
 | Floor-plan lifecycle | Pass in unit/integration harness; stale analysis, Reset/default/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
-| Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` after exact VLM recognition and imported Queen/King/recovery/manual chain |
+| Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/recovery/manual chain; failure evidence retains raw attempts |
 | Dependency audit | Pass; `npm audit --json` reports 0 vulnerabilities after Electron `42.11.18` |
 | Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
 
@@ -199,6 +204,24 @@ Final command outputs from the October 31 independent revision run:
 | `npm run test:audio-integration` | Pass; 3,125 ms prepare, 242 ms transcription |
 | `npm run test:nemotron-integration` | Pass; 31 partials, 1,269 ms first partial, 196 ms stop-to-final |
 | `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.579–8.942 s |
+
+## November 3 neutral-prompt follow-up
+
+The final source revision was validated on the remote Linux host with the Windows-only VLM gate
+left for the target laptop:
+
+| Command / check | Result |
+|---|---|
+| `npm ci --no-audit --no-fund` | Pass; locked dependencies and Electron runtime materialized |
+| `npm run lint` | Pass; 94 files checked |
+| `npm run typecheck` | Pass |
+| `npm test` | Pass; 29 files / 714 tests |
+| `npm run build` | Pass; 123 renderer modules |
+| `npm audit --json` | Pass; 0 vulnerabilities |
+| `xvfb-run -a npm run smoke:electron` | Pass; Electron launched and exited cleanly; this host had no cached models and could not resolve the external catalog hostname |
+| `xvfb-run -a npm run probe:microphone-permission` | Pass; exact file-origin audio-only permission path and one audio track |
+| Repository visibility | `PRIVATE` |
+| Windows VLM rerun | Required: `npm run test:floor-plan-integration`; success must end with `FLOOR_PLAN_INTEGRATION_OK` |
 
 ## Layout latency profile
 

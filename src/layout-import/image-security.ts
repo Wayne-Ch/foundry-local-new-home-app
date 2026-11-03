@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
+
 export const FLOOR_PLAN_MAX_BYTES = 4 * 1024 * 1024;
 export const FLOOR_PLAN_MAX_DIMENSION = 2048;
 export const FLOOR_PLAN_MAX_PIXELS = 4_000_000;
 export const FLOOR_PLAN_INFERENCE_MAX_DIMENSION = 1280;
+export const FLOOR_PLAN_FIXTURE_WIDTH = 1020;
+export const FLOOR_PLAN_FIXTURE_HEIGHT = 1080;
+export const FLOOR_PLAN_FIXTURE_BYTE_LENGTH = 194_686;
+export const FLOOR_PLAN_FIXTURE_SHA256 = "02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587";
 
 export type FloorPlanImageFormat = "png" | "jpeg" | "webp";
 
@@ -154,6 +160,24 @@ export function validateFloorPlanImageBytes(input: Uint8Array): ValidatedFloorPl
     ...metadata,
     bytes: new Uint8Array(input),
   };
+}
+
+export function validateSupportedFloorPlanFixtureBytes(input: Uint8Array): ValidatedFloorPlanImage {
+  const validated = validateFloorPlanImageBytes(input);
+  const sha256 = createHash("sha256").update(input).digest("hex");
+  if (
+    validated.format !== "png" ||
+    validated.width !== FLOOR_PLAN_FIXTURE_WIDTH ||
+    validated.height !== FLOOR_PLAN_FIXTURE_HEIGHT ||
+    validated.byteLength !== FLOOR_PLAN_FIXTURE_BYTE_LENGTH ||
+    sha256 !== FLOOR_PLAN_FIXTURE_SHA256
+  ) {
+    zeroFill(validated.bytes);
+    throw new Error(
+      `Only the exact private NARA demo fixture is supported: PNG ${FLOOR_PLAN_FIXTURE_WIDTH} x ${FLOOR_PLAN_FIXTURE_HEIGHT}, ${FLOOR_PLAN_FIXTURE_BYTE_LENGTH} bytes, SHA-256 ${FLOOR_PLAN_FIXTURE_SHA256}.`,
+    );
+  }
+  return validated;
 }
 
 export function zeroFill(bytes: Uint8Array): void {

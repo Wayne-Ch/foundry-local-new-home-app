@@ -31,7 +31,10 @@ npm run start:built
 
 `npm run test:floor-plan-integration` must finish with
 `FLOOR_PLAN_INTEGRATION_OK`. It is not replaced by parser mocks: the script uses the packaged PNG,
-exact `qwen3.5-0.8b-generic-cpu:3`, CPU/`CPUExecutionProvider`, and the real v2.2.1 image item path.
+verifies its exact SHA-256/dimensions/byte length, uses exact
+`qwen3.5-0.8b-generic-cpu:3`, CPU/`CPUExecutionProvider`, and the real v2.2.1 image item path. It
+also requires white and rectangle-only controls to reject while retaining raw attempts. A failure
+writes `artifacts/floor-plan-integration-failure.json`.
 After `npm ci`, verify `node_modules\electron\path.txt` exists. If it does not, stop and run
 `npm run setup:native`; do not continue with a partially materialized Electron package.
 
@@ -83,8 +86,9 @@ In the app:
 
 Optional enhanced-room preflight:
 
-1. Select **Load sample floor plan** and confirm the NARA `1020 x 1080` preview. Commons marks the
-   source `PD-US`; keep this optional fixture private unless legal review approves wider use.
+1. Select **Load sample floor plan** and confirm the exact NARA `1020 x 1080` preview. **Choose exact
+   fixture copy** accepts only byte-identical PNG bytes. Commons marks the source `PD-US`; keep this
+   optional fixture private unless legal review approves wider use.
 2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
    endpoint, and the non-forced categories: rectangular room and room label/door/window present.
 3. If analysis fails, open **Developer trace -> Runtime + locked state** and record
@@ -118,7 +122,7 @@ Optional enhanced beat before A:
 
 | Beat | Action | Expected evidence |
 |---|---|---|
-| I | Load sample floor plan -> Analyze layout | Preview remains visible; VLM recognizes bedroom/door/window topology; app applies documented dimensions and canonical geometry |
+| I | Load sample floor plan -> Analyze layout | Exact fixture identity passes; preview remains visible; VLM recognizes independent visible rectangle/label/door/window topology; app applies documented NARA scale and canonical geometry |
 | I-A | Queen + desk in imported room | Feasible, with entry swing, closet access, and window clearance passing |
 | I-B | Change to King | No feasible bounded option; exact 70 / 250 mm furniture gap |
 | I-C | Keep Queen, add baby bed, allow compact desk | Feasible; manual 50 mm adjustment remains valid |
@@ -127,8 +131,8 @@ Say:
 
 > This is a deliberately constrained image-understanding demo, not arbitrary CAD ingestion. The
 > local VLM recognizes topology; the application owns scale, geometry, placement options, and every
-> verdict. The fixture is an empty labeled master bedroom; the model is not asked for dimensions or
-> coordinates.
+> verdict. The fixture is an empty labeled master bedroom; the model does not infer millimetres,
+> hinges, coordinates, or clearance.
 
 ### Before 0:00 — Prepare real, pre-run state
 

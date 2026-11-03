@@ -1,0 +1,23 @@
+{
+  "case": "rectangle-only-control",
+  "image": {
+    "path": "tests/fixtures/floor-plan/rectangle-only-control.png",
+    "sha256": "5099e5a83ebdfd6be326f7ef42102fccf8e91b49719b22258cbd1de4aac13a4c",
+    "width": 1020,
+    "height": 1080
+  },
+  "runs": [
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"uncertain\",\"doorOpening\":\"uncertain\",\"windowOpening\":\"uncertain\"}"
+    }
+  ]
+}

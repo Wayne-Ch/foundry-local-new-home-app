@@ -728,15 +728,15 @@ function renderFloorPlanImport(): void {
   const vision = viewState.visionReadiness;
   if (imported.status === "idle") {
     floorPlanImportStatus.textContent =
-      "Default verified room is active. Load the private NARA sample only when demonstrating image intake.";
+      "Default verified room is active. This private demo accepts only the packaged NARA PNG or an exact byte-for-byte copy.";
   } else if (imported.status === "image_ready") {
     floorPlanImportStatus.textContent =
-      "Image bytes passed main-process signature, size, dimension, and pixel bounds. Analyze to recognize the room.";
+      "Exact NARA fixture identity passed PNG, 1020 x 1080, byte-length, and SHA-256 checks. Analyze visible topology only.";
   } else if (imported.status === "analyzing") {
     floorPlanImportStatus.textContent = `Analyzing locally with ${vision.target.modelId}; no cloud endpoint or canned fallback.`;
   } else if (imported.status === "imported") {
     floorPlanImportStatus.textContent =
-      "Experimental imported room is active. The app canonicalized recognized topology into deterministic geometry.";
+      "VLM visible-topology recognition passed. The app applied documented NARA scale plus canonical door, window, closet, and clearance geometry.";
   } else {
     floorPlanImportStatus.textContent = `Import failed closed: ${imported.error ?? "unknown error"}. The default room remains available.`;
   }

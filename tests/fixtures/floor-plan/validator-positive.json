@@ -1,0 +1,23 @@
+{
+  "case": "positive",
+  "image": {
+    "path": "public/assets/floor-plan/sample-master-bedroom.png",
+    "sha256": "02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587",
+    "width": 1020,
+    "height": 1080
+  },
+  "runs": [
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"present\",\"doorOpening\":\"present\",\"windowOpening\":\"present\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"present\",\"doorOpening\":\"present\",\"windowOpening\":\"present\"}"
+    },
+    {
+      "finishReason": "stop",
+      "rawOutput": "{\"schema\":\"single-room-topology-v1\",\"roomShape\":\"rectangle\",\"roomLabel\":\"present\",\"doorOpening\":\"present\",\"windowOpening\":\"present\"}"
+    }
+  ]
+}

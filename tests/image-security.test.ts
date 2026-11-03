@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FLOOR_PLAN_MAX_BYTES, validateFloorPlanImageBytes } from "../src/layout-import/image-security";
+import {
+  FLOOR_PLAN_FIXTURE_SHA256,
+  FLOOR_PLAN_MAX_BYTES,
+  validateFloorPlanImageBytes,
+  validateSupportedFloorPlanFixtureBytes,
+} from "../src/layout-import/image-security";
 import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 
 const samplePath = new URL("../public/assets/floor-plan/sample-master-bedroom.png", import.meta.url);
@@ -55,9 +60,12 @@ describe("floor-plan image security", () => {
     expect(validated.bytes).not.toBe(source);
     expect(validated.bytes).toEqual(new Uint8Array(source));
     expect(source.byteLength).toBe(194_686);
-    expect(createHash("sha256").update(source).digest("hex")).toBe(
-      "02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587",
-    );
+    expect(createHash("sha256").update(source).digest("hex")).toBe(FLOOR_PLAN_FIXTURE_SHA256);
+    expect(validateSupportedFloorPlanFixtureBytes(source)).toMatchObject({
+      format: "png",
+      width: 1020,
+      height: 1080,
+    });
   });
 
   it.each([
@@ -87,6 +95,14 @@ describe("floor-plan image security", () => {
     );
     expect(() => validateFloorPlanImageBytes(oversizedPng(4096, 32))).toThrow(/dimensions/);
     expect(() => validateFloorPlanImageBytes(oversizedPng(2048, 2048))).toThrow(/pixels/);
+  });
+
+  it("rejects a byte-modified copy before it can receive canonical geometry", () => {
+    const modified = new Uint8Array(readFileSync(samplePath));
+    const lastIndex = modified.length - 1;
+    modified[lastIndex] = (modified[lastIndex] ?? 0) ^ 0x01;
+
+    expect(() => validateSupportedFloorPlanFixtureBytes(modified)).toThrow("exact private NARA demo fixture");
   });
 
   it("owns, previews, and zero-fills bytes without exposing a filesystem path", () => {

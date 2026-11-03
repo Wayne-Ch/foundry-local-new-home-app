@@ -7,7 +7,12 @@ import {
   type Response,
 } from "foundry-local-sdk";
 import { describe, expect, it } from "vitest";
-import { FLOOR_PLAN_VISION_MODEL_ID, parseFloorPlanRecognition } from "../src/domain/floor-plan-import";
+import {
+  FLOOR_PLAN_VISION_MODEL_ID,
+  floorPlanVisionSystemPrompt,
+  floorPlanVisionUserPrompt,
+  parseFloorPlanRecognition,
+} from "../src/domain/floor-plan-import";
 import { FoundryLayoutService, type FoundryRuntimeError } from "../src/foundry/foundry-service";
 import {
   VALIDATED_EXECUTION_PROVIDER,
@@ -186,6 +191,7 @@ class VisionSession {
   turnCount = 0;
   disposeCalls = 0;
   capturedImage: Uint8Array | null = null;
+  capturedRequest: Request | null = null;
 
   constructor(
     readonly gate: Promise<void> = Promise.resolve(),
@@ -213,6 +219,7 @@ class VisionSession {
   }
 
   async processRequest(request: Request): Promise<Response> {
+    this.capturedRequest = request;
     const message = request.getItem(1);
     if (message.type !== "message") {
       throw new Error("Expected multimodal user message.");
@@ -268,6 +275,18 @@ function deferred() {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+function requestMessageText(request: Request, index: number): string {
+  const message = request.getItem(index);
+  if (message.type !== "message") {
+    throw new Error(`Expected message item ${index}.`);
+  }
+  const text = message.parts?.find((part) => part.type === "text");
+  if (text?.type !== "text") {
+    throw new Error(`Expected text part in message item ${index}.`);
+  }
+  return text.text;
 }
 
 describe("Foundry floor-plan vision slot", () => {
@@ -378,13 +397,14 @@ describe("Foundry floor-plan vision slot", () => {
     await service.shutdown();
   });
 
-  it("uses one bounded correction attempt without increasing output tokens", async () => {
+  it("uses one bounded retry with the exact same neutral prompts", async () => {
     const { layout, vision } = models();
     const manager = new FakeManager([layout, vision]);
-    const sessions = [
+    const createdSessions = [
       new VisionSession(Promise.resolve(), () => {}, `\`\`\`json\n${validRecognition}\n\`\`\``),
       new VisionSession(),
     ];
+    const sessions = [...createdSessions];
     const zeroedBuffers: Uint8Array[] = [];
     const service = new FoundryLayoutService({
       resolvePaths: async () => fakePaths,
@@ -408,6 +428,15 @@ describe("Foundry floor-plan vision slot", () => {
       error: { code: "INVALID_OUTPUT" },
     });
     expect(outcome.attempts[1]).toMatchObject({ attempt: 2, error: null });
+    expect(sessions).toHaveLength(0);
+    for (const session of createdSessions) {
+      expect(session.capturedRequest).not.toBeNull();
+      if (session.capturedRequest === null) {
+        continue;
+      }
+      expect(requestMessageText(session.capturedRequest, 0)).toBe(floorPlanVisionSystemPrompt);
+      expect(requestMessageText(session.capturedRequest, 1)).toBe(floorPlanVisionUserPrompt);
+    }
     expect(zeroedBuffers).toHaveLength(2);
     expect(zeroedBuffers.every((bytes) => bytes.every((value) => value === 0))).toBe(true);
     await service.shutdown();

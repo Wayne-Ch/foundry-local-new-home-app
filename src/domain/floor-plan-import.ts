@@ -5,6 +5,7 @@ export const FLOOR_PLAN_VISION_EXECUTION_PROVIDER = "CPUExecutionProvider";
 export const IMPORTED_ROOM_PLAN_ID = "imported-nara-master-bedroom";
 export const IMPORTED_ROOM_PLAN_VERSION = "2026-11-03.2";
 export const FLOOR_PLAN_SAMPLE_ASSET_PATH = "assets/floor-plan/sample-master-bedroom.png";
+export const FLOOR_PLAN_VISION_MAX_OUTPUT_TOKENS = 320;
 
 const IMPORTED_ROOM_WIDTH_MM = 3650;
 const IMPORTED_ROOM_DEPTH_MM = 3950;
@@ -42,20 +43,28 @@ export const floorPlanRecognitionJsonSchema = {
   required: ["schema", "roomShape", "roomLabel", "doorOpening", "windowOpening"],
 } as const;
 
-export const floorPlanVisionSystemPrompt = `
-Inspect one packaged architectural room-plan crop. Return exactly one compact JSON object matching the supplied schema.
-Every categorical field deliberately allows a positive, negative, or uncertain answer. Inspect the pixels; do not choose a value merely because the prompt expects it.
-- roomShape: rectangle only when one room has a clearly rectangular boundary.
-- roomLabel: present only when a printed room label is clearly visible; do not return its OCR text.
-- doorOpening: present only when at least one architectural door opening or swing is visible.
-- windowOpening: present only when at least one architectural window opening is visible.
-Do not infer coordinates, hinge direction, dimensions, scale, filename identity, or a fit verdict.
-Do not add prose, Markdown, confidence, OCR text, hashes, or extra keys.
-`.trim();
+export const floorPlanVisionSystemPrompt =
+  "You are a visual evidence classifier. Inspect only the supplied image and do not assume it is a floor plan. Every recognition field allows positive, negative, or uncertain evidence. Use roomShape=rectangle only for a clearly visible rectangular room-like boundary, roomShape=not_rectangle only for a clearly visible non-rectangular room-like boundary, and roomShape=uncertain otherwise. Use present only when the named feature is directly visible, absent only when clearly not visible, and uncertain when ambiguous or unreadable. Do not infer hidden content, expected fixtures, dimensions, scale, filename identity, or a fit verdict. Return exactly one compact JSON object matching the supplied schema and no prose.";
 
-export const floorPlanVisionUserPrompt = `
-Classify the visible single-room topology. Include every required key exactly once and return JSON only.
-`.trim();
+export const floorPlanVisionUserPrompt =
+  "Classify the independent visible evidence for room shape, a printed room label, at least one architectural door opening or swing, and at least one architectural window opening. Include every required key exactly once and return JSON only.";
+
+export function createFloorPlanVisionRequestOptions() {
+  return {
+    search: {
+      doSample: false,
+      temperature: 0,
+      seed: 42,
+      maxOutputTokens: FLOOR_PLAN_VISION_MAX_OUTPUT_TOKENS,
+    },
+    toolChoice: "none" as const,
+    additionalOptions: {
+      guidance_type: "json_schema",
+      guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
+      chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
+    },
+  };
+}
 
 const expectedKeyCounts = {
   schema: 1,

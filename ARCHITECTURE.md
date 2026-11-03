@@ -62,9 +62,9 @@ sequenceDiagram
   participant V as Foundry Local Qwen3.5 VLM
   participant G as Existing geometry engine
 
-  U->>R: Load sample / Choose image
+  U->>R: Load sample / Choose exact fixture copy
   R->>M: Typed IPC request only
-  M->>M: Read bytes; validate magic, bytes,<br/>dimensions, pixels; retain no renderer path
+  M->>M: Validate exact PNG dimensions,<br/>byte length, SHA-256; retain no renderer path
   M-->>R: Sanitized data-URL preview + metadata
   U->>R: Analyze layout
   R->>M: Analyze staged image
@@ -76,12 +76,16 @@ sequenceDiagram
   G-->>R: Existing deterministic room/placement evidence
 ```
 
-The renderer never sends or receives a filesystem path. Main accepts only PNG/JPEG/WebP magic,
-limits input to 4 MiB / 2,048 px per side / 4,000,000 pixels, and rejects SVG, HTML, PDF, Office/ZIP,
-renamed content, and shared mutable buffers. Electron decodes and re-encodes a sanitized PNG,
-requires decoded and header dimensions to agree, retains original preview dimensions/metadata, and
-creates a separate inference PNG capped at 1,280 px on its longest side. The preview is a data URL;
-source, decode-preparation, preview-byte, and inference-byte owners are independently zero-filled.
+The renderer never sends or receives a filesystem path. Main first applies the bounded magic,
+byte, dimension, pixel, and shared-buffer checks, then accepts only the exact packaged PNG:
+`1020 x 1080`, `194,686` bytes, SHA-256
+`02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587`.
+A renamed byte-identical copy passes; re-encoded, modified, arbitrary, white, and rectangle-only
+inputs reject before canonical geometry can be created. Electron then decodes and re-encodes a
+sanitized PNG, requires decoded and header dimensions to agree, retains original preview
+dimensions/metadata, and creates a separate inference PNG capped at 1,280 px on its longest side.
+The preview is a data URL; source, decode-preparation, preview-byte, and inference-byte owners are
+independently zero-filled.
 
 The exact optional slot is `qwen3.5-0.8b-generic-cpu:3`,
 `vision-language-chat`, CPU/`CPUExecutionProvider`. It shares the existing
@@ -97,13 +101,15 @@ Every alternative remains available in runtime guidance. The application accepts
 `rectangle` and visible room label/door/window. Missing, negative, or uncertain evidence rejects.
 Object-key order is irrelevant JSON syntax, but keys must occur exactly
 once; length, repetition, extra prose, and legacy numeric/coordinate output fail closed. The request
-uses a fixed 320-token cap and at most one fresh-session correction with the same cap. Every rejected
-attempt's bounded, control-character-redacted raw output is visible in Developer trace.
+uses the exact neutral evidence-classifier prompts, `temperature=0`, `seed=42`, a fixed 320-token
+cap, JSON-schema guidance, no tools, and thinking disabled. At most one fresh-session retry uses the
+identical request. Every rejected attempt's bounded, control-character-redacted raw output is
+visible in Developer trace.
 
 Application conversion uses the plan's documented approximately `11'-10 3/4" x 13'-0"` dimensions
 as `3650 x 3950 mm`, then applies one canonical upper-left door swing, built-in closet/access zone,
-and exterior-window clearance zone. The model never supplies coordinates, hinge direction,
-millimetres, fit, or a verdict. Reset returns to the original verified bedroom. Default-room
+and exterior-window clearance zone. The VLM recognizes visible topology only; it never supplies
+coordinates, hinge direction, millimetres, clearance, fit, or a verdict. Reset returns to the original verified bedroom. Default-room
 selection, reload, renderer loss, close, and shutdown cancel stale vision work and clear image
 ownership.
 

@@ -11,6 +11,7 @@ import { FloorPlanImageStore } from "../src/main/floor-plan-image-store";
 const sample = readFileSync(
   new URL("../public/assets/floor-plan/sample-master-bedroom.png", import.meta.url),
 );
+const whiteControl = readFileSync(new URL("./fixtures/floor-plan/white-control.png", import.meta.url));
 
 const readiness: RuntimeReadiness = {
   sdkVersion: "2.2.1",
@@ -149,6 +150,24 @@ function deferred<T>() {
 }
 
 describe("floor-plan controller lifecycle", () => {
+  it("rejects non-fixture bytes before analysis and keeps the default room active", async () => {
+    const analyzeFloorPlan = vi.fn(async () => outcome());
+    const controller = new DemoController({
+      foundry: createFoundry({ analyzeFloorPlan }),
+    });
+
+    await expect(controller.loadFloorPlanImage(whiteControl, "picker", "white-control.png")).rejects.toThrow(
+      "exact private NARA demo fixture",
+    );
+
+    expect(analyzeFloorPlan).not.toHaveBeenCalled();
+    expect(controller.bootstrap()).toMatchObject({
+      roomMode: "default",
+      roomPlan: { id: "ignite-bedroom-a" },
+      floorPlanImport: { status: "idle", preview: null, recognition: null },
+    });
+  });
+
   it("stages secure bytes, imports recognized geometry, then zero-fills inference ownership", async () => {
     const store = new FloorPlanImageStore();
     const analyzeFloorPlan = vi.fn(async () => outcome());

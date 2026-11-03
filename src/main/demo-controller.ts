@@ -25,6 +25,7 @@ import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/
 import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
 import { FoundryFloorPlanVisionError, FoundryLayoutService } from "../foundry/foundry-service";
 import { stageTurnsForMode } from "../foundry/prompt";
+import { FLOOR_PLAN_FIXTURE_SHA256 } from "../layout-import/image-security";
 import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
@@ -59,7 +60,7 @@ function recognizedFloorPlanFacts(recognition: FloorPlanRecognition): readonly s
     `Room label: ${recognition.roomLabel}.`,
     `Door opening: ${recognition.doorOpening}.`,
     `Window opening: ${recognition.windowOpening}.`,
-    "Application applied the fixture's documented dimensions and canonical door/window/closet geometry.",
+    "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
   ];
 }
 
@@ -217,6 +218,8 @@ export class DemoController {
       inferenceWidth: preview.inferenceWidth,
       inferenceHeight: preview.inferenceHeight,
       inferenceByteLength: preview.inferenceByteLength,
+      fixtureSha256: FLOOR_PLAN_FIXTURE_SHA256,
+      exactFixtureIdentityVerified: true,
       filesystemPathExposed: false,
     });
     return this.bootstrap();
@@ -226,7 +229,7 @@ export class DemoController {
     const generation = this.#beginOperation();
     const preview = this.#floorPlanImages.preview;
     if (preview === null) {
-      throw new Error("Load the packaged sample or choose a supported image before analysis.");
+      throw new Error("Load the packaged sample or choose an exact copy of that fixture before analysis.");
     }
     this.#floorPlanImport = {
       ...this.#floorPlanImport,
@@ -263,7 +266,7 @@ export class DemoController {
       this.#messages = [
         message(
           "system",
-          "Experimental NARA master bedroom loaded. Foundry Local recognized a rectangular labeled room with a door and window. The application applied the documented fixture dimensions and canonical door/window/closet geometry.",
+          "Experimental NARA master bedroom loaded. Foundry Local recognized only the visible rectangular room, label, door, and window topology. The application applied the documented NARA fixture scale and canonical door/window/closet geometry; the VLM did not infer millimetres, hinges, coordinates, or clearance.",
         ),
       ];
       this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition accepted", {

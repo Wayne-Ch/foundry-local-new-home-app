@@ -41,11 +41,11 @@ import {
 import { TempAudioStore, withTemporaryWav } from "../audio/temp-audio-store";
 import { defaultPlanningFixture } from "../domain/fixture";
 import {
+  createFloorPlanVisionRequestOptions,
   FLOOR_PLAN_VISION_EXECUTION_PROVIDER,
   FLOOR_PLAN_VISION_MODEL_ID,
   type FloorPlanRecognition,
   type FloorPlanRecognitionError,
-  floorPlanRecognitionJsonSchema,
   floorPlanVisionSystemPrompt,
   floorPlanVisionUserPrompt,
   parseFloorPlanRecognition,
@@ -83,7 +83,6 @@ import {
 
 const MAX_TOOL_ATTEMPTS = 3;
 const MAX_INTENT_OUTPUT_TOKENS = 256;
-const MAX_VISION_OUTPUT_TOKENS = 320;
 const MAX_VISION_ATTEMPTS = 2;
 const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
 const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding", "vision-language-chat"]);
@@ -1571,7 +1570,6 @@ export class FoundryLayoutService {
     let totalPreflightMs = 0;
     let totalGenerationMs = 0;
     let totalOutputBytes = 0;
-    let correction = "";
 
     for (let attempt = 1; attempt <= MAX_VISION_ATTEMPTS; attempt += 1) {
       const requestBytes = new Uint8Array(imageBytes);
@@ -1579,25 +1577,9 @@ export class FoundryLayoutService {
       const request = new Request()
         .addItem(Item.systemMessage(floorPlanVisionSystemPrompt))
         .addItem(
-          Item.userMessage([
-            Item.imageFromData(format, requestBytes),
-            Item.text(`${floorPlanVisionUserPrompt}${correction}`),
-          ]),
+          Item.userMessage([Item.imageFromData(format, requestBytes), Item.text(floorPlanVisionUserPrompt)]),
         )
-        .setOptions({
-          search: {
-            doSample: false,
-            temperature: 0,
-            seed: 42,
-            maxOutputTokens: MAX_VISION_OUTPUT_TOKENS,
-          },
-          toolChoice: "none",
-          additionalOptions: {
-            guidance_type: "json_schema",
-            guidance_data: JSON.stringify(floorPlanRecognitionJsonSchema),
-            chat_template_kwargs: JSON.stringify({ enable_thinking: false }),
-          },
-        });
+        .setOptions(createFloorPlanVisionRequestOptions());
 
       try {
         onProgress?.(
@@ -1667,7 +1649,6 @@ export class FoundryLayoutService {
           finishReason: response.finishReason,
           error,
         });
-        correction = `\nThe previous attempt was rejected (${error.code}: ${error.message}). Re-inspect the pixels and re-emit one complete JSON object with every required key exactly once. Use absent or uncertain when the evidence is not visible. Do not increase detail or add prose.`;
       } finally {
         if (this.#activeVisionRequest === request) {
           this.#activeVisionRequest = null;
