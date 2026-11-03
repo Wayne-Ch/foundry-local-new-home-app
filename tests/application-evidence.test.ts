@@ -92,6 +92,7 @@ describe.each(scenarios)("application evidence copy for $label", ({ fixture, tur
 
     expect(text).toMatch(/^No feasible known option\./);
     expect(text).toContain("Which preference may change:");
+    expect(text).not.toContain("baby bed");
     expectConclusionOnly(text, prompt);
   });
 

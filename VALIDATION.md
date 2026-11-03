@@ -47,11 +47,11 @@ application validation handles directional transitions, scoped negation, ambigui
 and fail-closed furniture recognition. Exact `qwen3-0.6b-generic-gpu:2` remains the stage-validated
 built-in default after passing the corrected semantic gate.
 
-The October 30 UI adds an explicit Turn B recovery action, visible requirements and exact pair
-measurements, red/green SVG dimension callouts, and application-owned 50 mm-grid direct manipulation.
-Manual placement keeps model/tool history intact, reuses the same deterministic validator, rejects
-stale or invalid previews, and records separate provenance before creating a new accepted application
-layout version.
+The October 30 UI adds an explicit next Turn C buyer-request action after the Turn B conflict,
+visible requirements and exact pair measurements, red/green SVG dimension callouts, and
+application-owned 50 mm-grid direct manipulation. Manual placement keeps model/tool history intact,
+reuses the same deterministic validator, rejects stale or invalid previews, and records separate
+provenance before creating a new accepted application layout version.
 
 The independent reset/speech revision advances renderer and controller state synchronously to a
 persisted reset generation and v0, clearing the editable prompt, submitted transcript state, raw
@@ -136,7 +136,7 @@ npm run capture:ui
 | TypeScript | Pass |
 | Biome lint/format | Pass |
 | Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
-| Unit tests | 30 files / 726 tests pass |
+| Unit tests | 31 files / 742 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
 | Electron renderer Reset probe | Pass; two real Start-recording/Reset UI cycles used a controlled WAV-backed MediaStream and real Nemotron `AudioSession`; tracks stopped, controller cancellation completed in 6 ms then 4 ms, ownership advanced from session 1 to 2, UI/controller stayed v0, and the fresh recording lease succeeded |
@@ -144,9 +144,9 @@ npm run capture:ui
 | Electron microphone permission probe | Pass |
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
-| Turn C Queen + baby bed + compact desk | Feasible; recovery prompt preserved exactly |
-| King + compact desk + baby bed | No feasible bounded option; accepted Queen recovery stays visible and adjustable, while rejected east evidence retains 70 / 250 mm and 170 / 250 mm measurements |
-| Recovery action | Pass; visible choice enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
+| Turn C Queen + desk + baby bed | Feasible; the full new buyer request is preserved exactly before Application evidence |
+| King + compact desk + baby bed | No feasible bounded option; the accepted Queen Turn C layout stays visible and adjustable, while rejected east evidence retains 70 / 250 mm and 170 / 250 mm measurements |
+| Turn C action | Pass; **Run next: C · Queen + desk + baby bed** enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
 | Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
 | Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct candidate-local governing-action span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; additive/request/placement `creep` positives, keep/move/remove-person negatives, punctuated/adverb negation, exact `baby bed`, local luggage, and independent later clauses across `but`, `then`, commas, and subordinators are focused-tested |
 | Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main v0, clears accepted/transient evidence, rejects stale bootstrap/results, preserves v0 through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease |
@@ -166,7 +166,7 @@ npm run capture:ui
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
-| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 407,900 bytes |
+| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 430,250 bytes |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
 | Nemotron timing | Cached prepare 3,231 ms; first partial 1,269 ms; stop-to-final 196 ms |
@@ -183,7 +183,7 @@ npm run capture:ui
 | Floor-plan image security | Pass; general magic/byte/dimension/pixel checks plus exact PNG dimensions, byte length, SHA-256 identity, modified/control rejection, main ownership, no path, and zero-fill covered |
 | Floor-plan parser | Pass; exact neutral prompts, open positive/negative/uncertain alternatives, exact keys/counts, authoritative positive/white/rectangle-only payload replay, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
 | Floor-plan lifecycle | Pass in unit/integration harness; stale analysis, Reset/default/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
-| Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/recovery/manual chain; failure evidence retains raw attempts |
+| Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/Turn C/manual chain; failure evidence retains raw attempts |
 | Dependency audit | Pass; `npm audit --offline --json` reports 0 vulnerabilities after Electron `42.11.18`; the live Microsoft package proxy returned HTTP 429 during this integration run |
 | Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
 
@@ -202,10 +202,10 @@ Final command outputs from the October 31 independent revision run:
 | `npm run probe:reset` | Pass; actual renderer Start/Reset controls, controlled WAV-backed MediaStream, production IPC/controller/owner, real Nemotron stream, 1 PCM chunk per cycle, 6 ms then 4 ms cancellation, stopped tracks, v0 UI/controller, and fresh lease session 2 |
 | `npm run probe:stream-owner` | Pass; injected rejected promise made the harness assertion fail through console + CDP `Runtime.exceptionThrown`; after clearing only that expected self-test evidence, actual reload/close recordings produced 1 chunk each, both tracks and native streams canceled in 8 ms and 41 ms, stale routing was false, and lifecycle error counts were zero |
 | `npm run probe:microphone-permission` | Pass, including its required rebuild |
-| `npm run capture:ui` | Pass; regenerated 397,170-byte labeled 16:9 preview was visually identical, so the unchanged 397,297-byte committed reference was restored |
+| `npm run capture:ui` | Pass; regenerated the 430,250-byte labeled 16:9 Turn C preview with the full Buyer request before Application evidence |
 | `npm run test:audio-integration` | Pass; 3,125 ms prepare, 242 ms transcription |
 | `npm run test:nemotron-integration` | Pass; 31 partials, 1,269 ms first partial, 196 ms stop-to-final |
-| `npm run test:integration` | Pass; 13 real Qwen3 turns including explicit recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.579–8.942 s |
+| `npm run test:integration` | Pass; 13 real Qwen3 turns including the explicit Turn C buyer request, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants, 2.579–8.942 s |
 
 ## November 3 neutral-prompt follow-up
 
@@ -215,9 +215,9 @@ left for the target laptop:
 | Command / check | Result |
 |---|---|
 | `npm ci --no-audit --no-fund` | Pass; locked dependencies and Electron runtime materialized |
-| `npm run lint` | Pass; 94 files checked |
+| `npm run lint` | Pass; 97 files checked |
 | `npm run typecheck` | Pass |
-| `npm test` | Pass; 29 files / 714 tests |
+| `npm test` | Pass; 31 files / 742 tests |
 | `npm run build` | Pass; 123 renderer modules |
 | `npm audit --json` | Pass; 0 vulnerabilities |
 | `xvfb-run -a npm run smoke:electron` | Pass; Electron launched and exited cleanly; this host had no cached models and could not resolve the external catalog hostname |
@@ -235,7 +235,7 @@ state references, retained objects, units, and clarification details.
 |---|---:|---:|---:|---:|---:|---:|---:|
 | A · Queen + desk | 1 | 23,945 ms | 4.722 ms | 23,955 ms | 748 | 210 | 1,043 / 1,812 / 697 |
 | B · King replacement | 2 | 36,029 ms | 1.066 ms | 36,037 ms | 1,285 | 198 | 1,310 / 1,758 / 653 |
-| C · Add baby bed | 2 | 25,789 ms | 0.698 ms | 25,795 ms | 1,820 | 212 | 1,355 / 1,754 / 700 |
+| C · Queen + desk + baby bed | 2 | 25,789 ms | 0.698 ms | 25,795 ms | 1,820 | 212 | 1,355 / 1,754 / 700 |
 | Controlled failure | 2 | 27,797 ms | 0.558 ms | 27,806 ms | 2,378 | 223 | 1,369 / 1,773 / 729 |
 | Negation/correction | 2 | 38,882 ms | 0.721 ms | 38,893 ms | 2,943 | 219 | 1,367 / 1,769 / 721 |
 
@@ -250,7 +250,7 @@ model-selection evidence; the legacy comparison remains the measured contract-pa
 |---|---:|---:|---:|---:|---:|---:|---:|
 | A · Queen + desk | 2 | 7,242 ms | 16.811 ms | 7,266 ms | 958 | 65 | 1,461 / 1,998 / 168 |
 | B · King replacement | 2 | 6,513 ms | 3.186 ms | 6,521 ms | 1,423 | 64 | 1,323 / 1,998 / 168 |
-| C · Add baby bed | 2 | 6,939 ms | 3.474 ms | 6,949 ms | 1,905 | 64 | 1,469 / 1,998 / 168 |
+| C · Queen + desk + baby bed | 2 | 6,939 ms | 3.474 ms | 6,949 ms | 1,905 | 64 | 1,469 / 1,998 / 168 |
 | Controlled failure | 2 | 8,018 ms | 2.210 ms | 8,026 ms | 2,389 | 64 | 1,416 / 1,998 / 171 |
 | Adversarial correction | 2 | 8,935 ms | 2.062 ms | 8,942 ms | 2,855 | 64 | 1,421 / 1,998 / 174 |
 | Replace King with Queen | 1 | 5,045 ms | 1.512 ms | 5,050 ms | 1,604 | 32 | 463 / 999 / 86 |
@@ -263,9 +263,9 @@ model-selection evidence; the legacy comparison remains the measured contract-pa
 | Unsupported twin + moon pod | 2 | 5,219 ms | 3.314 ms | 5,226 ms | 619 | 64 | 1,344 / 1,998 / 175 |
 
 The historical October 29 real-app maximum was 11,162 ms. The October 31 thirteen-turn integration
-with explicit recovery and baby-bed aliases measured 2,579–8,942 ms while preserving the compact
-semantic contract. The extra bounded attempt on several turns remains visible rather than hidden by
-prompt-preselected enums.
+with the explicit Turn C buyer request and baby-bed aliases measured 2,579–8,942 ms while preserving
+the compact semantic contract. The extra bounded attempt on several turns remains visible rather
+than hidden by prompt-preselected enums.
 
 ## Exact model benchmark
 
@@ -397,9 +397,10 @@ Final real app-service Whisper fallback integration:
   performance are not validated.
 - A physical network-disconnect rehearsal still requires Wayne's manual adapter action.
 - Real microphone permission and human-spoken acceptance still require one Wayne interaction:
-  **Prepare Nemotron live -> Start recording -> say “Keep the Queen bed. Add a baby bed. Use a
-  compact desk. Keep the closet clear.” -> confirm partial revisions -> Stop -> verify the raw trace,
-  visible suggestion label if present, and editable draft -> Send -> confirm
+  **Prepare Nemotron live -> Start recording -> say “Can we do a Queen bed and a desk, and also add
+  a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave
+  the 250 mm furniture-clearance rule locked.” -> confirm partial revisions -> Stop -> verify the
+  raw trace, visible suggestion label if present, and editable draft -> Send -> confirm
   `queen-crib-compact-v1`**.
 - The local CLI is `0.11.0` while current public CLI is `0.12.1 Preview`; the app does not depend on
   the CLI.

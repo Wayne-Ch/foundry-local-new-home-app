@@ -67,7 +67,7 @@ try {
       "--window-size=1600,900",
       `--user-data-dir=${profilePath}`,
       `--screenshot=${screenshotPath}`,
-      `http://127.0.0.1:${address.port}/?preview=1`,
+      `http://127.0.0.1:${address.port}/?preview=1&step=request`,
     ],
     {
       cwd: process.cwd(),

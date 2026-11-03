@@ -2,18 +2,25 @@ import { describe, expect, it } from "vitest";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { createToolInputForTests, preferredCandidateFurnitureIds } from "../src/domain/tool-contract";
-import { stageTurns } from "../src/foundry/prompt";
+import { nextPendingStageTurnIndex, stageTurns } from "../src/foundry/prompt";
 
-describe("hands-on recovery story", () => {
-  it("makes the King conflict, preference choice, and feasible recovery explicit", () => {
+describe("hands-on buyer request story", () => {
+  it("makes the King conflict and the new Queen, desk, and baby-bed request explicit", () => {
     expect(stageTurns.map((turn) => turn.label)).toEqual([
       "A · Queen + desk",
       "B · King conflict",
-      "C · Choose Queen + baby bed",
+      "C · Queen + desk + baby bed",
       "E · King controlled failure",
     ]);
     expect(stageTurns[2]?.prompt).toBe(
-      "Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.",
+      "Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.",
+    );
+    expect(nextPendingStageTurnIndex(stageTurns, [])).toBe(0);
+    expect(nextPendingStageTurnIndex(stageTurns, ["turn-a"])).toBe(1);
+    expect(nextPendingStageTurnIndex(stageTurns, ["turn-a", "turn-b"])).toBe(2);
+    expect(nextPendingStageTurnIndex(stageTurns, ["turn-a", "turn-b", "turn-c"])).toBe(3);
+    expect(nextPendingStageTurnIndex(stageTurns, ["turn-a", "turn-b", "turn-c", "controlled-failure"])).toBe(
+      -1,
     );
 
     const initial = createInitialDemoState();
@@ -40,7 +47,6 @@ describe("hands-on recovery story", () => {
     expect(turnB.noResultReason?.preferencesThatMayChange).toEqual([
       "bed size",
       "desk footprint or orientation",
-      "baby bed requirement",
     ]);
     expect(preferredCandidateFurnitureIds(afterB, stageTurns[2]?.prompt ?? "")).toEqual({
       bed: "bed-queen",
@@ -48,7 +54,7 @@ describe("hands-on recovery story", () => {
       crib: "crib-standard",
     });
 
-    const recovery = compareKnownLayoutOptions(
+    const turnC = compareKnownLayoutOptions(
       createToolInputForTests({
         state: afterB,
         candidateFurnitureIds: ["bed-queen", "desk-compact", "crib-standard"],
@@ -57,9 +63,29 @@ describe("hands-on recovery story", () => {
       }),
       afterB,
     );
-    expect(recovery.status).toBe("feasible");
-    expect(recovery.selectedOptionId).toBe("queen-crib-compact-v1");
-    expect(recovery.changedPreference).toContain("Keep the Queen bed");
+    expect(turnC.status).toBe("feasible");
+    expect(turnC.selectedOptionId).toBe("queen-crib-compact-v1");
+    expect(turnC.changedPreference).toContain("also add a baby bed");
     expect(afterB.lockedConstraints).toEqual(initial.lockedConstraints);
+
+    const afterC = applyToolResult(afterB, turnC);
+    const acceptedTurnC =
+      turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+    const turnE = compareKnownLayoutOptions(
+      createToolInputForTests({
+        state: afterC,
+        candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
+        retainFurnitureIds: ["desk-compact", "crib-standard"],
+        changedPreference: stageTurns[3]?.prompt ?? "",
+      }),
+      afterC,
+      acceptedTurnC,
+    );
+    expect(turnE.status).toBe("no_feasible_option");
+    expect(turnE.noResultReason?.preferencesThatMayChange).toEqual([
+      "bed size",
+      "desk footprint or orientation",
+      "baby bed requirement",
+    ]);
   });
 });

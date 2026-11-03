@@ -35,7 +35,7 @@ describe("demo state transitions", () => {
     expect(afterFailure.lastResultStatus).toBe("no_feasible_option");
   });
 
-  it("preserves imported recovery C as the accepted domain state after A->B->C->E", () => {
+  it("preserves imported buyer-request C as the accepted domain state after A->B->C->E", () => {
     const fixture = createImportedPlanningFixture({
       schema: "single-room-topology-v1",
       roomShape: "rectangle",

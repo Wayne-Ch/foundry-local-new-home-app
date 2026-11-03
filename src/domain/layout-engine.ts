@@ -13,6 +13,7 @@ import { type CompareLayoutOptionsInput, expandCandidateFurnitureIds } from "./t
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
+  FurnitureId,
   LayoutConflict,
   LayoutOption,
   LayoutToolResult,
@@ -57,6 +58,14 @@ function noFeasibleSummary(hasKnownOptions: boolean, hasAcceptedLayout: boolean)
 
 function furnitureSetKey(ids: readonly string[]): string {
   return [...ids].sort().join("|");
+}
+
+function preferencesThatMayChange(candidateFurnitureIds: readonly FurnitureId[]): readonly string[] {
+  return [
+    "bed size",
+    "desk footprint or orientation",
+    ...(candidateFurnitureIds.includes("crib-standard") ? ["baby bed requirement"] : []),
+  ];
 }
 
 function retainedManualOption(
@@ -127,12 +136,10 @@ export function compareKnownLayoutOptions(
   }
 
   const retainedManual = retainedManualOption(input, state, currentAcceptedLayout);
+  const candidateFurnitureIds = expandCandidateFurnitureIds(input.candidateFurnitureIds);
   const options = [
     ...(retainedManual === null ? [] : [retainedManual]),
-    ...getKnownLayoutOptions(
-      expandCandidateFurnitureIds(input.candidateFurnitureIds),
-      planningFixture.knownLayoutOptions,
-    ),
+    ...getKnownLayoutOptions(candidateFurnitureIds, planningFixture.knownLayoutOptions),
   ];
   const evaluated = options.map((option) =>
     evaluateLayoutOption(
@@ -190,7 +197,7 @@ export function compareKnownLayoutOptions(
       message: hasKnownOptions
         ? `None of the ${evaluated.length} bounded known options passes the locked constraints.`
         : "The application has no verified known option set for that exact furniture combination.",
-      preferencesThatMayChange: ["bed size", "desk footprint or orientation", "baby bed requirement"],
+      preferencesThatMayChange: preferencesThatMayChange(candidateFurnitureIds),
     },
     summary: noFeasibleSummary(hasKnownOptions, state.currentLayoutId !== null),
     provenance,

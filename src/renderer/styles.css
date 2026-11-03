@@ -353,39 +353,6 @@ h3 {
   overflow-y: auto;
 }
 
-.recovery-actions {
-  margin: 0 14px 10px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgb(53 198 138 / 55%);
-  border-radius: 12px;
-  background: rgb(18 89 65 / 30%);
-}
-
-.recovery-actions[hidden] {
-  display: none;
-}
-
-.recovery-actions strong,
-.recovery-actions span {
-  display: block;
-}
-
-.recovery-actions strong {
-  color: #bdf6dd;
-  font-size: 13px;
-}
-
-.recovery-actions span {
-  margin-top: 3px;
-  color: #a9cdbd;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .message {
   max-width: 94%;
   padding: 11px 13px;

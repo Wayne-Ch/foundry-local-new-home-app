@@ -23,8 +23,12 @@ import { defaultPlanningFixture } from "../domain/fixture";
 import { createImportedPlanningFixture, type FloorPlanRecognition } from "../domain/floor-plan-import";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
 import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
-import { FoundryFloorPlanVisionError, FoundryLayoutService } from "../foundry/foundry-service";
-import { stageTurnsForMode } from "../foundry/prompt";
+import {
+  FoundryFloorPlanVisionError,
+  FoundryLayoutService,
+  type FoundryTurnOutcome,
+} from "../foundry/foundry-service";
+import { nextPendingStageTurnIndex, stageTurnsForMode } from "../foundry/prompt";
 import { FLOOR_PLAN_FIXTURE_SHA256 } from "../layout-import/image-security";
 import type {
   AudioTranscriptionResponse,
@@ -36,6 +40,7 @@ import type {
   ProgressEvent,
   RunTurnRequest,
   RunTurnResponse,
+  StageTurnDefinition,
   StageTurnId,
   TraceEntry,
 } from "../shared/contracts";
@@ -62,6 +67,25 @@ function recognizedFloorPlanFacts(recognition: FloorPlanRecognition): readonly s
     `Window opening: ${recognition.windowOpening}.`,
     "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
   ];
+}
+
+function manuallyCompletedStageTurn(
+  turns: readonly StageTurnDefinition[],
+  completedTurnIds: readonly StageTurnId[],
+  outcome: FoundryTurnOutcome,
+): StageTurnId | undefined {
+  const nextTurn = turns[nextPendingStageTurnIndex(turns, completedTurnIds)];
+  const candidates = outcome.validatedInput.candidateFurnitureIds;
+  if (
+    nextTurn?.id === "turn-c" &&
+    outcome.toolResult.status === "feasible" &&
+    candidates.bed === "bed-queen" &&
+    candidates.desk === "desk-compact" &&
+    candidates.crib === "crib-standard"
+  ) {
+    return "turn-c";
+  }
+  return undefined;
 }
 
 type DemoFoundryService = Pick<
@@ -512,11 +536,15 @@ export class DemoController {
             (option) => option.id === outcome.toolResult.selectedOptionId,
           ) ?? null;
       }
-      if (
-        request.scriptedTurnId !== undefined &&
-        !this.#completedStageTurnIds.includes(request.scriptedTurnId)
-      ) {
-        this.#completedStageTurnIds.push(request.scriptedTurnId);
+      const completedStageTurnId =
+        request.scriptedTurnId ??
+        manuallyCompletedStageTurn(
+          stageTurnsForMode(this.#planningFixture.mode),
+          this.#completedStageTurnIds,
+          outcome,
+        );
+      if (completedStageTurnId !== undefined && !this.#completedStageTurnIds.includes(completedStageTurnId)) {
+        this.#completedStageTurnIds.push(completedStageTurnId);
       }
       this.#lastInteraction = "turn";
 

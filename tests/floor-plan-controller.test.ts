@@ -317,9 +317,11 @@ describe("floor-plan controller lifecycle", () => {
     expect(() => store.borrowBytes()).toThrow("No floor-plan image is loaded");
   });
 
-  it("keeps imported recovery C accepted after A->B->C->E while retaining E provenance", async () => {
+  it("keeps imported buyer-request C accepted after A->B->C->E while retaining E provenance", async () => {
     let turnIndex = 0;
     const acceptedLayoutIds: Array<string | null> = [];
+    const manualTurnCPrompt =
+      "Can we use a Queen bed with a compact desk and add a baby bed in the imported room? Keep the door, closet, and window clear, and keep the 250 mm furniture clearance.";
     const runTurn = vi.fn(
       async (
         prompt: string,
@@ -345,12 +347,23 @@ describe("floor-plan controller lifecycle", () => {
 
     const responses = [];
     for (const turn of importedStageTurns) {
-      responses.push(
-        await controller.runTurn({
-          prompt: turn.prompt,
-          scriptedTurnId: turn.id,
-        }),
-      );
+      const response = await controller.runTurn({
+        prompt: turn.id === "turn-c" ? manualTurnCPrompt : turn.prompt,
+        ...(turn.id === "turn-c" ? {} : { scriptedTurnId: turn.id }),
+      });
+      if (turn.id === "turn-c") {
+        expect(response.completedStageTurnIds).toEqual(["turn-a", "turn-b", "turn-c"]);
+        expect(response.messages.slice(-2)).toMatchObject([
+          {
+            role: "user",
+            text: manualTurnCPrompt,
+          },
+          {
+            role: "application",
+          },
+        ]);
+      }
+      responses.push(response);
     }
 
     expect(acceptedLayoutIds).toEqual([

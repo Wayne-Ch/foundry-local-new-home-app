@@ -246,9 +246,9 @@ Optional image-intake beat:
 2. Confirm the `1020 x 1080` PNG preview and select **Analyze layout**.
 3. Confirm the exact CPU VLM identity in Developer trace and categorical evidence:
    `roomShape=rectangle` and room label/door/window `present`.
-4. Load the normal layout model, then run the imported Queen -> King conflict -> Queen + baby bed
-   recovery story. **Use default room** is always available; **Reset** clears the import and restores
-   the original verified bedroom.
+4. Load the normal layout model, then run the imported Queen -> King conflict -> new Queen + desk +
+   baby-bed request story. **Use default room** is always available; **Reset** clears the import and
+   restores the original verified bedroom.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
 exact default from the public catalog and can download it into an empty cache.
@@ -295,19 +295,20 @@ npm run capture:ui
 fixture identity, runs it through the exact VLM, requires the non-forced
 rectangle/label/door/window conjunction, then requires white and rectangle-only controls to reject
 with structured `CONTENT_MISMATCH` attempts. It asserts no external endpoint and runs the imported
-Queen success, exact King `70 / 250 mm` conflict, Queen + compact desk + baby-bed recovery, and valid
-app-owned manual move. Success ends with:
+Queen success, exact King `70 / 250 mm` conflict, the new Queen + compact desk + baby-bed request,
+and valid app-owned manual move. Success ends with:
 
 ```text
 FLOOR_PLAN_INTEGRATION_OK
 ```
 
-`npm run test:integration` performs the explicit recovery story plus semantic guards:
+`npm run test:integration` performs the explicit A -> B -> C -> E buyer-request story plus semantic
+guards:
 
 1. Queen + standard desk: feasible.
 2. King replaces Queen while retaining desk: closet conflict and preference-change question.
-3. Recovery choice: keep Queen, allow compact desk, add a baby bed, and keep the closet clear:
-   feasible.
+3. New buyer request: “Can we do a Queen bed and a desk, and also add a baby bed?” A compact desk
+   remains allowed if needed while door, closet, window, and 250 mm clearance stay locked: feasible.
 4. King + compact desk + baby bed: no bounded feasible option with exact 70 mm and 170 mm gaps
    against the required 250 mm.
 5. Adversarial correction plus `baby-bed` and `baby cot` alias turns: all reach the expected stable
@@ -317,9 +318,10 @@ FLOOR_PLAN_INTEGRATION_OK
 100 ms chunks, requires multiple changing partials, captures first-partial and stop-to-final timing,
 checks the exact CPU model identity, and verifies the final transcript with no external endpoint.
 The committed deterministic fixture remains the honest Queen + desk recording. The focused real-mic
-gate for this change is:
+Turn C gate for this change is:
 
-> Keep the Queen bed. Add a baby bed. Use a compact desk. Keep the closet clear.
+> Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep
+> the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.
 
 Confirm the editable draft, any visible suggestion label, and the same feasible
 `queen-crib-compact-v1` result before stage use.
@@ -330,11 +332,11 @@ and proves no temporary capture file remains. The validated transcript was exact
 
 > Can a queen size bed and a desk fit here without blocking the closet or the door?
 
-The October 31 selected-default integration completed 13 real Qwen turns—including explicit
-recovery, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported variants—in
-**2.579–8.942 s**. The unrestricted-schema benchmark measured **5.671 s median / 9.107 s max** for
-exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic scenarios passed. The legacy full-input
-Qwen2.5 path measured **23.955–38.893 s**.
+The October 31 selected-default integration completed 13 real Qwen turns—including the explicit
+Turn C buyer request, `baby-bed`, `baby cot`, affirmative/negated transitions, and unsupported
+variants—in **2.579–8.942 s**. The unrestricted-schema benchmark measured
+**5.671 s median / 9.107 s max** for exact `qwen3-0.6b-generic-gpu:2`; every one of its 18 semantic
+scenarios passed. The legacy full-input Qwen2.5 path measured **23.955–38.893 s**.
 
 Evidence is written to ignored local files under `artifacts/`. The committed validation summary is
 in [VALIDATION.md](VALIDATION.md). A failed floor-plan gate writes
