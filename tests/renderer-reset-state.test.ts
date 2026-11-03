@@ -126,22 +126,21 @@ describe("renderer reset state", () => {
     });
   });
 
-  it("makes the renderer preview reset response a main-compatible v0 payload", async () => {
-    vi.stubGlobal("window", { location: { search: "" } });
+  it("makes the renderer preview reset response a main-compatible no-room payload", async () => {
+    vi.stubGlobal("window", { location: { search: "?preview=1&step=recovery" } });
     const api = createPreviewApi();
     const before = await api.getBootstrap();
-    expect(before.state.version).toBeGreaterThan(0);
+    expect(before.roomMode).toBe("default");
+    expect(before.state?.version).toBeGreaterThan(0);
 
     const reset = await api.resetConversation();
 
     expect(reset).toMatchObject({
       conversationGeneration: before.conversationGeneration + 1,
-      state: {
-        version: 0,
-        stateRef: "layout-state-v0",
-        currentLayoutId: null,
-        lastToolResult: null,
-      },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
       completedStageTurnIds: [],
       lastInteraction: null,
       selectedLayout: null,
@@ -150,23 +149,18 @@ describe("renderer reset state", () => {
     });
   });
 
-  it("replaces accepted renderer state with authoritative v0 before an async reset response", async () => {
-    vi.stubGlobal("window", { location: { search: "" } });
+  it("replaces accepted renderer state with authoritative no-room intake before an async reset response", async () => {
+    vi.stubGlobal("window", { location: { search: "?preview=1&step=recovery" } });
     const before = await createPreviewApi().getBootstrap();
 
     const reset = createAuthoritativeResetBootstrap(before, before.conversationGeneration + 1);
 
     expect(reset).toMatchObject({
       conversationGeneration: before.conversationGeneration + 1,
-      state: {
-        version: 0,
-        stateRef: "layout-state-v0",
-        currentLayoutId: null,
-        currentLayoutSource: null,
-        activeFurnitureIds: [],
-        lastChangedPreference: null,
-        lastResultStatus: null,
-      },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
       completedStageTurnIds: [],
       lastInteraction: null,
       selectedLayout: null,
@@ -174,11 +168,11 @@ describe("renderer reset state", () => {
       trace: [],
     });
     expect(reset.messages).toHaveLength(1);
-    expect(reset.messages[0]?.text).toContain("Conversation reset");
+    expect(reset.messages[0]?.text).toContain("Load or choose a floor plan");
   });
 
   it("rejects stale bootstrap and result generations during reset recovery", async () => {
-    vi.stubGlobal("window", { location: { search: "" } });
+    vi.stubGlobal("window", { location: { search: "?preview=1&step=recovery" } });
     const stale = await createPreviewApi().getBootstrap();
     const expectedGeneration = stale.conversationGeneration + 1;
     const localV0 = createAuthoritativeResetBootstrap(stale, expectedGeneration);

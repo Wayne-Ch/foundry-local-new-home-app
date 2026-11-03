@@ -22,6 +22,7 @@ npm run test:audio-integration
 npm run test:floor-plan-integration
 npm run build
 npm run smoke:electron
+npm run probe:floor-plan-ui
 npm run probe:reset
 npm run probe:stream-owner
 npm run probe:microphone-permission
@@ -64,9 +65,12 @@ In the app:
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, streaming PCM `ItemQueue`,
    and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
    produced; live revisions remain in the explicitly labeled draft panel.
-6. Select **Reset**, then load both models again. Reset clears the editable/submitted prompt,
+6. Select **Reset**, then load both models again. Reset returns the enhanced flow to the fresh
+   no-room intake state and clears the editable/submitted prompt,
    transcript trace, pending/applied suggestion and undo provenance, manual preview/drag state, and
-   recording timers while immediately advancing renderer and controller state to a tagged v0.
+   recording timers while immediately advancing renderer and controller generation. Select
+   **Use default room** before continuing the default-room story, or load and analyze the exact
+   fixture before continuing the imported-room story.
    Renderer input is disabled and microphone tracks are released; main revokes the active renderer
    lease while controller reset starts, settles/disposes the bounded native stream, and deletes
    tracked Whisper fallback captures. If native work exceeds the reset bound, the same v0 generation
@@ -86,9 +90,11 @@ In the app:
 
 Optional enhanced-room preflight:
 
-1. Select **Load sample floor plan** and confirm the exact NARA `1020 x 1080` preview. **Choose exact
-   fixture copy** accepts only byte-identical PNG bytes. Commons marks the source `PD-US`; keep this
-   optional fixture private unless legal review approves wider use.
+1. Confirm launch shows the no-room placeholder with conversation controls disabled. Select **Load
+   sample floor plan** and confirm the exact NARA `1020 x 1080` preview without room walls, reserved
+   zones, or furniture. **Choose exact fixture copy** accepts only byte-identical PNG bytes. Commons
+   marks the source `PD-US`; keep this optional fixture private unless legal review approves wider
+   use.
 2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
    endpoint, and the non-forced categories: rectangular room and room label/door/window present.
 3. If analysis fails, open **Developer trace -> Runtime + locked state** and record

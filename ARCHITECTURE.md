@@ -109,9 +109,11 @@ visible in Developer trace.
 Application conversion uses the plan's documented approximately `11'-10 3/4" x 13'-0"` dimensions
 as `3650 x 3950 mm`, then applies one canonical upper-left door swing, built-in closet/access zone,
 and exterior-window clearance zone. The VLM recognizes visible topology only; it never supplies
-coordinates, hinge direction, millimetres, clearance, fit, or a verdict. Reset returns to the original verified bedroom. Default-room
-selection, reload, renderer loss, close, and shutdown cancel stale vision work and clear image
-ownership.
+coordinates, hinge direction, millimetres, clearance, fit, or a verdict. Default-room selection is
+the only path that activates the original verified bedroom. Reset, reload, renderer
+loss, close, and shutdown return to no-room intake, cancel stale vision work, and clear image
+ownership. Loading a valid fixture activates preview state only; imported geometry is created only
+after successful analysis.
 
 ## Optional local audio input
 

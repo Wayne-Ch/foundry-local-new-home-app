@@ -1,12 +1,9 @@
 import type { AudioRecorderState, LiveTranscriptDraft } from "../audio/audio-types";
-import { createInitialDemoState } from "../domain/demo-state";
-import { defaultPlanningFixture } from "../domain/fixture";
-import { defaultStageTurns } from "../foundry/prompt";
+import { ROOM_INTAKE_MESSAGE } from "../domain/room-session";
 import type { BootstrapPayload, TraceEntry } from "../shared/contracts";
 
 export const DEFAULT_AUDIO_NOTICE = "Editable draft only; click Send to submit.";
-export const RESET_SYSTEM_MESSAGE =
-  "Conversation reset. Verified dimensions and locked room constraints remain loaded.";
+export const RESET_SYSTEM_MESSAGE = ROOM_INTAKE_MESSAGE;
 
 export interface RendererTransientState<
   SpeechCorrection = unknown,
@@ -83,10 +80,10 @@ export function createAuthoritativeResetBootstrap(
   return {
     ...current,
     conversationGeneration,
-    roomMode: "default",
-    roomPlan: defaultPlanningFixture.roomPlan,
-    state: createInitialDemoState(defaultPlanningFixture.roomPlan),
-    stageTurns: defaultStageTurns,
+    roomMode: "none",
+    roomPlan: null,
+    state: null,
+    stageTurns: [],
     floorPlanImport: {
       status: "idle",
       preview: null,
@@ -115,13 +112,10 @@ export function isAuthoritativeResetBootstrap(
 ): boolean {
   return (
     bootstrap.conversationGeneration === conversationGeneration &&
-    bootstrap.state.version === 0 &&
-    bootstrap.state.stateRef === "layout-state-v0" &&
-    bootstrap.state.currentLayoutId === null &&
-    bootstrap.state.currentLayoutSource === null &&
-    bootstrap.state.activeFurnitureIds.length === 0 &&
-    bootstrap.state.lastChangedPreference === null &&
-    bootstrap.state.lastResultStatus === null &&
+    bootstrap.roomMode === "none" &&
+    bootstrap.roomPlan === null &&
+    bootstrap.state === null &&
+    bootstrap.stageTurns.length === 0 &&
     bootstrap.completedStageTurnIds.length === 0 &&
     bootstrap.lastInteraction === null &&
     bootstrap.selectedLayout === null &&

@@ -46,7 +46,9 @@ let shutdownStarted = false;
 const microphonePermissionProbeEnabled = process.env.DEMO_MIC_PERMISSION_PROBE === "1";
 const rendererResetProbeEnabled = process.env.DEMO_RENDERER_RESET_PROBE === "1";
 const streamOwnerProbeEnabled = process.env.DEMO_STREAM_OWNER_PROBE === "1";
-const rendererLifecycleProbeEnabled = rendererResetProbeEnabled || streamOwnerProbeEnabled;
+const floorPlanUiProbeEnabled = process.env.DEMO_FLOOR_PLAN_UI_PROBE === "1";
+const rendererLifecycleProbeEnabled =
+  rendererResetProbeEnabled || streamOwnerProbeEnabled || floorPlanUiProbeEnabled;
 let rendererResetProbeTerminating = false;
 let streamOwnerProbeTerminating = false;
 
@@ -125,7 +127,10 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererFilePath = path.join(currentDirectory, "..", "renderer", "index.html");
 const sampleFloorPlanPath = path.join(currentDirectory, "..", "renderer", FLOOR_PLAN_SAMPLE_ASSET_PATH);
 const rendererDocumentUrl = pathToFileURL(rendererFilePath).href;
-const rendererPermissionOrigin = permissionOriginForDocument(rendererDocumentUrl);
+const activeRendererDocumentUrl = floorPlanUiProbeEnabled
+  ? `${rendererDocumentUrl}?preview=1&scenario=flow-probe`
+  : rendererDocumentUrl;
+const rendererPermissionOrigin = permissionOriginForDocument(activeRendererDocumentUrl);
 let microphonePermissionProbeCheck:
   | {
       readonly requestingOrigin: string;
@@ -144,7 +149,7 @@ let microphonePermissionProbeRequest:
     }
   | undefined;
 
-if (process.env.DEMO_CAPTURE_PATH?.trim()) {
+if (process.env.DEMO_CAPTURE_PATH?.trim() || floorPlanUiProbeEnabled) {
   app.disableHardwareAcceleration();
 }
 if (microphonePermissionProbeEnabled) {
@@ -195,7 +200,7 @@ function createWindow(): BrowserWindow {
 
   const permissionGate = new MicrophonePermissionGate({
     expectedWebContents: webContents,
-    expectedDocumentUrl: rendererDocumentUrl,
+    expectedDocumentUrl: activeRendererDocumentUrl,
     expectedOrigin: rendererPermissionOrigin,
   });
   microphonePermissionGate = permissionGate;
@@ -209,7 +214,7 @@ function createWindow(): BrowserWindow {
       revokeAudioStreamOwner(webContentsId, frameOwnership(event.frame));
       releaseFloorPlanForRenderer("main-frame navigation");
     }
-    if (!isAllowedAppNavigation(rendererDocumentUrl, event.url, event.isMainFrame)) {
+    if (!isAllowedAppNavigation(activeRendererDocumentUrl, event.url, event.isMainFrame)) {
       event.preventDefault();
     }
   });
@@ -218,7 +223,7 @@ function createWindow(): BrowserWindow {
     if (event.isMainFrame) {
       revokeAudioStreamOwner(webContentsId, frameOwnership(event.frame));
     }
-    if (!isAllowedAppNavigation(rendererDocumentUrl, event.url, event.isMainFrame)) {
+    if (!isAllowedAppNavigation(activeRendererDocumentUrl, event.url, event.isMainFrame)) {
       event.preventDefault();
     }
   });
@@ -253,7 +258,7 @@ function createWindow(): BrowserWindow {
     }
   });
 
-  void webContents.loadURL(rendererDocumentUrl);
+  void webContents.loadURL(activeRendererDocumentUrl);
   window.once("ready-to-show", () => {
     if (!window.isDestroyed()) {
       window.show();
@@ -277,6 +282,11 @@ function createWindow(): BrowserWindow {
   if (streamOwnerProbeEnabled) {
     webContents.once("did-finish-load", () => {
       void runStreamOwnerProbe(window, webContents);
+    });
+  }
+  if (floorPlanUiProbeEnabled) {
+    webContents.once("did-finish-load", () => {
+      void runFloorPlanUiProbe(window, webContents);
     });
   }
   if (process.env.DEMO_OPEN_DEVTOOLS === "1") {
@@ -525,8 +535,8 @@ function assertTrustedRendererIpc(event: IpcMainInvokeEvent): {
     event.sender !== webContents ||
     frame === null ||
     frame !== event.sender.mainFrame ||
-    event.sender.getURL() !== rendererDocumentUrl ||
-    frame.url !== rendererDocumentUrl
+    event.sender.getURL() !== activeRendererDocumentUrl ||
+    frame.url !== activeRendererDocumentUrl
   ) {
     throw new Error("Audio IPC is restricted to the active application main frame.");
   }
@@ -675,18 +685,18 @@ async function runMicrophonePermissionProbe(webContents: WebContents): Promise<v
     };
 
     if (
-      rendererResult.documentUrl !== rendererDocumentUrl ||
+      rendererResult.documentUrl !== activeRendererDocumentUrl ||
       rendererResult.audioTrackCount < 1 ||
       rendererResult.videoTrackCount !== 0 ||
       microphonePermissionProbeRequest?.allowed !== true ||
-      microphonePermissionProbeRequest.requestingUrl !== rendererDocumentUrl ||
+      microphonePermissionProbeRequest.requestingUrl !== activeRendererDocumentUrl ||
       microphonePermissionProbeRequest.securityOrigin !== rendererPermissionOrigin ||
       microphonePermissionProbeRequest.mediaTypes?.length !== 1 ||
       microphonePermissionProbeRequest.mediaTypes[0] !== "audio"
     ) {
       throw new Error(
         `Microphone permission probe did not reach the exact grant path: ${JSON.stringify({
-          rendererDocumentUrl,
+          rendererDocumentUrl: activeRendererDocumentUrl,
           rendererPermissionOrigin,
           rendererResult,
           permissionCheck: microphonePermissionProbeCheck,
@@ -697,7 +707,7 @@ async function runMicrophonePermissionProbe(webContents: WebContents): Promise<v
 
     console.log(
       `MICROPHONE_PERMISSION_PROBE_OK ${JSON.stringify({
-        rendererDocumentUrl,
+        rendererDocumentUrl: activeRendererDocumentUrl,
         rendererPermissionOrigin,
         rendererResult,
         permissionCheck: microphonePermissionProbeCheck,
@@ -726,6 +736,9 @@ interface RendererMediaProbeSnapshot {
 
 interface RendererResetUiSnapshot {
   readonly stateText: string;
+  readonly roomMode: string;
+  readonly roomSvgHidden: boolean;
+  readonly emptyStateHidden: boolean;
   readonly promptValue: string;
   readonly suggestionHidden: boolean;
   readonly liveTranscriptHidden: boolean;
@@ -775,7 +788,7 @@ async function runRendererResetProbe(window: BrowserWindow, webContents: WebCont
         secondCancellationMs: secondReset.cancellationMs,
         mediaTracksStopped: true,
         ownershipReleased: true,
-        uiStateVersion: secondReset.version,
+        resetRoomMode: secondReset.roomMode,
         freshRecordingLeaseSucceeded: true,
       })}`,
     );
@@ -803,6 +816,220 @@ async function waitForRendererControls(webContents: WebContents): Promise<void> 
       )) === true,
     "renderer controls to load",
   );
+}
+
+interface FloorPlanUiSnapshot {
+  readonly roomMode: string;
+  readonly roomPlanId: string;
+  readonly roomSvgHidden: boolean;
+  readonly roomSvgChildCount: number;
+  readonly emptyStateHidden: boolean;
+  readonly previewHidden: boolean;
+  readonly previewSource: string;
+  readonly stageTurnCount: number;
+  readonly promptDisabled: boolean;
+  readonly nextTurnDisabled: boolean;
+  readonly analyzeDisabled: boolean;
+  readonly defaultDisabled: boolean;
+  readonly statusText: string;
+  readonly layoutTitle: string;
+  readonly layoutNotice: string;
+}
+
+async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebContents): Promise<void> {
+  try {
+    window.show();
+    window.focus();
+    await rendererLifecycleProbeMonitorReady;
+    await waitForRendererControls(webContents);
+
+    const captures: string[] = [];
+    const fresh = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "none" &&
+        value.roomPlanId === "" &&
+        value.roomSvgHidden &&
+        value.roomSvgChildCount === 0 &&
+        !value.emptyStateHidden &&
+        value.previewHidden &&
+        value.stageTurnCount === 0 &&
+        value.promptDisabled &&
+        value.nextTurnDisabled &&
+        !value.defaultDisabled &&
+        value.statusText.startsWith("No room is active."),
+      "fresh no-room intake UI",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "01-fresh-blank.png"));
+
+    await clickRendererButton(webContents, "#loadSampleFloorPlanButton");
+    const preview = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "none" &&
+        value.roomSvgHidden &&
+        value.roomSvgChildCount === 0 &&
+        !value.emptyStateHidden &&
+        !value.previewHidden &&
+        value.previewSource.includes("sample-master-bedroom.png") &&
+        value.stageTurnCount === 0 &&
+        value.promptDisabled &&
+        !value.analyzeDisabled &&
+        !value.defaultDisabled &&
+        value.statusText.startsWith("Preview only:"),
+      "sample preview without room geometry",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "02-sample-preview.png"));
+
+    await clickRendererButton(webContents, "#analyzeFloorPlanButton");
+    const imported = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "imported" &&
+        value.roomPlanId === "imported-nara-master-bedroom" &&
+        !value.roomSvgHidden &&
+        value.roomSvgChildCount > 0 &&
+        value.emptyStateHidden &&
+        !value.previewHidden &&
+        value.stageTurnCount === 4 &&
+        !value.promptDisabled &&
+        value.statusText.startsWith("VLM visible-topology recognition passed."),
+      "successful analysis to activate imported NARA geometry",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "03-imported-room.png"));
+
+    await clickRendererButton(webContents, "#useDefaultRoomButton");
+    const fallback = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "default" &&
+        value.roomPlanId === "ignite-bedroom-a" &&
+        !value.roomSvgHidden &&
+        value.roomSvgChildCount > 0 &&
+        value.emptyStateHidden &&
+        value.previewHidden &&
+        value.stageTurnCount === 4 &&
+        !value.promptDisabled &&
+        value.defaultDisabled &&
+        value.statusText.startsWith("Verified default room is active."),
+      "explicit default-room fallback geometry",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "04-default-room.png"));
+
+    await clickRendererButton(webContents, "#loadSampleFloorPlanButton");
+    await waitForRendererButton(webContents, "#analyzeFloorPlanButton");
+    await clickRendererButton(webContents, "#analyzeFloorPlanButton");
+    const failed = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "none" &&
+        value.roomPlanId === "" &&
+        value.roomSvgHidden &&
+        value.roomSvgChildCount === 0 &&
+        !value.emptyStateHidden &&
+        !value.previewHidden &&
+        value.stageTurnCount === 0 &&
+        value.promptDisabled &&
+        !value.analyzeDisabled &&
+        !value.defaultDisabled &&
+        value.statusText.includes("No room geometry was activated") &&
+        value.statusText.includes("retry Analyze layout"),
+      "failed analysis to retain preview without silent default geometry",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "05-analysis-failure.png"));
+
+    await clickRendererButton(webContents, "#resetButton");
+    const reset = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.roomMode === "none" &&
+        value.roomPlanId === "" &&
+        value.roomSvgHidden &&
+        value.roomSvgChildCount === 0 &&
+        !value.emptyStateHidden &&
+        value.previewHidden &&
+        value.stageTurnCount === 0 &&
+        value.promptDisabled &&
+        value.nextTurnDisabled &&
+        !value.defaultDisabled &&
+        value.statusText.startsWith("No room is active."),
+      "Reset to restore fresh no-room intake UI",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "06-reset-blank.png"));
+    assertNoRendererLifecycleProbeErrors();
+
+    console.log(
+      `ELECTRON_FLOOR_PLAN_UI_PROBE_OK ${JSON.stringify({
+        path: "fresh blank -> sample preview -> imported geometry -> explicit default -> failed analysis -> reset blank",
+        fresh,
+        preview,
+        imported,
+        fallback,
+        failed,
+        reset,
+        captures,
+      })}`,
+    );
+  } catch (error) {
+    process.exitCode = 1;
+    console.error("ELECTRON_FLOOR_PLAN_UI_PROBE_FAILED", error);
+  } finally {
+    app.exit(typeof process.exitCode === "number" ? process.exitCode : 0);
+  }
+}
+
+async function readFloorPlanUi(webContents: WebContents): Promise<FloorPlanUiSnapshot> {
+  return (await webContents.executeJavaScript(
+    `(() => {
+      const roomCard = document.querySelector("#roomCard");
+      const roomSvg = document.querySelector("#roomSvg");
+      const emptyState = document.querySelector("#roomEmptyState");
+      const previewFrame = document.querySelector("#floorPlanPreviewFrame");
+      const preview = document.querySelector("#floorPlanPreview");
+      const prompt = document.querySelector("#promptInput");
+      const nextTurn = document.querySelector("#nextTurnButton");
+      const analyze = document.querySelector("#analyzeFloorPlanButton");
+      const useDefault = document.querySelector("#useDefaultRoomButton");
+      return {
+        roomMode: roomCard?.dataset.roomMode ?? "",
+        roomPlanId: roomCard?.dataset.roomPlanId ?? "",
+        roomSvgHidden: roomSvg?.hasAttribute("hidden") === true,
+        roomSvgChildCount: roomSvg?.childElementCount ?? -1,
+        emptyStateHidden: emptyState?.hidden === true,
+        previewHidden: previewFrame?.hidden === true,
+        previewSource: preview?.getAttribute("src") ?? "",
+        stageTurnCount: document.querySelectorAll("#stageSteps .stage-step").length,
+        promptDisabled: prompt instanceof HTMLTextAreaElement ? prompt.disabled : false,
+        nextTurnDisabled: nextTurn instanceof HTMLButtonElement ? nextTurn.disabled : false,
+        analyzeDisabled: analyze instanceof HTMLButtonElement ? analyze.disabled : false,
+        defaultDisabled: useDefault instanceof HTMLButtonElement ? useDefault.disabled : false,
+        statusText: document.querySelector("#floorPlanImportStatus")?.textContent?.trim() ?? "",
+        layoutTitle: document.querySelector("#layoutTitle")?.textContent?.trim() ?? "",
+        layoutNotice: document.querySelector("#layoutNotice")?.textContent?.trim() ?? ""
+      };
+    })()`,
+    true,
+  )) as FloorPlanUiSnapshot;
+}
+
+async function waitForFloorPlanUi(
+  webContents: WebContents,
+  accept: (snapshot: FloorPlanUiSnapshot) => boolean,
+  description: string,
+): Promise<FloorPlanUiSnapshot> {
+  return waitForProbeValue(() => readFloorPlanUi(webContents), accept, description, 30_000);
+}
+
+async function captureFloorPlanUi(webContents: WebContents, fileName: string): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const captureDirectory =
+    process.env.DEMO_FLOOR_PLAN_UI_PROBE_CAPTURE_DIR?.trim() ||
+    path.resolve("artifacts", "floor-plan-ui-probe");
+  const capturePath = path.join(captureDirectory, fileName);
+  const image = await webContents.capturePage();
+  await mkdir(captureDirectory, { recursive: true });
+  await writeFile(capturePath, image.toPNG());
+  return capturePath;
 }
 
 async function runStreamOwnerProbe(window: BrowserWindow, webContents: WebContents): Promise<void> {
@@ -943,6 +1170,7 @@ async function installRendererMediaProbe(webContents: WebContents, captureGroup:
 }
 
 async function prepareRendererRecordingPipeline(webContents: WebContents): Promise<void> {
+  await ensureRendererRoomActive(webContents);
   if (!controller.bootstrap().readiness.localInferenceReady) {
     await waitForRendererButton(webContents, "#prepareButton");
     await clickRendererButton(webContents, "#prepareButton");
@@ -962,6 +1190,32 @@ async function prepareRendererRecordingPipeline(webContents: WebContents): Promi
     );
   }
   await waitForRendererButton(webContents, "#recordButton");
+}
+
+async function ensureRendererRoomActive(webContents: WebContents): Promise<void> {
+  if (controller.bootstrap().roomMode === "none") {
+    await waitForRendererButton(webContents, "#useDefaultRoomButton");
+    await clickRendererButton(webContents, "#useDefaultRoomButton");
+  }
+  await waitForProbeState(async () => {
+    const bootstrap = controller.bootstrap();
+    if (bootstrap.roomMode === "none") {
+      return false;
+    }
+    return (
+      (await webContents.executeJavaScript(
+        `(() => {
+            const roomCard = document.querySelector("#roomCard");
+            const roomSvg = document.querySelector("#roomSvg");
+            const emptyState = document.querySelector("#roomEmptyState");
+            return roomCard?.dataset.roomMode !== "none" &&
+              roomSvg?.hasAttribute("hidden") === false &&
+              emptyState?.hidden === true;
+          })()`,
+        true,
+      )) === true
+    );
+  }, "an explicit room selection to activate renderer geometry");
 }
 
 async function startRendererRecording(
@@ -998,7 +1252,7 @@ async function waitForRendererReset(
   conversationGeneration: number,
 ): Promise<{
   readonly cancellationMs: number;
-  readonly version: number;
+  readonly roomMode: "none";
 }> {
   if (lease.streamId === null) {
     throw new Error("Cannot verify reset without an activated native stream.");
@@ -1037,7 +1291,10 @@ async function waitForRendererReset(
   const ui = await waitForProbeValue(
     () => readRendererResetUi(webContents),
     (value) =>
-      value.stateText === "State v0" &&
+      value.stateText === "No room loaded" &&
+      value.roomMode === "none" &&
+      value.roomSvgHidden &&
+      !value.emptyStateHidden &&
       value.promptValue === "" &&
       value.suggestionHidden &&
       value.liveTranscriptHidden &&
@@ -1048,8 +1305,10 @@ async function waitForRendererReset(
     () => controller.bootstrap(),
     (value) =>
       value.conversationGeneration === conversationGeneration &&
-      value.state.version === 0 &&
-      value.state.stateRef === "layout-state-v0" &&
+      value.roomMode === "none" &&
+      value.roomPlan === null &&
+      value.state === null &&
+      value.stageTurns.length === 0 &&
       value.selectedLayout === null &&
       value.lastToolResult === null &&
       value.trace.length === 0 &&
@@ -1062,8 +1321,9 @@ async function waitForRendererReset(
       `Reset did not preserve authoritative v0 or release ownership: ${JSON.stringify({
         conversationGeneration: bootstrap.conversationGeneration,
         expectedConversationGeneration: conversationGeneration,
-        version: bootstrap.state.version,
-        stateRef: bootstrap.state.stateRef,
+        roomMode: bootstrap.roomMode,
+        roomPlan: bootstrap.roomPlan,
+        state: bootstrap.state,
         selectedLayout: bootstrap.selectedLayout?.id ?? null,
         lastToolResult: bootstrap.lastToolResult?.status ?? null,
         traceLength: bootstrap.trace.length,
@@ -1074,7 +1334,7 @@ async function waitForRendererReset(
 
   return {
     cancellationMs: Math.round(cancellation.completedAt - cancellation.startedAt),
-    version: bootstrap.state.version,
+    roomMode: "none",
   };
 }
 
@@ -1116,6 +1376,9 @@ async function readRendererResetUi(webContents: WebContents): Promise<RendererRe
   return (await webContents.executeJavaScript(
     `(() => ({
       stateText: document.querySelector("#turnCounter")?.textContent ?? "",
+      roomMode: document.querySelector("#roomCard")?.dataset.roomMode ?? "",
+      roomSvgHidden: document.querySelector("#roomSvg")?.hasAttribute("hidden") === true,
+      emptyStateHidden: document.querySelector("#roomEmptyState")?.hidden === true,
       promptValue: document.querySelector("#promptInput")?.value ?? "",
       suggestionHidden: document.querySelector("#speechSuggestionPanel")?.hidden === true,
       liveTranscriptHidden: document.querySelector("#liveTranscriptPanel")?.hidden === true,

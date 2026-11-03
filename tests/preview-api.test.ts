@@ -7,6 +7,75 @@ afterEach(() => {
 });
 
 describe("renderer preview scenarios", () => {
+  it("uses a fresh no-room intake state when no story scenario is requested", async () => {
+    vi.stubGlobal("window", { location: { search: "?preview=1" } });
+
+    await expect(createPreviewApi().getBootstrap()).resolves.toMatchObject({
+      conversationGeneration: 0,
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      floorPlanImport: { status: "idle", preview: null },
+    });
+  });
+
+  it("models preview-only intake, imported analysis, explicit default, failed retry, and reset", async () => {
+    vi.stubGlobal("window", { location: { search: "?preview=1&scenario=flow-probe" } });
+    const api = createPreviewApi();
+
+    const preview = await api.loadSampleFloorPlan();
+    expect(preview.bootstrap).toMatchObject({
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      floorPlanImport: {
+        status: "image_ready",
+        preview: { width: 1020, height: 1080 },
+      },
+    });
+
+    const imported = await api.analyzeFloorPlan();
+    expect(imported).toMatchObject({
+      roomMode: "imported",
+      roomPlan: { id: "imported-nara-master-bedroom" },
+      state: { roomPlanId: "imported-nara-master-bedroom", version: 0 },
+      stageTurns: expect.arrayContaining([expect.objectContaining({ id: "turn-a" })]),
+      floorPlanImport: { status: "imported" },
+    });
+
+    const fallback = await api.useDefaultRoom();
+    expect(fallback).toMatchObject({
+      roomMode: "default",
+      roomPlan: { id: "ignite-bedroom-a" },
+      state: { roomPlanId: "ignite-bedroom-a", version: 0 },
+      floorPlanImport: { status: "idle", preview: null },
+    });
+
+    await api.loadSampleFloorPlan();
+    await expect(api.analyzeFloorPlan()).rejects.toThrow("Probe-forced vision analysis failure");
+    await expect(api.getBootstrap()).resolves.toMatchObject({
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      floorPlanImport: {
+        status: "error",
+        preview: { width: 1020, height: 1080 },
+        error: "Probe-forced vision analysis failure.",
+      },
+    });
+
+    await expect(api.resetConversation()).resolves.toMatchObject({
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      floorPlanImport: { status: "idle", preview: null },
+    });
+  });
+
   it.each([
     ["default A", "?preview=1&step=queen", "default", "queen-desk-standard-v1", 2],
     ["default C", "?preview=1&step=recovery", "default", "queen-crib-compact-v1", 3],

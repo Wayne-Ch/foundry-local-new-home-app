@@ -18,11 +18,19 @@ import type {
   AudioStreamStartResponse,
   PrepareAudioRequest,
 } from "../audio/audio-types";
-import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
+import { applyToolResult } from "../domain/demo-state";
 import { defaultPlanningFixture } from "../domain/fixture";
 import { createImportedPlanningFixture, type FloorPlanRecognition } from "../domain/floor-plan-import";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
-import type { DemoState, EvaluatedLayoutOption, PlanningFixture } from "../domain/types";
+import {
+  createActiveRoomSession,
+  createInactiveRoomSession,
+  ROOM_INTAKE_MESSAGE,
+  type RoomSession,
+  requireActiveRoomSession,
+  resetRoomSessionState,
+} from "../domain/room-session";
+import type { EvaluatedLayoutOption } from "../domain/types";
 import { FoundryFloorPlanVisionError, FoundryLayoutService } from "../foundry/foundry-service";
 import { stageTurnsForMode } from "../foundry/prompt";
 import { FLOOR_PLAN_FIXTURE_SHA256 } from "../layout-import/image-security";
@@ -93,15 +101,9 @@ export interface DemoControllerOptions {
 export class DemoController {
   readonly #foundry: DemoFoundryService;
   readonly #floorPlanImages: FloorPlanImageStore;
-  #planningFixture: PlanningFixture = defaultPlanningFixture;
-  #state: DemoState = createInitialDemoState(defaultPlanningFixture.roomPlan);
+  #roomSession: RoomSession = createInactiveRoomSession();
   #selectedLayout: EvaluatedLayoutOption | null = null;
-  #messages: ConversationMessage[] = [
-    message(
-      "system",
-      "Verified room plan loaded. Geometry remains deterministic; Foundry Local interprets requirements and calls the tool.",
-    ),
-  ];
+  #messages: ConversationMessage[] = [message("system", ROOM_INTAKE_MESSAGE)];
   #trace: TraceEntry[] = [];
   #completedStageTurnIds: StageTurnId[] = [];
   #lastInteraction: BootstrapPayload["lastInteraction"] = null;
@@ -123,22 +125,35 @@ export class DemoController {
   }
 
   bootstrap(): BootstrapPayload {
-    return {
+    const common = {
       conversationGeneration: this.#conversationGeneration,
-      roomMode: this.#planningFixture.mode,
-      roomPlan: this.#planningFixture.roomPlan,
-      state: this.#state,
       readiness: this.#foundry.readiness,
       audioReadiness: this.#foundry.audioReadiness,
       visionReadiness: this.#foundry.visionReadiness,
       floorPlanImport: this.#floorPlanImport,
-      stageTurns: stageTurnsForMode(this.#planningFixture.mode),
       completedStageTurnIds: this.#completedStageTurnIds,
       lastInteraction: this.#lastInteraction,
       selectedLayout: this.#selectedLayout,
-      lastToolResult: this.#state.lastToolResult,
       messages: this.#messages,
       trace: this.#trace,
+    };
+    if (this.#roomSession.mode === "none") {
+      return {
+        ...common,
+        roomMode: "none",
+        roomPlan: null,
+        state: null,
+        stageTurns: [],
+        lastToolResult: null,
+      };
+    }
+    return {
+      ...common,
+      roomMode: this.#roomSession.mode,
+      roomPlan: this.#roomSession.planningFixture.roomPlan,
+      state: this.#roomSession.state,
+      stageTurns: stageTurnsForMode(this.#roomSession.mode),
+      lastToolResult: this.#roomSession.state.lastToolResult,
     };
   }
 
@@ -189,7 +204,7 @@ export class DemoController {
     this.#operationGeneration += 1;
     await this.#foundry.cancelFloorPlanAnalysis();
     const preview = this.#floorPlanImages.load(bytes, source, displayName);
-    this.#planningFixture = defaultPlanningFixture;
+    this.#roomSession = createInactiveRoomSession();
     this.#conversationGeneration += 1;
     this.#resetConversationState();
     this.#floorPlanImport = {
@@ -202,7 +217,7 @@ export class DemoController {
     this.#messages = [
       message(
         "system",
-        "Experimental floor-plan image staged in the main process. Analyze it to replace the default room; until then the verified default room remains active.",
+        "Floor-plan preview loaded. No room geometry is active until Analyze layout succeeds; Use default room remains an explicit fallback.",
       ),
     ];
     this.#pushTrace("floor-plan-vision", "Floor-plan image accepted", {
@@ -251,7 +266,7 @@ export class DemoController {
         },
       );
       this.#assertOperationCurrent(generation);
-      this.#planningFixture = createImportedPlanningFixture(outcome.recognition);
+      this.#roomSession = createActiveRoomSession(createImportedPlanningFixture(outcome.recognition));
       this.#conversationGeneration += 1;
       this.#resetConversationState();
       const recognizedFacts = recognizedFloorPlanFacts(outcome.recognition);
@@ -291,12 +306,14 @@ export class DemoController {
       };
       this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition rejected", {
         attempts: error instanceof FoundryFloorPlanVisionError ? error.attempts : [],
-        defaultRoomStillActive: this.#planningFixture.mode === "default",
+        roomActive: this.#roomSession.mode !== "none",
+        defaultRoomAvailable: true,
         externalEndpointUsed: false,
       });
       this.#pushTrace("error", "Floor-plan recognition failed closed", {
         message: detail,
-        defaultRoomStillActive: this.#planningFixture.mode === "default",
+        roomActive: this.#roomSession.mode !== "none",
+        defaultRoomAvailable: true,
         externalEndpointUsed: false,
       });
       onProgress?.({ phase: "error", detail });
@@ -311,7 +328,7 @@ export class DemoController {
     this.#operationGeneration += 1;
     await this.#foundry.cancelFloorPlanAnalysis();
     this.#floorPlanImages.clear();
-    this.#planningFixture = defaultPlanningFixture;
+    this.#roomSession = createActiveRoomSession(defaultPlanningFixture);
     this.#conversationGeneration += 1;
     this.#floorPlanImport = {
       status: "idle",
@@ -334,17 +351,27 @@ export class DemoController {
     if (this.#floorPlanReleasePromise !== null) {
       return this.#floorPlanReleasePromise;
     }
-    if (this.#floorPlanImages.preview === null && this.#planningFixture.mode === "default") {
+    if (this.#floorPlanImages.preview === null && this.#roomSession.mode === "none") {
       return Promise.resolve();
     }
+    this.#operationGeneration += 1;
+    this.#conversationGeneration += 1;
+    this.#floorPlanImages.clear();
+    this.#roomSession = createInactiveRoomSession();
+    this.#floorPlanImport = {
+      status: "idle",
+      preview: null,
+      recognition: null,
+      recognizedFacts: [],
+      error: null,
+    };
+    this.#resetConversationState();
     let trackedPromise: Promise<void>;
-    trackedPromise = this.useDefaultRoom()
-      .then(() => undefined)
-      .finally(() => {
-        if (this.#floorPlanReleasePromise === trackedPromise) {
-          this.#floorPlanReleasePromise = null;
-        }
-      });
+    trackedPromise = this.#foundry.cancelFloorPlanAnalysis().finally(() => {
+      if (this.#floorPlanReleasePromise === trackedPromise) {
+        this.#floorPlanReleasePromise = null;
+      }
+    });
     this.#floorPlanReleasePromise = trackedPromise;
     return trackedPromise;
   }
@@ -461,18 +488,22 @@ export class DemoController {
     onProgress?: (event: ProgressEvent) => void,
   ): Promise<RunTurnResponse> {
     const generation = this.#beginOperation();
+    const activeRoom = requireActiveRoomSession(this.#roomSession);
     const prompt = request.prompt.trim();
     if (!prompt) {
       throw new Error("Prompt cannot be empty.");
     }
 
     this.#messages.push(message("user", prompt));
-    this.#pushTrace("user", request.scriptedTurnId ?? "Manual prompt", { prompt, state: this.#state });
+    this.#pushTrace("user", request.scriptedTurnId ?? "Manual prompt", {
+      prompt,
+      state: activeRoom.state,
+    });
 
     try {
       const outcome = await this.#foundry.runTurn(
         prompt,
-        this.#state,
+        activeRoom.state,
         (phase, detail) => {
           if (!this.#isOperationCurrent(generation)) {
             return;
@@ -490,7 +521,7 @@ export class DemoController {
           onProgress?.({ phase: progressPhase, detail });
         },
         this.#selectedLayout,
-        this.#planningFixture,
+        activeRoom.planningFixture,
       );
       this.#assertOperationCurrent(generation);
 
@@ -505,7 +536,10 @@ export class DemoController {
       });
       this.#pushTrace("geometry", "Deterministic geometry result", outcome.toolResult);
 
-      this.#state = applyToolResult(this.#state, outcome.toolResult);
+      this.#roomSession = {
+        ...activeRoom,
+        state: applyToolResult(activeRoom.state, outcome.toolResult),
+      };
       if (outcome.toolResult.status === "feasible") {
         this.#selectedLayout =
           outcome.toolResult.feasibleOptions.find(
@@ -547,11 +581,12 @@ export class DemoController {
 
   applyManualPlacement(request: ManualPlacementRequest): ManualPlacementResponse {
     this.#beginOperation();
+    const activeRoom = requireActiveRoomSession(this.#roomSession);
     const outcome = evaluateManualPlacement(
-      this.#state,
+      activeRoom.state,
       this.#selectedLayout,
       request,
-      this.#planningFixture.roomPlan,
+      activeRoom.planningFixture.roomPlan,
     );
     this.#pushTrace("manual-placement", "Application-owned manual placement", {
       provenance: "application-owned direct manipulation",
@@ -563,7 +598,10 @@ export class DemoController {
       priorAcceptedLayoutId: this.#selectedLayout?.id ?? null,
     });
     if (outcome.accepted) {
-      this.#state = outcome.state;
+      this.#roomSession = {
+        ...activeRoom,
+        state: outcome.state,
+      };
       this.#selectedLayout = outcome.selectedLayout;
       this.#lastInteraction = "manual";
       this.#messages.push(
@@ -577,7 +615,7 @@ export class DemoController {
       conversationGeneration: this.#conversationGeneration,
       outcome: {
         ...outcome,
-        state: this.#state,
+        state: requireActiveRoomSession(this.#roomSession).state,
         selectedLayout: this.#selectedLayout,
       },
       completedStageTurnIds: this.#completedStageTurnIds,
@@ -593,7 +631,7 @@ export class DemoController {
     }
     this.#operationGeneration += 1;
     this.#conversationGeneration += 1;
-    this.#planningFixture = defaultPlanningFixture;
+    this.#roomSession = createInactiveRoomSession();
     this.#floorPlanImages.clear();
     this.#floorPlanImport = {
       status: "idle",
@@ -623,14 +661,16 @@ export class DemoController {
   }
 
   #resetConversationState(): void {
-    this.#state = createInitialDemoState(this.#planningFixture.roomPlan);
+    this.#roomSession = resetRoomSessionState(this.#roomSession);
     this.#selectedLayout = null;
     this.#messages = [
       message(
         "system",
-        this.#planningFixture.mode === "imported"
-          ? "Conversation reset. Imported room geometry and locked constraints remain loaded."
-          : "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
+        this.#roomSession.mode === "none"
+          ? ROOM_INTAKE_MESSAGE
+          : this.#roomSession.mode === "imported"
+            ? "Conversation reset. Imported room geometry and locked constraints remain loaded."
+            : "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
       ),
     ];
     this.#trace = [];
@@ -663,9 +703,10 @@ export class DemoController {
   }
 
   #response(toolResult: RunTurnResponse["toolResult"], assistantText: string): RunTurnResponse {
+    const activeRoom = requireActiveRoomSession(this.#roomSession);
     return {
       conversationGeneration: this.#conversationGeneration,
-      state: this.#state,
+      state: activeRoom.state,
       toolResult,
       selectedLayout: this.#selectedLayout,
       completedStageTurnIds: this.#completedStageTurnIds,

@@ -257,7 +257,28 @@ function deferred<T>() {
 }
 
 describe("floor-plan controller lifecycle", () => {
-  it("rejects non-fixture bytes before analysis and keeps the default room active", async () => {
+  it("starts with no active room or geometry and blocks layout operations", async () => {
+    const controller = new DemoController({ foundry: createFoundry() });
+
+    expect(controller.bootstrap()).toMatchObject({
+      conversationGeneration: 0,
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      selectedLayout: null,
+      lastToolResult: null,
+      floorPlanImport: { status: "idle", preview: null, recognition: null },
+    });
+    await expect(
+      controller.runTurn({
+        prompt: "Can a Queen-size bed and a desk fit here?",
+        scriptedTurnId: "turn-a",
+      }),
+    ).rejects.toThrow("explicitly use the default room");
+  });
+
+  it("rejects non-fixture bytes before analysis and keeps the intake state empty", async () => {
     const analyzeFloorPlan = vi.fn(async () => outcome());
     const controller = new DemoController({
       foundry: createFoundry({ analyzeFloorPlan }),
@@ -269,8 +290,9 @@ describe("floor-plan controller lifecycle", () => {
 
     expect(analyzeFloorPlan).not.toHaveBeenCalled();
     expect(controller.bootstrap()).toMatchObject({
-      roomMode: "default",
-      roomPlan: { id: "ignite-bedroom-a" },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       floorPlanImport: { status: "idle", preview: null, recognition: null },
     });
   });
@@ -286,7 +308,10 @@ describe("floor-plan controller lifecycle", () => {
     const staged = await controller.loadFloorPlanImage(sample, "sample", "sample");
     const owned = store.borrowBytes();
     expect(staged).toMatchObject({
-      roomMode: "default",
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
       floorPlanImport: {
         status: "image_ready",
         preview: { format: "png", width: 1020, height: 1080 },
@@ -461,9 +486,11 @@ describe("floor-plan controller lifecycle", () => {
 
     expect(owned.every((value) => value === 0)).toBe(true);
     expect(controller.bootstrap()).toMatchObject({
-      roomMode: "default",
+      roomMode: "none",
+      roomPlan: null,
       floorPlanImport: { status: "idle", preview: null },
-      state: { version: 0, roomPlanId: "ignite-bedroom-a" },
+      state: null,
+      stageTurns: [],
     });
     resetGate.resolve();
     await reset;
@@ -504,6 +531,17 @@ describe("floor-plan controller lifecycle", () => {
         }),
       ]),
     );
+    expect(controller.bootstrap()).toMatchObject({
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
+      floorPlanImport: {
+        status: "error",
+        preview: { width: 1020, height: 1080 },
+        error: "Strict contract rejected.",
+      },
+    });
   });
 
   it("single-flights duplicate reload/close cleanup", async () => {
@@ -521,7 +559,9 @@ describe("floor-plan controller lifecycle", () => {
     await first;
     expect(cancelFloorPlanAnalysis).toHaveBeenCalledOnce();
     expect(controller.bootstrap()).toMatchObject({
-      roomMode: "default",
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       floorPlanImport: { status: "idle", preview: null },
     });
   });
