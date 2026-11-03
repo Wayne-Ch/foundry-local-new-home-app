@@ -100,7 +100,6 @@ const previewRecognition: FloorPlanRecognition = {
   roomLabel: "present",
   doorOpening: "present",
   windowOpening: "present",
-  movableFurniture: "absent",
 };
 
 function buildPreview(conversationGeneration: number): BootstrapPayload {
@@ -353,10 +352,9 @@ export function createPreviewApi(): DemoApi {
           recognition: previewRecognition,
           recognizedFacts: [
             "Rectangular bedroom",
-            "Bedroom label present",
+            "Room label present",
             "Door opening present",
             "Window opening present",
-            "Movable furniture absent",
           ],
           error: null,
         },

@@ -11,7 +11,7 @@ import { evaluateManualPlacement } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
 
 const validRecognition =
-  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present","movableFurniture":"absent"}';
+  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present"}';
 
 const rejectedFamilyAttempt1 =
   '{"schema":"single-room-v1","room":{"shape":"rectangle","aspectPermille":1000},"doors":[{"wall":"north","startPermille":100,"endPermille":100,"hinge":"south","swing":"inward","quadrant":"north-west"},{"wall":"east","startPermille":100,"endPermille":100,"hinge":"south","swing":"inward","quadrant":"north-west"}],"window":{"wall":"east","startPermille":100,"endPermille":100},"fixedObstruction":{"kind":"none"},"movableFurnitureSymbols":"present"}';
@@ -68,7 +68,7 @@ describe("strict floor-plan recognition contract", () => {
       "not_rectangle",
       "uncertain",
     ]);
-    for (const key of ["roomLabel", "doorOpening", "windowOpening", "movableFurniture"] as const) {
+    for (const key of ["roomLabel", "doorOpening", "windowOpening"] as const) {
       expect(floorPlanRecognitionJsonSchema.properties[key].enum).toEqual(["present", "absent", "uncertain"]);
     }
   });
@@ -76,7 +76,6 @@ describe("strict floor-plan recognition contract", () => {
   it("accepts harmless object-key ordering", () => {
     const parsed = JSON.parse(validRecognition) as Record<string, unknown>;
     const reordered = JSON.stringify({
-      movableFurniture: parsed.movableFurniture,
       windowOpening: parsed.windowOpening,
       roomShape: parsed.roomShape,
       doorOpening: parsed.doorOpening,
@@ -107,10 +106,6 @@ describe("strict floor-plan recognition contract", () => {
     ["missing bedroom label", validRecognition.replace('"roomLabel":"present"', '"roomLabel":"absent"')],
     ["uncertain door", validRecognition.replace('"doorOpening":"present"', '"doorOpening":"uncertain"')],
     ["missing window", validRecognition.replace('"windowOpening":"present"', '"windowOpening":"absent"')],
-    [
-      "movable furniture present",
-      validRecognition.replace('"movableFurniture":"absent"', '"movableFurniture":"present"'),
-    ],
     ["legacy bad Family attempt 1", rejectedFamilyAttempt1],
     ["legacy bad Family attempt 2", rejectedFamilyAttempt2],
     ["extra prose", `${validRecognition}\nThe room is rectangular.`],

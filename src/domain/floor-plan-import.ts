@@ -18,7 +18,6 @@ export interface FloorPlanRecognition {
   readonly roomLabel: RecognitionAlternative;
   readonly doorOpening: RecognitionAlternative;
   readonly windowOpening: RecognitionAlternative;
-  readonly movableFurniture: RecognitionAlternative;
 }
 
 export interface FloorPlanRecognitionError {
@@ -39,9 +38,8 @@ export const floorPlanRecognitionJsonSchema = {
     roomLabel: { type: "string", enum: ["present", "absent", "uncertain"] },
     doorOpening: { type: "string", enum: ["present", "absent", "uncertain"] },
     windowOpening: { type: "string", enum: ["present", "absent", "uncertain"] },
-    movableFurniture: { type: "string", enum: ["present", "absent", "uncertain"] },
   },
-  required: ["schema", "roomShape", "roomLabel", "doorOpening", "windowOpening", "movableFurniture"],
+  required: ["schema", "roomShape", "roomLabel", "doorOpening", "windowOpening"],
 } as const;
 
 export const floorPlanVisionSystemPrompt = `
@@ -51,7 +49,6 @@ Every categorical field deliberately allows a positive, negative, or uncertain a
 - roomLabel: present only when a printed room label is clearly visible; do not return its OCR text.
 - doorOpening: present only when at least one architectural door opening or swing is visible.
 - windowOpening: present only when at least one architectural window opening is visible.
-- movableFurniture: present only when movable furniture symbols are drawn inside the room; built-in wall or closet linework is not movable furniture.
 Do not infer coordinates, hinge direction, dimensions, scale, filename identity, or a fit verdict.
 Do not add prose, Markdown, confidence, OCR text, hashes, or extra keys.
 `.trim();
@@ -66,7 +63,6 @@ const expectedKeyCounts = {
   roomLabel: 1,
   doorOpening: 1,
   windowOpening: 1,
-  movableFurniture: 1,
 } as const;
 
 function repetitionDetected(raw: string): boolean {
@@ -141,20 +137,12 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
   }
   if (
     !isRecord(parsed) ||
-    !hasExactKeys(parsed, [
-      "schema",
-      "roomShape",
-      "roomLabel",
-      "doorOpening",
-      "windowOpening",
-      "movableFurniture",
-    ]) ||
+    !hasExactKeys(parsed, ["schema", "roomShape", "roomLabel", "doorOpening", "windowOpening"]) ||
     parsed.schema !== "single-room-topology-v1" ||
     !["rectangle", "not_rectangle", "uncertain"].includes(String(parsed.roomShape)) ||
     !["present", "absent", "uncertain"].includes(String(parsed.roomLabel)) ||
     !["present", "absent", "uncertain"].includes(String(parsed.doorOpening)) ||
-    !["present", "absent", "uncertain"].includes(String(parsed.windowOpening)) ||
-    !["present", "absent", "uncertain"].includes(String(parsed.movableFurniture))
+    !["present", "absent", "uncertain"].includes(String(parsed.windowOpening))
   ) {
     return {
       ok: false,
@@ -169,15 +157,14 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
     parsed.roomShape !== "rectangle" ||
     parsed.roomLabel !== "present" ||
     parsed.doorOpening !== "present" ||
-    parsed.windowOpening !== "present" ||
-    parsed.movableFurniture !== "absent"
+    parsed.windowOpening !== "present"
   ) {
     return {
       ok: false,
       error: {
         code: "CONTENT_MISMATCH",
         message:
-          "The image did not visibly confirm the supported empty rectangular bedroom with a label, door, and window.",
+          "The image did not visibly confirm the supported rectangular room with a label, door, and window.",
       },
     };
   }
@@ -190,7 +177,6 @@ export function parseFloorPlanRecognition(raw: string): FloorPlanRecognitionResu
       roomLabel: "present",
       doorOpening: "present",
       windowOpening: "present",
-      movableFurniture: "absent",
     },
   };
 }

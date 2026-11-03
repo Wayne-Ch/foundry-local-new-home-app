@@ -91,12 +91,11 @@ retains its own history. There is no model substitution or endpoint fallback.
 The contract recognizes only the packaged fixture:
 
 - `roomShape`: `rectangle | not_rectangle | uncertain`;
-- `roomLabel`, `doorOpening`, `windowOpening`, and `movableFurniture`:
-  `present | absent | uncertain`.
+- `roomLabel`, `doorOpening`, and `windowOpening`: `present | absent | uncertain`.
 
 Every alternative remains available in runtime guidance. The application accepts only
-`rectangle`, visible bedroom label/door/window, and absent movable furniture. Missing, negative, or
-uncertain evidence rejects. Object-key order is irrelevant JSON syntax, but keys must occur exactly
+`rectangle` and visible room label/door/window. Missing, negative, or uncertain evidence rejects.
+Object-key order is irrelevant JSON syntax, but keys must occur exactly
 once; length, repetition, extra prose, and legacy numeric/coordinate output fail closed. The request
 uses a fixed 320-token cap and at most one fresh-session correction with the same cap. Every rejected
 attempt's bounded, control-character-redacted raw output is visible in Developer trace.

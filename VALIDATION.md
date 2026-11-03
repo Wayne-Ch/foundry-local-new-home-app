@@ -35,7 +35,7 @@
 | Floor-plan task / device / EP | `vision-language-chat` / CPU / `CPUExecutionProvider` |
 | Floor-plan endpoint | none; in-process image `ChatSession` |
 | Floor-plan fixture | NARA master-bedroom crop, `1020 x 1080`, SHA-256 `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587` |
-| Floor-plan contract | non-forced rectangle/bedroom-label/door/window/movable-furniture categories |
+| Floor-plan contract | non-forced rectangle/room-label/door/window categories |
 
 The compact contract moved exact IDs, state references, versions, units, retained objects, locked
 constraints, required checks, and unknown-term construction into application code. The model emits
@@ -75,8 +75,8 @@ The first Windows checkpoint exposed why the Family-room numeric design was inva
 open alternatives, the model did not confirm the requested openings, while the forced schema had
 made the expected answer the only legal output. Those two exact numeric attempts are committed as
 negative parser regressions. The replacement schema keeps positive, negative, and uncertain
-alternatives open and asks only for room shape, bedroom label, door, window, and movable-furniture
-presence. Application code applies the documented dimensions and canonical geometry. Every bounded
+alternatives open and asks only for room shape, room label, door, and window presence. Application
+code applies the documented dimensions and canonical geometry. Every bounded
 redacted raw attempt remains visible in Developer trace. The final Windows-native gate is
 authoritative; a mocked parser pass is insufficient.
 

@@ -86,8 +86,7 @@ Optional enhanced-room preflight:
 1. Select **Load sample floor plan** and confirm the NARA `1020 x 1080` preview. Commons marks the
    source `PD-US`; keep this optional fixture private unless legal review approves wider use.
 2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
-   endpoint, and the non-forced categories: rectangular room, bedroom label/door/window present,
-   movable furniture absent.
+   endpoint, and the non-forced categories: rectangular room and room label/door/window present.
 3. If analysis fails, open **Developer trace -> Runtime + locked state** and record
    `floorPlanVision.attempts[].rawOutput`; never present the default-room fallback as a successful
    import.

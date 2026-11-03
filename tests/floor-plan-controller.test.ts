@@ -77,7 +77,6 @@ const recognition: FloorPlanRecognition = {
   roomLabel: "present",
   doorOpening: "present",
   windowOpening: "present",
-  movableFurniture: "absent",
 };
 
 const response: Response = {
@@ -187,7 +186,7 @@ describe("floor-plan controller lifecycle", () => {
         error: null,
       },
     });
-    expect(imported.floorPlanImport.recognizedFacts).toHaveLength(6);
+    expect(imported.floorPlanImport.recognizedFacts).toHaveLength(5);
     expect(owned.every((value) => value === 0)).toBe(true);
     expect(() => store.borrowBytes()).toThrow("No floor-plan image is loaded");
   });

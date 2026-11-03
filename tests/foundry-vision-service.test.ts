@@ -16,7 +16,7 @@ import {
 } from "../src/foundry/runtime-config";
 
 const validRecognition =
-  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present","movableFurniture":"absent"}';
+  '{"schema":"single-room-topology-v1","roomShape":"rectangle","roomLabel":"present","doorOpening":"present","windowOpening":"present"}';
 
 const fakePaths = {
   rootDir: "C:\\foundry-test",

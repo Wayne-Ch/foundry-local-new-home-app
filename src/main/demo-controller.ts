@@ -59,7 +59,6 @@ function recognizedFloorPlanFacts(recognition: FloorPlanRecognition): readonly s
     `Room label: ${recognition.roomLabel}.`,
     `Door opening: ${recognition.doorOpening}.`,
     `Window opening: ${recognition.windowOpening}.`,
-    `Movable furniture: ${recognition.movableFurniture}.`,
     "Application applied the fixture's documented dimensions and canonical door/window/closet geometry.",
   ];
 }
@@ -264,7 +263,7 @@ export class DemoController {
       this.#messages = [
         message(
           "system",
-          "Experimental NARA master bedroom loaded. Foundry Local recognized a rectangular labeled bedroom with a door and window and no movable furniture. The application applied the documented fixture dimensions and canonical door/window/closet geometry.",
+          "Experimental NARA master bedroom loaded. Foundry Local recognized a rectangular labeled room with a door and window. The application applied the documented fixture dimensions and canonical door/window/closet geometry.",
         ),
       ];
       this.#pushTrace("floor-plan-vision", "Bounded floor-plan recognition accepted", {

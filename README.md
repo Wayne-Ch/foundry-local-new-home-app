@@ -93,10 +93,9 @@ receives only a bounded data-URL preview and recognized facts, never a filesyste
   preview bytes after data-URL creation, inference copies, and staged source bytes have independent
   zero-fill ownership.
 - Contract: non-forced categorical alternatives. `roomShape` is
-  `rectangle|not_rectangle|uncertain`; bedroom label, door opening, window opening, and movable
-  furniture are each `present|absent|uncertain`. Import requires a visible rectangular labeled
-  bedroom with a door and window and no movable furniture. Missing, negative, uncertain, duplicate,
-  or extra evidence rejects.
+  `rectangle|not_rectangle|uncertain`; room label, door opening, and window opening are each
+  `present|absent|uncertain`. Import requires a visible rectangular labeled room with a door and
+  window. Missing, negative, uncertain, duplicate, or extra evidence rejects.
 - Output is bounded to 320 tokens, must finish with `stop`, gets at most one same-budget
   fresh-session correction attempt, and fails closed on invalid JSON, repetition, truncation, or
   content mismatch. The schema does not force the expected answer and does not ask the 0.8B model
@@ -236,7 +235,7 @@ Optional image-intake beat:
 1. Select **Load sample floor plan**.
 2. Confirm the `1020 x 1080` PNG preview and select **Analyze layout**.
 3. Confirm the exact CPU VLM identity in Developer trace and categorical evidence:
-   `roomShape=rectangle`, bedroom label/door/window `present`, movable furniture `absent`.
+   `roomShape=rectangle` and room label/door/window `present`.
 4. Load the normal layout model, then run the imported Queen -> King conflict -> Queen + baby bed
    recovery story. **Use default room** is always available; **Reset** clears the import and restores
    the original verified bedroom.
