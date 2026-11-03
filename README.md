@@ -80,9 +80,11 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 
 ## Optional experimental floor-plan import
 
-This feature branch adds an optional **Load sample floor plan** -> **Analyze layout** flow without
-replacing the verified default room. The main process owns image selection and bytes; the renderer
-receives only a bounded data-URL preview and recognized facts, never a filesystem path.
+This feature branch starts in an explicit no-room intake state. **Load sample floor plan** shows only
+the bounded image preview; deterministic room geometry becomes active only after **Analyze layout**
+succeeds. **Use default room** remains an explicit fallback that activates the original verified
+bedroom. The main process owns image selection and bytes; the renderer receives only a bounded
+data-URL preview and recognized facts, never a filesystem path.
 **Choose exact fixture copy** exists only for a byte-for-byte copy of the same packaged PNG. A
 renamed file is acceptable only when its bytes remain identical; re-encoded or arbitrary drawings
 are rejected before analysis.
@@ -114,9 +116,9 @@ are rejected before analysis.
   approximately `11'-10 3/4" x 13'-0"` scale as `3650 x 3950 mm` and canonical one-door,
   closet-access, and exterior-window zones. Existing collision, door-swing, clearance, manual
   placement, voice intent, Reset, and stale-result rules remain authoritative.
-- Cleanup: each inference copy and the main-owned source buffer is zero-filled. Reset, default-room
-  selection, reload, renderer loss, window close, and shutdown cancel stale work and clear preview
-  ownership.
+- Cleanup: each inference copy and the main-owned source buffer is zero-filled. Reset returns to the
+  fresh no-room intake state. Default-room selection, reload, renderer loss, window close, and
+  shutdown cancel stale work and clear preview ownership.
 
 The fixture is intentionally narrow. It is not arbitrary architectural-plan support. It is an
 empty `MASTER BEDROOM` crop with one door, exterior window detail, built-in wall/closet detail, and
@@ -243,12 +245,13 @@ In the app:
 Optional image-intake beat:
 
 1. Select **Load sample floor plan**.
-2. Confirm the `1020 x 1080` PNG preview and select **Analyze layout**.
+2. Confirm the `1020 x 1080` PNG preview appears while the room canvas remains empty, then select
+   **Analyze layout**.
 3. Confirm the exact CPU VLM identity in Developer trace and categorical evidence:
    `roomShape=rectangle` and room label/door/window `present`.
 4. Load the normal layout model, then run the imported Queen -> King conflict -> new Queen + desk +
-   baby-bed request story. **Use default room** is always available; **Reset** clears the import and
-   restores the original verified bedroom.
+   baby-bed request story. **Use default room** is always available as an explicit fallback;
+   **Reset** clears the import and returns to the fresh no-room intake state.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
 exact default from the public catalog and can download it into an empty cache.
@@ -285,6 +288,7 @@ npm run test:audio-integration
 npm run test:floor-plan-integration
 npm run build
 npm run smoke:electron
+npm run probe:floor-plan-ui
 npm run probe:reset
 npm run probe:stream-owner
 npm run probe:microphone-permission
@@ -343,10 +347,16 @@ in [VALIDATION.md](VALIDATION.md). A failed floor-plan gate writes
 `artifacts/floor-plan-integration-failure.json` with every retained raw validator attempt.
 
 `smoke:electron` launches the actual Electron app and exits after SDK/catalog initialization.
-`probe:reset` uses Chromium's controlled WAV-backed microphone device, clicks the real renderer
+`probe:floor-plan-ui` drives the real Electron renderer through fresh blank intake, sample preview
+without geometry, successful imported geometry, explicit default geometry, forced analysis failure
+without fallback geometry, and blank Reset. It records six ignored PNGs under
+`artifacts/floor-plan-ui-probe/`.
+`probe:reset` uses Chromium's controlled WAV-backed microphone device, explicitly activates the
+default room, clicks the real renderer
 **Start recording** and **Reset** controls, requires real Nemotron PCM chunks, verifies renderer
-tracks stop, production IPC/controller/ownership cancellation completes, UI/controller state is v0,
-and a fresh recording lease succeeds. It keeps main-process exception/rejection traps and also fails
+tracks stop, production IPC/controller/ownership cancellation completes, UI/controller returns to
+no-room intake, and a fresh recording lease succeeds after the probe explicitly selects the default
+room again. It keeps main-process exception/rejection traps and also fails
 on renderer console errors or CDP `Runtime.exceptionThrown` page-error signals.
 `probe:stream-owner` separately clicks the real renderer **Start recording** control, reloads the
 renderer during the active recording, starts another real recording after navigation, and closes the
@@ -355,8 +365,9 @@ advance, stale partial routing to remain disabled, and no destroyed-object or un
 Before the normal path, it intentionally rejects a renderer promise and proves the harness fails the
 negative self-test through both Chromium console and CDP exception channels; it then clears only that
 expected evidence and requires the reload/close path to finish with zero errors.
-`capture:ui` captures an explicitly labeled browser-only visual preview because Electron
-`webContents.capturePage()` returns `UnknownVizError` in this execution environment.
+`capture:ui` captures the explicitly labeled browser-only fresh intake preview. The Electron
+floor-plan probe disables hardware acceleration for deterministic `webContents.capturePage()`
+evidence in this execution environment.
 
 ## Verified public grounding
 

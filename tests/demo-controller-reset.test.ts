@@ -128,7 +128,7 @@ function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
 }
 
 describe("main reset response", () => {
-  it("publishes one trace-free v0 generation before native reset settles", async () => {
+  it("publishes one trace-free no-room generation before native reset settles", async () => {
     const resetGate = deferred<void>();
     const reset = vi.fn(() => resetGate.promise);
     const foundry = createFoundry({ reset });
@@ -140,19 +140,17 @@ describe("main reset response", () => {
     const resetPromise = controller.reset();
     expect(controller.bootstrap()).toMatchObject({
       conversationGeneration: 1,
-      state: {
-        version: 0,
-        stateRef: "layout-state-v0",
-        currentLayoutId: null,
-        lastToolResult: null,
-      },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
       completedStageTurnIds: [],
       lastInteraction: null,
       selectedLayout: null,
       lastToolResult: null,
       trace: [],
     });
-    expect(controller.bootstrap().messages[0]?.text).toContain("Conversation reset");
+    expect(controller.bootstrap().messages[0]?.text).toContain("Load or choose a floor plan");
 
     resetGate.resolve();
     const response = await resetPromise;
@@ -160,12 +158,10 @@ describe("main reset response", () => {
     expect(reset).toHaveBeenCalledOnce();
     expect(response).toMatchObject({
       conversationGeneration: 1,
-      state: {
-        version: 0,
-        stateRef: "layout-state-v0",
-        currentLayoutId: null,
-        lastToolResult: null,
-      },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
+      stageTurns: [],
       completedStageTurnIds: [],
       lastInteraction: null,
       selectedLayout: null,
@@ -173,10 +169,10 @@ describe("main reset response", () => {
       trace: [],
     });
     expect(response.messages).toHaveLength(1);
-    expect(response.messages[0]?.text).toContain("Conversation reset");
+    expect(response.messages[0]?.text).toContain("Load or choose a floor plan");
   });
 
-  it("keeps the same v0 generation through a timeout and late readiness recovery", async () => {
+  it("keeps the same no-room generation through a timeout and late readiness recovery", async () => {
     let currentReadiness = readiness;
     const resetGate = deferred<void>();
     const foundry = createFoundry({
@@ -199,7 +195,9 @@ describe("main reset response", () => {
     await expect(reset).rejects.toThrow("could not safely stop");
     expect(controller.bootstrap()).toMatchObject({
       conversationGeneration: 1,
-      state: { version: 0, stateRef: "layout-state-v0" },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       readiness: { status: "recovering", localInferenceReady: false },
       selectedLayout: null,
       lastToolResult: null,
@@ -209,7 +207,9 @@ describe("main reset response", () => {
     currentReadiness = readiness;
     expect(controller.bootstrap()).toMatchObject({
       conversationGeneration: 1,
-      state: { version: 0, stateRef: "layout-state-v0" },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       readiness: { status: "ready", localInferenceReady: true },
       selectedLayout: null,
       lastToolResult: null,
@@ -237,7 +237,9 @@ describe("main reset response", () => {
     const second = controller.reset();
     expect(controller.bootstrap()).toMatchObject({
       conversationGeneration: 2,
-      state: { version: 0, stateRef: "layout-state-v0" },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       trace: [],
     });
     secondGate.resolve();
@@ -260,7 +262,9 @@ describe("main reset response", () => {
     await expect(initialize).rejects.toThrow("superseded by conversation reset");
     expect(controller.bootstrap()).toMatchObject({
       conversationGeneration: 1,
-      state: { version: 0, stateRef: "layout-state-v0" },
+      roomMode: "none",
+      roomPlan: null,
+      state: null,
       trace: [],
     });
   });

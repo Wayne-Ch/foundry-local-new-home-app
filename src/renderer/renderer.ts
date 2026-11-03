@@ -26,6 +26,7 @@ import {
 import type {
   CheckedRoomState,
   DemoState,
+  DemoStateSnapshot,
   DoorSwing,
   EvaluatedLayoutOption,
   LayoutConflict,
@@ -79,6 +80,7 @@ import {
   isCurrentConversationResult,
   resetRendererTransientState,
 } from "./reset-state";
+import { type ActiveRoomView, getActiveRoomView } from "./room-state";
 import { runtimeBadgeLabel } from "./runtime-presentation";
 import { applySpeechCorrectionSuggestions } from "./speech-correction";
 import {
@@ -95,7 +97,7 @@ import "./styles.css";
 const svgNamespace = "http://www.w3.org/2000/svg";
 const previewParameters = new URLSearchParams(window.location.search);
 const previewMode = previewParameters.get("preview") === "1";
-const demoApi = window.demoApi ?? (previewMode ? createPreviewApi() : null);
+const demoApi = previewMode ? createPreviewApi() : (window.demoApi ?? null);
 
 let viewState: BootstrapPayload;
 let latestToolResult: LayoutToolResult | null = null;
@@ -172,6 +174,7 @@ const layoutViewActions = requiredElement("layoutViewActions");
 const layoutViewStatus = requiredElement("layoutViewStatus");
 const showAcceptedLayoutButton = requiredButton("showAcceptedLayoutButton");
 const showRejectedLayoutButton = requiredButton("showRejectedLayoutButton");
+const roomEmptyState = requiredElement("roomEmptyState");
 const roomSvg = requiredSvg("roomSvg");
 const verdictTitle = requiredElement("verdictTitle");
 const verdictSummary = requiredElement("verdictSummary");
@@ -220,6 +223,10 @@ interface VoiceCaptureOperation {
   recordingTimerId: number | null;
   recordingLimitId: number | null;
   stopped: boolean;
+}
+
+function activeRoomView(): ActiveRoomView | null {
+  return getActiveRoomView(viewState);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -626,6 +633,7 @@ roomSvg.addEventListener("pointercancel", (event) => {
 promptForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (
+    activeRoomView() === null ||
     isBusy ||
     operationBarrier.operationsBlocked ||
     isAudioBusy() ||
@@ -650,6 +658,7 @@ promptForm.addEventListener("submit", (event) => {
 
 async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<void> {
   if (
+    activeRoomView() === null ||
     isBusy ||
     operationBarrier.operationsBlocked ||
     isAudioBusy() ||
@@ -703,6 +712,9 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
 }
 
 function applyTurnResponse(response: RunTurnResponse): void {
+  if (viewState.roomMode === "none") {
+    throw new Error("Cannot apply a layout turn without an active room.");
+  }
   latestToolResult = response.toolResult;
   layoutEvidenceView = defaultLayoutEvidenceView(response.toolResult);
   viewState = {
@@ -730,6 +742,7 @@ function applyBootstrap(bootstrap: BootstrapPayload): void {
 }
 
 function renderAll(): void {
+  const activeRoom = activeRoomView();
   renderRuntime(viewState.readiness);
   renderAudio();
   renderStageSteps(viewState.stageTurns);
@@ -738,14 +751,24 @@ function renderAll(): void {
   renderLayout();
   renderSpeechSuggestion();
   renderTrace();
-  turnCounter.textContent = `State v${viewState.state.version}`;
+  turnCounter.textContent = activeRoom === null ? "No room loaded" : `State v${activeRoom.state.version}`;
+  promptInput.placeholder =
+    activeRoom === null
+      ? "Choose a room before asking a layout question..."
+      : "Ask a follow-up using the verified room and catalog...";
   const nextIndex = nextStageTurnIndex();
   nextTurnButton.textContent =
-    nextIndex >= 0
-      ? `Run next: ${viewState.stageTurns[nextIndex]?.label ?? "scripted turn"}`
-      : "Scripted story complete";
+    activeRoom === null
+      ? "Choose a room to begin"
+      : nextIndex >= 0
+        ? `Run next: ${viewState.stageTurns[nextIndex]?.label ?? "scripted turn"}`
+        : "Scripted story complete";
   nextTurnButton.disabled =
-    isBusy || operationBarrier.operationsBlocked || !viewState.readiness.localInferenceReady || nextIndex < 0;
+    activeRoom === null ||
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    !viewState.readiness.localInferenceReady ||
+    nextIndex < 0;
 }
 
 function renderFloorPlanImport(): void {
@@ -771,20 +794,23 @@ function renderFloorPlanImport(): void {
   const vision = viewState.visionReadiness;
   if (imported.status === "idle") {
     floorPlanImportStatus.textContent =
-      "Default verified room is active. This private demo accepts only the packaged NARA PNG or an exact byte-for-byte copy.";
+      viewState.roomMode === "default"
+        ? "Verified default room is active. Load the packaged NARA PNG to begin a new import."
+        : "No room is active. Load the packaged NARA PNG or choose an exact byte-for-byte copy, then Analyze layout; Use default room is an explicit fallback.";
   } else if (imported.status === "image_ready") {
     floorPlanImportStatus.textContent =
-      "Exact NARA fixture identity passed PNG, 1020 x 1080, byte-length, and SHA-256 checks. Analyze visible topology only.";
+      "Preview only: exact NARA fixture identity passed PNG, 1020 x 1080, byte-length, and SHA-256 checks. No room geometry is active until Analyze layout succeeds.";
   } else if (imported.status === "analyzing") {
     floorPlanImportStatus.textContent = `Analyzing locally with ${vision.target.modelId}; no cloud endpoint or canned fallback.`;
   } else if (imported.status === "imported") {
     floorPlanImportStatus.textContent =
       "VLM visible-topology recognition passed. The app applied documented NARA scale plus canonical door, window, closet, and clearance geometry.";
   } else {
-    floorPlanImportStatus.textContent = `Import failed closed: ${imported.error ?? "unknown error"}. The default room remains available.`;
+    const detail = (imported.error ?? "unknown error").replace(/[.\s]+$/u, "");
+    floorPlanImportStatus.textContent = `Import failed closed: ${detail}. No room geometry was activated; retry Analyze layout or explicitly select Use default room.`;
   }
 
-  const controlsBlocked = isBusy || operationBarrier.operationsBlocked || previewMode;
+  const controlsBlocked = isBusy || operationBarrier.operationsBlocked;
   loadSampleFloorPlanButton.disabled = controlsBlocked;
   chooseFloorPlanButton.disabled = controlsBlocked;
   analyzeFloorPlanButton.disabled =
@@ -797,6 +823,7 @@ function nextStageTurnIndex(): number {
 }
 
 function renderRuntime(readiness: RuntimeReadiness): void {
+  const roomActive = activeRoomView() !== null;
   runtimeBadge.className = "runtime-badge";
   if (readiness.status === "configuration_invalid") {
     runtimeBadge.classList.add("is-error");
@@ -832,8 +859,13 @@ function renderRuntime(readiness: RuntimeReadiness): void {
   }
 
   sendButton.disabled =
-    isBusy || operationBarrier.operationsBlocked || isAudioBusy() || !readiness.localInferenceReady;
+    !roomActive ||
+    isBusy ||
+    operationBarrier.operationsBlocked ||
+    isAudioBusy() ||
+    !readiness.localInferenceReady;
   promptInput.disabled =
+    !roomActive ||
     isBusy ||
     operationBarrier.operationsBlocked ||
     audioRecorderState.status === "transcribing" ||
@@ -842,6 +874,7 @@ function renderRuntime(readiness: RuntimeReadiness): void {
 }
 
 function renderAudio(): void {
+  const roomActive = activeRoomView() !== null;
   const readiness = viewState.audioReadiness;
   const pipelineReady = readiness.localAudioReady && viewState.readiness.localInferenceReady;
   const preparationActive = isAudioPreparationActive(audioPreparation.active, readiness.status);
@@ -893,6 +926,7 @@ function renderAudio(): void {
   audioFallbackButton.disabled = modeControlsBlocked;
   recordButton.disabled =
     previewMode ||
+    !roomActive ||
     isBusy ||
     operationBarrier.operationsBlocked ||
     audioRecorderState.status === "requesting_permission" ||
@@ -917,6 +951,7 @@ function renderAudio(): void {
 }
 
 function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
+  const roomActive = activeRoomView() !== null;
   stageSteps.replaceChildren();
   const nextIndex = nextStageTurnIndex();
   turns.forEach((turn, index) => {
@@ -930,6 +965,7 @@ function renderStageSteps(turns: readonly StageTurnDefinition[]): void {
     }
     button.innerHTML = `<span>${index + 1}</span><strong>${escapeHtml(turn.label)}</strong>`;
     button.disabled =
+      !roomActive ||
       isBusy ||
       isAudioBusy() ||
       operationBarrier.operationsBlocked ||
@@ -1015,6 +1051,11 @@ function resetRendererTransientUi(): void {
 }
 
 function renderLayout(): void {
+  const activeRoom = activeRoomView();
+  if (activeRoom === null) {
+    renderInactiveRoomLayout();
+    return;
+  }
   const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout, layoutEvidenceView);
   let displayLayout = base.displayLayout;
   let evidenceLayout = base.evidenceLayout;
@@ -1058,7 +1099,7 @@ function renderLayout(): void {
     notice =
       "This accepted layout version came from app-owned direct manipulation and was revalidated without model-generated geometry.";
     verdict = "All locked checks pass";
-    summary = viewState.state.lastChangedPreference ?? "Manual placement accepted.";
+    summary = activeRoom.state.lastChangedPreference ?? "Manual placement accepted.";
     displayChecksLabel = "Accepted manual checks";
     displayConflictsLabel = "Accepted manual conflicts";
   }
@@ -1107,8 +1148,13 @@ function renderLayout(): void {
       ? "Rejected bedroom layout preview. Furniture is not accepted and cannot be adjusted."
       : "Interactive accepted bedroom layout diagram. Accepted furniture can be adjusted with arrow keys.",
   );
+  roomCard.classList.remove("is-empty");
+  roomCard.dataset.roomMode = activeRoom.roomMode;
+  roomCard.dataset.roomPlanId = activeRoom.roomPlan.id;
+  roomEmptyState.hidden = true;
+  roomSvg.removeAttribute("hidden");
   roomSvg.classList.toggle("is-rejected-preview", showingRejectedResultPreview);
-  renderRoomSvg(displayLayout, roomConflicts, manualPreview !== null);
+  renderRoomSvg(activeRoom, displayLayout, roomConflicts, manualPreview !== null);
   resultBadge.className = badgeClass;
   resultBadge.textContent = badgeText;
   layoutTitle.textContent = title;
@@ -1117,22 +1163,66 @@ function renderLayout(): void {
   verdictSummary.textContent = summary;
   checksLabel.textContent = displayChecksLabel;
   conflictsLabel.textContent = displayConflictsLabel;
-  renderRequirements(displayLayout, evidenceLayout);
-  renderManualPlacement();
-  renderChecks(evidenceChecks);
+  renderRequirements(activeRoom, displayLayout, evidenceLayout);
+  renderManualPlacement(activeRoom.state);
+  renderChecks(evidenceChecks, activeRoom.state.requiredRoomStates);
   renderConflicts(evidenceConflicts);
 }
 
+function renderInactiveRoomLayout(): void {
+  layoutViewActions.hidden = true;
+  layoutViewStatus.textContent = "";
+  showAcceptedLayoutButton.hidden = true;
+  showRejectedLayoutButton.hidden = true;
+  roomCard.classList.add("is-empty");
+  roomCard.dataset.roomMode = "none";
+  delete roomCard.dataset.roomPlanId;
+  roomCard.setAttribute(
+    "aria-label",
+    "No room loaded. Load or choose a floor plan to begin, or explicitly use the default room.",
+  );
+  roomEmptyState.hidden = false;
+  roomSvg.setAttribute("hidden", "");
+  roomSvg.classList.remove("is-rejected-preview");
+  roomSvg.replaceChildren();
+  resultBadge.className = "result-badge is-neutral";
+  resultBadge.textContent = "Room required";
+  layoutTitle.textContent = "Choose a room to begin";
+  layoutNotice.textContent =
+    "Analyze the selected floor plan to activate imported geometry, or explicitly select Use default room.";
+  verdictTitle.textContent = "No room geometry active";
+  verdictSummary.textContent =
+    "The application is waiting for floor-plan intake. No walls, reserved zones, or furniture are rendered.";
+  requirementsCard.classList.remove("is-rejected-evidence");
+  requirementSummary.replaceChildren();
+  const requirement = document.createElement("div");
+  requirement.className = "requirement-item";
+  requirement.textContent = "Room measurements and locked constraints appear only after a room is active.";
+  requirementSummary.append(requirement);
+  measurementList.replaceChildren();
+  const measurement = document.createElement("div");
+  measurement.className = "measurement-item";
+  measurement.textContent = "No room measurements yet.";
+  measurementList.append(measurement);
+  manualPlacementCard.classList.remove("is-valid", "is-invalid");
+  manualPlacementStatus.textContent = "Choose a room before using direct manipulation.";
+  manualApplyButton.disabled = true;
+  manualRevertButton.disabled = true;
+  checksLabel.textContent = "Locked checks";
+  conflictsLabel.textContent = "Visible conflicts";
+  renderChecks([], []);
+  renderConflicts([]);
+}
+
 function renderRoomSvg(
+  activeRoom: ActiveRoomView,
   layout: EvaluatedLayoutOption | null,
   conflicts: readonly LayoutConflict[],
   isManualPreview: boolean,
 ): void {
+  const roomPlan = activeRoom.roomPlan;
   roomSvg.replaceChildren();
-  roomSvg.setAttribute(
-    "viewBox",
-    `-180 -260 ${viewState.roomPlan.widthMm + 360} ${viewState.roomPlan.depthMm + 540}`,
-  );
+  roomSvg.setAttribute("viewBox", `-180 -260 ${roomPlan.widthMm + 360} ${roomPlan.depthMm + 540}`);
   const title = svgElement("title");
   title.textContent = "Interactive bedroom layout";
   roomSvg.append(title);
@@ -1162,8 +1252,8 @@ function renderRoomSvg(
     svgElement("rect", {
       x: "0",
       y: "0",
-      width: String(viewState.roomPlan.widthMm),
-      height: String(viewState.roomPlan.depthMm),
+      width: String(roomPlan.widthMm),
+      height: String(roomPlan.depthMm),
       rx: "30",
       fill: "#0D1B2A",
       stroke: "#C7D2E3",
@@ -1174,7 +1264,7 @@ function renderRoomSvg(
   const conflictZoneIds = new Set(
     conflicts.flatMap((conflict) => (conflict.zoneId === undefined ? [] : [conflict.zoneId])),
   );
-  for (const zone of viewState.roomPlan.reservedZones) {
+  for (const zone of roomPlan.reservedZones) {
     const conflicted = conflictZoneIds.has(zone.id);
     roomSvg.append(
       svgElement("rect", {
@@ -1200,7 +1290,7 @@ function renderRoomSvg(
     );
   }
 
-  for (const swing of viewState.roomPlan.doorSwings) {
+  for (const swing of roomPlan.doorSwings) {
     const doorConflicted = conflictZoneIds.has(swing.id);
     roomSvg.append(
       svgElement("path", {
@@ -1283,17 +1373,17 @@ function renderRoomSvg(
     );
   }
 
-  appendSvgLabel(`${viewState.roomPlan.widthMm} mm`, viewState.roomPlan.widthMm / 2, -110, "#DCE7F7");
+  appendSvgLabel(`${roomPlan.widthMm} mm`, roomPlan.widthMm / 2, -110, "#DCE7F7");
   const depth = svgElement("text", {
     x: "-90",
-    y: String(viewState.roomPlan.depthMm / 2),
+    y: String(roomPlan.depthMm / 2),
     fill: "#DCE7F7",
     "font-size": "120",
     "font-weight": "700",
     "text-anchor": "middle",
-    transform: `rotate(-90 -90 ${viewState.roomPlan.depthMm / 2})`,
+    transform: `rotate(-90 -90 ${roomPlan.depthMm / 2})`,
   });
-  depth.textContent = `${viewState.roomPlan.depthMm} mm`;
+  depth.textContent = `${roomPlan.depthMm} mm`;
   roomSvg.append(depth);
   focusPlacement(focusedPlacementInstanceId);
 }
@@ -1358,22 +1448,22 @@ function placementCenter(placement: ResolvedPlacement): Point {
 }
 
 function renderRequirements(
+  activeRoom: ActiveRoomView,
   layout: EvaluatedLayoutOption | null,
   evidenceLayout: EvaluatedLayoutOption | null,
 ): void {
+  const { roomPlan, state } = activeRoom;
   requirementsCard.classList.toggle("is-rejected-evidence", evidenceLayout?.status === "rejected");
   requirementSummary.replaceChildren();
-  const acceptedFurniture = viewState.state.activeFurnitureIds
-    .map((id) => furnitureCatalog[id].label)
-    .join(", ");
+  const acceptedFurniture = state.activeFurnitureIds.map((id) => furnitureCatalog[id].label).join(", ");
   const displayFurniture = layout?.placements.map((placement) => placement.label).join(", ") ?? "None";
   const evidenceFurniture =
     evidenceLayout?.placements.map((placement) => placement.label).join(", ") ?? "None";
-  const closet = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "closet-access");
-  const windowZone = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
+  const closet = roomPlan.reservedZones.find((zone) => zone.kind === "closet-access");
+  const windowZone = roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
   const requirements = [
     `<strong>Furniture clearance:</strong> ${clearanceRuleSet.minimumFurnitureGapMm} mm minimum`,
-    `<strong>Door swings:</strong> keep ${viewState.roomPlan.doorSwings
+    `<strong>Door swings:</strong> keep ${roomPlan.doorSwings
       .map((swing) => `${swing.radiusMm} mm`)
       .join(" + ")} clear`,
     closet === undefined
@@ -1383,11 +1473,11 @@ function renderRequirements(
     `<strong>Accepted state:</strong> ${escapeHtml(acceptedFurniture || "No furniture accepted yet")}`,
     `<strong>${layout?.status === "rejected" ? "Preview" : "Displayed"} furniture:</strong> ${escapeHtml(displayFurniture)}`,
   ];
-  if (viewState.state.currentLayoutId !== null) {
+  if (state.currentLayoutId !== null) {
     requirements.push(
       `<strong>Accepted provenance:</strong> ${escapeHtml(
-        viewState.state.currentLayoutSource?.replaceAll("-", " ") ?? "unknown source",
-      )} · ${escapeHtml(viewState.state.currentLayoutId)}`,
+        state.currentLayoutSource?.replaceAll("-", " ") ?? "unknown source",
+      )} · ${escapeHtml(state.currentLayoutId)}`,
     );
   }
   if (evidenceLayout?.status === "rejected") {
@@ -1401,8 +1491,8 @@ function renderRequirements(
   }
   const changedPreference =
     viewState.lastInteraction === "manual"
-      ? viewState.state.lastChangedPreference
-      : (latestToolResult?.changedPreference ?? viewState.state.lastChangedPreference);
+      ? state.lastChangedPreference
+      : (latestToolResult?.changedPreference ?? state.lastChangedPreference);
   if (changedPreference !== null && changedPreference !== undefined) {
     requirements.push(`<strong>Changed this turn:</strong> ${escapeHtml(changedPreference)}`);
   }
@@ -1436,7 +1526,7 @@ function renderRequirements(
   }
 }
 
-function renderManualPlacement(): void {
+function renderManualPlacement(state: DemoStateSnapshot): void {
   manualPlacementCard.classList.remove("is-valid", "is-invalid");
   if (manualPreview !== null) {
     manualPlacementCard.classList.add(manualPreview.accepted ? "is-valid" : "is-invalid");
@@ -1446,7 +1536,7 @@ function renderManualPlacement(): void {
   } else if (viewState.lastInteraction === "manual") {
     manualPlacementCard.classList.add("is-valid");
     manualPlacementStatus.textContent =
-      viewState.state.lastChangedPreference ?? "The accepted manual placement passes all locked checks.";
+      state.lastChangedPreference ?? "The accepted manual placement passes all locked checks.";
   } else if (viewState.selectedLayout === null) {
     manualPlacementStatus.textContent = "Accept a feasible layout before using direct manipulation.";
   } else if (latestToolResult?.status === "no_feasible_option" && layoutEvidenceView === "rejected") {
@@ -1490,18 +1580,23 @@ function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: 
 }
 
 function currentDemoState(): DemoState {
+  const activeRoom = activeRoomView();
+  if (activeRoom === null) {
+    throw new Error("Cannot create demo state without an active room.");
+  }
   return {
-    ...viewState.state,
+    ...activeRoom.state,
     lastToolResult: latestToolResult,
   };
 }
 
 function manualRequest(instanceId: string, origin: Point): ManualPlacementRequest | null {
-  if (viewState.selectedLayout === null) {
+  const activeRoom = activeRoomView();
+  if (activeRoom === null || viewState.selectedLayout === null) {
     return null;
   }
   return {
-    priorStateRef: viewState.state.stateRef,
+    priorStateRef: activeRoom.state.stateRef,
     sourceLayoutId: viewState.selectedLayout.id,
     instanceId,
     xMm: origin.xMm,
@@ -1510,12 +1605,16 @@ function manualRequest(instanceId: string, origin: Point): ManualPlacementReques
 }
 
 function evaluateManualPreview(request: ManualPlacementRequest): void {
+  const activeRoom = activeRoomView();
+  if (activeRoom === null) {
+    return;
+  }
   focusedPlacementInstanceId = request.instanceId;
   manualPreview = evaluateManualPlacement(
     currentDemoState(),
     viewState.selectedLayout,
     request,
-    viewState.roomPlan,
+    activeRoom.roomPlan,
   );
   renderLayout();
 }
@@ -1562,7 +1661,13 @@ function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): 
 
 function updatePlacementDrag(event: PointerEvent): void {
   const drag = placementDrag;
-  if (drag === null || drag.pointerId !== event.pointerId || viewState.selectedLayout === null) {
+  const activeRoom = activeRoomView();
+  if (
+    activeRoom === null ||
+    drag === null ||
+    drag.pointerId !== event.pointerId ||
+    viewState.selectedLayout === null
+  ) {
     return;
   }
   const placement = viewState.selectedLayout.placements.find(
@@ -1576,7 +1681,7 @@ function updatePlacementDrag(event: PointerEvent): void {
     pointerRoomPoint(event),
     drag.grabOffset,
     placement.rect,
-    viewState.roomPlan,
+    activeRoom.roomPlan,
   );
   const request = manualRequest(drag.instanceId, origin);
   if (request !== null) {
@@ -1655,6 +1760,10 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
   if (acceptedPlacement === undefined) {
     return;
   }
+  const activeRoom = activeRoomView();
+  if (activeRoom === null) {
+    return;
+  }
   event.preventDefault();
   focusedPlacementInstanceId = placement.instanceId;
   manualPreviewOrigin = {
@@ -1664,7 +1773,7 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
   const origin = keyboardPlacementOrigin(
     placement.rect,
     event.key,
-    viewState.roomPlan,
+    activeRoom.roomPlan,
     MANUAL_PLACEMENT_GRID_MM,
   );
   const request = manualRequest(placement.instanceId, origin);
@@ -1687,6 +1796,9 @@ async function applyManualPreview(): Promise<void> {
     }
     if (!isCurrentConversationResult(response, conversationGeneration)) {
       throw new Error("Discarded a stale manual placement result from an earlier conversation generation.");
+    }
+    if (viewState.roomMode === "none") {
+      throw new Error("Cannot apply manual placement without an active room.");
     }
     manualPreview = response.outcome.accepted ? null : response.outcome;
     manualPreviewOrigin = response.outcome.accepted ? null : manualPreviewOrigin;
@@ -1718,14 +1830,24 @@ function revertManualPreview(): void {
   renderLayout();
 }
 
-function renderChecks(checks: readonly CheckedRoomState[]): void {
+function renderChecks(
+  checks: readonly CheckedRoomState[],
+  requiredRoomStates: DemoStateSnapshot["requiredRoomStates"],
+): void {
   constraintChecks.replaceChildren();
-  const fallback = viewState.state.requiredRoomStates.map((id) => ({
+  const fallback = requiredRoomStates.map((id) => ({
     id,
     label: id.replaceAll("-", " "),
     passed: false,
     evidence: "Not evaluated yet.",
   }));
+  if (checks.length === 0 && fallback.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No room checks are active.";
+    constraintChecks.append(empty);
+    return;
+  }
   for (const check of checks.length > 0 ? checks : fallback) {
     const row = document.createElement("div");
     row.className = `constraint-row ${checks.length === 0 ? "is-pending" : check.passed ? "is-pass" : "is-fail"}`;
@@ -1829,10 +1951,16 @@ function handleAudioPartial(event: AudioPartialTranscriptEvent): void {
 }
 
 function setBusy(value: boolean): void {
+  const roomActive = activeRoomView() !== null;
   isBusy = value;
   sendButton.disabled =
-    value || operationBarrier.operationsBlocked || isAudioBusy() || !viewState.readiness.localInferenceReady;
+    !roomActive ||
+    value ||
+    operationBarrier.operationsBlocked ||
+    isAudioBusy() ||
+    !viewState.readiness.localInferenceReady;
   promptInput.disabled =
+    !roomActive ||
     value ||
     operationBarrier.operationsBlocked ||
     audioRecorderState.status === "transcribing" ||
@@ -1873,6 +2001,7 @@ function showRuntimeError(error: unknown): void {
 async function startRecording(): Promise<void> {
   if (
     previewMode ||
+    activeRoomView() === null ||
     !viewState.audioReadiness.localAudioReady ||
     !viewState.readiness.localInferenceReady ||
     isBusy ||

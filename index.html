@@ -46,8 +46,8 @@
           </div>
 
           <fieldset id="stageSteps" class="stage-steps" aria-label="Scripted demo turns"></fieldset>
-          <button id="nextTurnButton" class="next-turn-button" type="button">
-            Run next scripted turn
+          <button id="nextTurnButton" class="next-turn-button" type="button" disabled>
+            Choose a room to begin
           </button>
 
           <div id="messages" class="messages" aria-live="polite"></div>
@@ -64,9 +64,12 @@
               <textarea
                 id="promptInput"
                 rows="2"
-                placeholder="Ask a follow-up using the verified room and catalog..."
+                placeholder="Choose a room before asking a layout question..."
+                disabled
               ></textarea>
-              <button id="sendButton" class="button button-primary send-button" type="submit">Send</button>
+              <button id="sendButton" class="button button-primary send-button" type="submit" disabled>
+                Send
+              </button>
             </div>
             <div class="audio-control-row">
               <button id="audioPrepareButton" class="button button-secondary audio-button" type="button">
@@ -85,6 +88,7 @@
                 class="button button-secondary record-button"
                 type="button"
                 aria-pressed="false"
+                disabled
               >
                 Start recording
               </button>
@@ -125,9 +129,9 @@
           <div class="panel-heading layout-heading">
             <div>
               <p class="eyebrow">Application-owned evidence</p>
-              <h2 id="layoutTitle">Verified room plan</h2>
+              <h2 id="layoutTitle">Choose a room to begin</h2>
             </div>
-            <div id="resultBadge" class="result-badge is-neutral">Waiting for a request</div>
+            <div id="resultBadge" class="result-badge is-neutral">Room required</div>
           </div>
 
           <section class="floor-plan-import" aria-labelledby="floorPlanImportTitle">
@@ -135,7 +139,7 @@
               <p class="eyebrow">Optional experimental intake</p>
               <h3 id="floorPlanImportTitle">Recognize one exact packaged room-plan fixture</h3>
               <p id="floorPlanImportStatus" class="floor-plan-import-status">
-                Default verified room is active. Only the private packaged NARA PNG or an exact byte-for-byte copy is supported.
+                No room is active. Load the packaged NARA PNG or choose an exact byte-for-byte copy, then Analyze layout; Use default room is an explicit fallback.
               </p>
               <div id="floorPlanFacts" class="floor-plan-facts"></div>
               <div class="floor-plan-actions">
@@ -148,7 +152,7 @@
                 <button id="analyzeFloorPlanButton" class="button button-primary" type="button" disabled>
                   Analyze layout
                 </button>
-                <button id="useDefaultRoomButton" class="button button-ghost" type="button" disabled>
+                <button id="useDefaultRoomButton" class="button button-ghost" type="button">
                   Use default room
                 </button>
               </div>
@@ -193,23 +197,30 @@
                   Inspect rejected option
                 </button>
               </div>
+              <div id="roomEmptyState" class="room-empty-state" role="status">
+                <strong>Load or choose a floor plan to begin</strong>
+                <span>Analyze the exact fixture to import geometry, or explicitly use the default room.</span>
+              </div>
               <svg
                 id="roomSvg"
                 class="room-svg"
                 viewBox="-180 -260 4560 4140"
+                hidden
               >
                 <title>Interactive bedroom layout</title>
               </svg>
               <div id="layoutNotice" class="layout-notice">
-                Verified dimensions only. Select the first scripted turn to begin.
+                Analyze the selected floor plan to activate imported geometry, or explicitly select Use default room.
               </div>
             </fieldset>
 
             <aside class="evidence-column">
               <div class="evidence-card">
                 <p class="evidence-label">Deterministic verdict</p>
-                <h3 id="verdictTitle">No layout evaluated</h3>
-                <p id="verdictSummary">The model has not proposed a tool call yet.</p>
+                <h3 id="verdictTitle">No room geometry active</h3>
+                <p id="verdictSummary">
+                  The application is waiting for floor-plan intake. No walls, reserved zones, or furniture are rendered.
+                </p>
               </div>
 
               <div id="requirementsCard" class="evidence-card requirements-card">
@@ -221,7 +232,7 @@
               <div id="manualPlacementCard" class="evidence-card manual-placement-card">
                 <p class="evidence-label">D · App-owned manual adjustment</p>
                 <p id="manualPlacementStatus">
-                  Drag accepted furniture, or focus it and use the arrow keys. Movement snaps to a 50 mm grid.
+                  Choose a room before using direct manipulation.
                 </p>
                 <div class="manual-placement-actions">
                   <button id="manualApplyButton" class="button button-primary" type="button" disabled>

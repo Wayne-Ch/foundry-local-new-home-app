@@ -13,6 +13,7 @@ import type {
 } from "../audio/audio-types";
 import type { FloorPlanRecognition } from "../domain/floor-plan-import";
 import type { ManualPlacementOutcome, ManualPlacementRequest } from "../domain/manual-placement";
+import type { RoomMode } from "../domain/room-session";
 import type {
   DemoStateSnapshot,
   EvaluatedLayoutOption,
@@ -80,11 +81,8 @@ export interface ConversationMessage {
   readonly status?: "normal" | "warning" | "error";
 }
 
-export interface BootstrapPayload {
+interface BootstrapPayloadBase {
   readonly conversationGeneration: number;
-  readonly roomMode: "default" | "imported";
-  readonly roomPlan: RoomPlan;
-  readonly state: DemoStateSnapshot;
   readonly readiness: RuntimeReadiness;
   readonly audioReadiness: AudioReadiness;
   readonly visionReadiness: FloorPlanVisionReadiness;
@@ -97,6 +95,20 @@ export interface BootstrapPayload {
   readonly messages: readonly ConversationMessage[];
   readonly trace: readonly TraceEntry[];
 }
+
+export type BootstrapPayload = BootstrapPayloadBase &
+  (
+    | {
+        readonly roomMode: Extract<RoomMode, "none">;
+        readonly roomPlan: null;
+        readonly state: null;
+      }
+    | {
+        readonly roomMode: Exclude<RoomMode, "none">;
+        readonly roomPlan: RoomPlan;
+        readonly state: DemoStateSnapshot;
+      }
+  );
 
 export interface RunTurnRequest {
   readonly prompt: string;

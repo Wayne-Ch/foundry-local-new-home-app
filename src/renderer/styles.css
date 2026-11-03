@@ -794,6 +794,35 @@ h3 {
   background-size: 30px 30px;
 }
 
+.room-card.is-empty {
+  border-style: dashed;
+  background: radial-gradient(circle at center, rgb(110 168 254 / 9%), transparent 48%), #081827;
+}
+
+.room-empty-state {
+  max-width: 430px;
+  padding: 28px;
+  display: grid;
+  gap: 8px;
+  color: #dce9f8;
+  text-align: center;
+}
+
+.room-empty-state[hidden] {
+  display: none;
+}
+
+.room-empty-state strong {
+  font-size: clamp(20px, 2.2vw, 30px);
+  line-height: 1.15;
+}
+
+.room-empty-state span {
+  color: #91a8c0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .layout-view-actions {
   position: absolute;
   z-index: 2;
@@ -884,6 +913,10 @@ h3 {
   height: 93%;
   max-height: 720px;
   touch-action: none;
+}
+
+.room-svg[hidden] {
+  display: none;
 }
 
 .room-svg text,

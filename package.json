@@ -26,6 +26,7 @@
     "probe:microphone-permission": "npm run build && node scripts/probe-electron-microphone.mjs",
     "probe:reset": "npm run build && node scripts/probe-electron-reset.mjs",
     "probe:stream-owner": "npm run build && node scripts/probe-electron-stream-owner.mjs",
+    "probe:floor-plan-ui": "npm run build && node scripts/probe-electron-floor-plan-ui.mjs",
     "probe:furniture-controls": "node scripts/probe-furniture-controls.mjs",
     "smoke:electron": "npm run build && node scripts/smoke-electron.mjs",
     "capture:ui": "npm run build && node scripts/capture-ui.mjs",

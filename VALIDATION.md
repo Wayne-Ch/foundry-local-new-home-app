@@ -54,13 +54,15 @@ reuses the same deterministic validator, rejects stale or invalid previews, and 
 provenance before creating a new accepted application layout version.
 
 The independent reset/speech revision advances renderer and controller state synchronously to a
-persisted reset generation and v0, clearing the editable prompt, submitted transcript state, raw
-audio trace, pending/applied suggestion and undo provenance, recording state, accepted layout,
-manual preview, pointer drag, and focus before native reset settles. Renderer cleanup releases
+persisted reset generation in the fresh no-room intake state, clearing the editable prompt,
+submitted transcript state, raw audio trace, pending/applied suggestion and undo provenance,
+recording state, accepted layout, manual preview, pointer drag, and focus before native reset
+settles. Renderer cleanup releases
 microphone tracks while main revokes the active audio lease and starts the authoritative controller
 reset. Native cancellation remains bounded. A timeout stays v0 and quarantined; automatic readiness
-recovery can re-enable controls only for the same v0 generation, and stale bootstrap/result payloads
-are rejected. Repeated Reset and a subsequent recording use a fresh ownership lease.
+recovery can re-enable setup controls only for the same reset generation, and stale bootstrap/result
+payloads are rejected. Conversation controls remain disabled until a room is explicitly activated.
+Repeated Reset and a subsequent recording use a fresh ownership lease after explicit room selection.
 
 The optional enhanced branch preserves the default-room path and adds one experimental image
 fixture. The canonical source is the Wikimedia/NARA record
@@ -149,7 +151,7 @@ npm run capture:ui
 | Turn C action | Pass; **Run next: C · Queen + desk + baby bed** enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
 | Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
 | Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct candidate-local governing-action span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; additive/request/placement `creep` positives, keep/move/remove-person negatives, punctuated/adverb negation, exact `baby bed`, local luggage, and independent later clauses across `but`, `then`, commas, and subordinators are focused-tested |
-| Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main v0, clears accepted/transient evidence, rejects stale bootstrap/results, preserves v0 through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease |
+| Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main no-room intake state, clears accepted/transient evidence, rejects stale bootstrap/results, preserves that state through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease after explicit room selection |
 | Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
 | Renderer interaction | Pass in browser preview; A -> B -> C -> E defaults to the retained accepted C layout, **Inspect rejected option** exposes E without accepting it, **Show accepted layout** returns without rerunning, and retained furniture remains adjustable. The headless-browser renderer probe covers default/imported layouts A and C; standard/compact desks and baby beds stay pointer-draggable while another preview is pending, pointer capture is acquired/released, accessible focus survives repeated SVG redraws, every Arrow key uses the 50 mm grid, valid Apply advances accepted state, and invalid previews keep Apply disabled until Revert restores the accepted layout |
 | Requirements / measurements | Pass; accepted-layout provenance stays visible while rejected exact-option measurements, checks, and conflicts remain tied to the same `evidenceOptionId`; accepted and rejected exact-option measurements share the same evaluated option as checks/conflicts |
@@ -182,7 +184,7 @@ npm run capture:ui
 | Audio external endpoint | No |
 | Floor-plan image security | Pass; general magic/byte/dimension/pixel checks plus exact PNG dimensions, byte length, SHA-256 identity, modified/control rejection, main ownership, no path, and zero-fill covered |
 | Floor-plan parser | Pass; exact neutral prompts, open positive/negative/uncertain alternatives, exact keys/counts, authoritative positive/white/rectangle-only payload replay, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
-| Floor-plan lifecycle | Pass in unit/integration harness; stale analysis, Reset/default/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
+| Floor-plan lifecycle | Pass in unit/integration harness; fresh no-room bootstrap, preview-only staging, imported/default activation, failed-analysis no-room retention, Reset/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
 | Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/Turn C/manual chain; failure evidence retains raw attempts |
 | Dependency audit | Pass; `npm audit --offline --json` reports 0 vulnerabilities after Electron `42.11.18`; the live Microsoft package proxy returned HTTP 429 during this integration run |
 | Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
@@ -370,8 +372,9 @@ Final real app-service Whisper fallback integration:
   partials and a final transcript.
 - A separate fresh process explicitly loaded Whisper Tiny and completed deterministic fallback ASR
   with no residual audio file.
-- The real Electron Reset probe used two renderer Start/Reset cycles, returned state v0 after each,
-  stopped both renderer tracks, canceled both native streams, and acquired ownership session 2.
+- The real Electron Reset probe used two renderer Start/Reset cycles, returned to no-room intake
+  after each, stopped both renderer tracks, canceled both native streams, and acquired ownership
+  session 2 after explicitly selecting the default room for each recording.
 - The separate real Electron stream-owner probe recorded through reload navigation and window close,
   stopped both renderer tracks, canceled both native streams, advanced ownership from session 1 to 2,
   rejected stale routing, and exited with no lifecycle error. Before that normal path, an intentional
@@ -387,9 +390,24 @@ Final real app-service Whisper fallback integration:
   is in `DEMO-RUNBOOK.md`.
 - The deterministic Nemotron/Whisper fixture remains the honest Queen + desk recording. It was not
   regenerated or relabeled for this change.
-- Electron `webContents.capturePage()` returned `UnknownVizError` in this host. The actual Electron
-  app was smoke-launched separately; the committed screenshot comes from the same renderer in an
-  explicitly labeled browser preview.
+- Electron `webContents.capturePage()` required hardware acceleration to be disabled on this host.
+  The floor-plan UI probe applies that probe-only setting and captured all six states. The committed
+  screenshot comes from the same renderer in an explicitly labeled browser preview.
+
+## November 3 no-room intake revision
+
+| Command | Result |
+|---|---|
+| `npm run lint` | Pass; 102 files checked |
+| `npm run typecheck` | Pass |
+| `npm test` | Pass; 33 files / 748 tests |
+| `npm run build` | Pass; 125 renderer modules |
+| `npm run probe:floor-plan-ui` | Pass; real Electron renderer verified fresh blank, sample preview with zero SVG geometry, imported NARA geometry, explicit default geometry, failed analysis with preview/no room, and blank Reset; six PNGs captured under ignored `artifacts/floor-plan-ui-probe/` |
+| `npm run probe:reset` | Pass; two real renderer recording/Reset cycles, one PCM chunk each, 6 ms then 4 ms cancellation, stopped tracks, released ownership, no-room reset state, and fresh lease session 2 after explicit default selection |
+| `npm run probe:stream-owner` | Pass; reload/close recordings produced 2 and 1 chunks, native cancellation completed in 9 ms and 20 ms, tracks stopped, ownership advanced, stale routing remained false, and lifecycle error counts were zero |
+| `npm run probe:furniture-controls` | Pass; default/imported A/C, imported B/E rejected previews, preserved-layout toggles, drag, pointer capture, keyboard, Apply, and invalid Revert |
+| `npm run smoke:electron` | Pass |
+| `npm run capture:ui` | Pass; regenerated 362,936-byte labeled fresh no-room preview |
 
 ## Remaining blockers
 

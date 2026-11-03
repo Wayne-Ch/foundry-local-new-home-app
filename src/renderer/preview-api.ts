@@ -15,6 +15,7 @@ import {
 } from "../domain/floor-plan-import";
 import { compareKnownLayoutOptions } from "../domain/layout-engine";
 import { evaluateManualPlacement } from "../domain/manual-placement";
+import { ROOM_INTAKE_MESSAGE } from "../domain/room-session";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
 import type { DemoState, FloorPlanVisionReadiness, PlanningFixture, RuntimeReadiness } from "../domain/types";
 import { stageTurnsForMode } from "../foundry/prompt";
@@ -104,16 +105,78 @@ const previewRecognition: FloorPlanRecognition = {
 
 type PreviewStep = "queen" | "conflict" | "request" | "failure";
 
+const sampleFloorPlanPreview: NonNullable<BootstrapPayload["floorPlanImport"]["preview"]> = {
+  source: "sample",
+  displayName: "Packaged NARA master-bedroom crop",
+  dataUrl: `./${FLOOR_PLAN_SAMPLE_ASSET_PATH}`,
+  format: "png",
+  mimeType: "image/png",
+  width: 1020,
+  height: 1080,
+  byteLength: 194_686,
+  pixelCount: 1020 * 1080,
+  sourceFormat: "png",
+  sourceByteLength: 194_686,
+  inferenceFormat: "png",
+  inferenceWidth: 1020,
+  inferenceHeight: 1080,
+  inferenceByteLength: 194_686,
+};
+
 function requestedPreviewStep(): PreviewStep {
   const step = new URLSearchParams(window.location.search).get("step");
   return step === "queen" || step === "conflict" || step === "request" ? step : "failure";
 }
 
-function requestedPlanningFixture(): PlanningFixture {
+function requestedPlanningFixture(): PlanningFixture | null {
   const parameters = new URLSearchParams(window.location.search);
+  const storyRequested =
+    parameters.has("step") || parameters.has("room") || parameters.get("scenario") === "imported-retained";
+  if (!storyRequested) {
+    return null;
+  }
   return parameters.get("room") === "imported" || parameters.get("scenario") === "imported-retained"
     ? createImportedPlanningFixture(previewRecognition)
     : defaultPlanningFixture;
+}
+
+function isFlowProbeScenario(): boolean {
+  return new URLSearchParams(window.location.search).get("scenario") === "flow-probe";
+}
+
+function buildInactivePreview(
+  conversationGeneration: number,
+  floorPlanImport: BootstrapPayload["floorPlanImport"] = {
+    status: "idle",
+    preview: null,
+    recognition: null,
+    recognizedFacts: [],
+    error: null,
+  },
+): BootstrapPayload {
+  return {
+    conversationGeneration,
+    roomMode: "none",
+    roomPlan: null,
+    state: null,
+    readiness,
+    audioReadiness,
+    visionReadiness,
+    floorPlanImport,
+    stageTurns: [],
+    completedStageTurnIds: [],
+    lastInteraction: null,
+    selectedLayout: null,
+    lastToolResult: null,
+    messages: [
+      {
+        id: `preview-intake-${conversationGeneration}`,
+        role: "system",
+        text: ROOM_INTAKE_MESSAGE,
+      },
+    ],
+    trace: [],
+  };
 }
 
 function previewFloorPlanImport(planningFixture: PlanningFixture): BootstrapPayload["floorPlanImport"] {
@@ -128,23 +191,7 @@ function previewFloorPlanImport(planningFixture: PlanningFixture): BootstrapPayl
   }
   return {
     status: "imported",
-    preview: {
-      source: "sample",
-      displayName: "Packaged NARA master-bedroom crop",
-      dataUrl: `./${FLOOR_PLAN_SAMPLE_ASSET_PATH}`,
-      format: "png",
-      mimeType: "image/png",
-      width: 1020,
-      height: 1080,
-      byteLength: 194_686,
-      pixelCount: 1020 * 1080,
-      sourceFormat: "png",
-      sourceByteLength: 194_686,
-      inferenceFormat: "png",
-      inferenceWidth: 1020,
-      inferenceHeight: 1080,
-      inferenceByteLength: 194_686,
-    },
+    preview: sampleFloorPlanPreview,
     recognition: previewRecognition,
     recognizedFacts: [
       "Room shape: rectangle.",
@@ -350,9 +397,10 @@ function buildPreview(conversationGeneration: number, planningFixture: PlanningF
   };
 }
 
-function buildResetPreview(
+function buildActiveRoomResetPreview(
   conversationGeneration: number,
   planningFixture: PlanningFixture,
+  preview: BootstrapPayload["floorPlanImport"]["preview"] = null,
 ): BootstrapPayload {
   const imported = planningFixture.mode === "imported";
   return {
@@ -365,7 +413,7 @@ function buildResetPreview(
     visionReadiness,
     floorPlanImport: {
       status: imported ? "imported" : "idle",
-      preview: null,
+      preview,
       recognition: imported ? previewRecognition : null,
       recognizedFacts: imported
         ? [
@@ -387,7 +435,10 @@ function buildResetPreview(
       {
         id: "preview-reset-system",
         role: "system",
-        text: "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
+        text:
+          planningFixture.mode === "imported"
+            ? "Imported room geometry is active."
+            : "Verified default room is active.",
       },
     ],
     trace: [],
@@ -395,8 +446,10 @@ function buildResetPreview(
 }
 
 export function createPreviewApi(): DemoApi {
-  let planningFixture: PlanningFixture = requestedPlanningFixture();
-  let bootstrap = buildPreview(0, planningFixture);
+  let planningFixture = requestedPlanningFixture();
+  let bootstrap = planningFixture === null ? buildInactivePreview(0) : buildPreview(0, planningFixture);
+  let analysisAttempts = 0;
+  const flowProbe = isFlowProbeScenario();
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
@@ -422,77 +475,65 @@ export function createPreviewApi(): DemoApi {
     },
     cancelAudioStream: async () => {},
     loadSampleFloorPlan: async () => {
-      planningFixture = defaultPlanningFixture;
-      bootstrap = {
-        ...buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture),
-        floorPlanImport: {
-          status: "image_ready",
-          preview: {
-            source: "sample",
-            displayName: "Packaged NARA master-bedroom crop",
-            dataUrl: `./${FLOOR_PLAN_SAMPLE_ASSET_PATH}`,
-            format: "png",
-            mimeType: "image/png",
-            width: 1020,
-            height: 1080,
-            byteLength: 194_686,
-            pixelCount: 1020 * 1080,
-            sourceFormat: "png",
-            sourceByteLength: 194_686,
-            inferenceFormat: "png",
-            inferenceWidth: 1020,
-            inferenceHeight: 1080,
-            inferenceByteLength: 194_686,
-          },
-          recognition: null,
-          recognizedFacts: [],
-          error: null,
-        },
-      };
+      planningFixture = null;
+      bootstrap = buildInactivePreview(bootstrap.conversationGeneration + 1, {
+        status: "image_ready",
+        preview: sampleFloorPlanPreview,
+        recognition: null,
+        recognizedFacts: [],
+        error: null,
+      });
       return { cancelled: false, bootstrap };
     },
     chooseFloorPlan: async () => ({ cancelled: true, bootstrap }),
     analyzeFloorPlan: async () => {
+      const preview = bootstrap.floorPlanImport.preview;
+      if (preview === null) {
+        throw new Error("Load the packaged sample before analysis.");
+      }
+      analysisAttempts += 1;
+      if (flowProbe && analysisAttempts > 1) {
+        const detail = "Probe-forced vision analysis failure.";
+        planningFixture = null;
+        bootstrap = buildInactivePreview(bootstrap.conversationGeneration, {
+          status: "error",
+          preview,
+          recognition: null,
+          recognizedFacts: [],
+          error: detail,
+        });
+        throw new Error(detail);
+      }
       planningFixture = createImportedPlanningFixture(previewRecognition);
-      bootstrap = {
-        ...buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture),
-        roomMode: "imported",
-        roomPlan: planningFixture.roomPlan,
-        state: createInitialDemoState(planningFixture.roomPlan),
-        floorPlanImport: {
-          status: "imported",
-          preview: bootstrap.floorPlanImport.preview,
-          recognition: previewRecognition,
-          recognizedFacts: [
-            "Room shape: rectangle.",
-            "Room label: present.",
-            "Door opening: present.",
-            "Window opening: present.",
-            "The VLM recognized visible topology only; the app applied the documented NARA fixture scale and canonical door/window/closet geometry.",
-          ],
-          error: null,
-        },
-      };
+      bootstrap = buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture, preview);
       return bootstrap;
     },
     useDefaultRoom: async () => {
       planningFixture = defaultPlanningFixture;
-      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
+      bootstrap = buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
       return bootstrap;
     },
-    runTurn: async (): Promise<RunTurnResponse> => ({
-      conversationGeneration: bootstrap.conversationGeneration,
-      state: bootstrap.state,
-      toolResult: bootstrap.lastToolResult,
-      selectedLayout: bootstrap.selectedLayout,
-      completedStageTurnIds: bootstrap.completedStageTurnIds,
-      lastInteraction: "turn",
-      assistantText: bootstrap.messages.at(-1)?.text ?? "",
-      messages: bootstrap.messages,
-      trace: bootstrap.trace,
-      readiness,
-    }),
+    runTurn: async (): Promise<RunTurnResponse> => {
+      if (bootstrap.roomMode === "none") {
+        throw new Error("A room must be active before a preview turn can run.");
+      }
+      return {
+        conversationGeneration: bootstrap.conversationGeneration,
+        state: bootstrap.state,
+        toolResult: bootstrap.lastToolResult,
+        selectedLayout: bootstrap.selectedLayout,
+        completedStageTurnIds: bootstrap.completedStageTurnIds,
+        lastInteraction: "turn",
+        assistantText: bootstrap.messages.at(-1)?.text ?? "",
+        messages: bootstrap.messages,
+        trace: bootstrap.trace,
+        readiness,
+      };
+    },
     applyManualPlacement: async (request) => {
+      if (planningFixture === null || bootstrap.roomMode === "none") {
+        throw new Error("A room must be active before manual placement can run.");
+      }
       const state: DemoState = {
         ...bootstrap.state,
         lastToolResult: bootstrap.lastToolResult,
@@ -539,7 +580,8 @@ export function createPreviewApi(): DemoApi {
       };
     },
     resetConversation: async () => {
-      bootstrap = buildResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
+      planningFixture = null;
+      bootstrap = buildInactivePreview(bootstrap.conversationGeneration + 1);
       return bootstrap;
     },
     onProgress: () => () => {},
