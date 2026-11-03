@@ -145,7 +145,9 @@ async function snapshot(client) {
         ?? document.activeElement?.tagName
         ?? null,
       stateText: document.querySelector("#turnCounter")?.textContent ?? "",
+      resultBadge: document.querySelector("#resultBadge")?.textContent ?? "",
       layoutTitle: document.querySelector("#layoutTitle")?.textContent ?? "",
+      layoutNotice: document.querySelector("#layoutNotice")?.textContent ?? "",
       importStatus: document.querySelector("#floorPlanImportStatus")?.textContent ?? "",
       manualStatus: document.querySelector("#manualPlacementStatus")?.textContent ?? "",
       measurementText: document.querySelector("#measurementList")?.textContent ?? "",
@@ -324,6 +326,7 @@ async function verifyPointerScenario(client, baseUrl, scenario) {
     assert.match(initial.importStatus, /VLM visible-topology recognition passed/);
   }
 
+  const bedOrigin = placement(initial, "bed-main").xMm;
   const deskOrigin = placement(initial, "desk-main").xMm;
   await dragPlacement(client, "desk-main", 50);
   const deskPreview = await snapshot(client);
@@ -355,11 +358,63 @@ async function verifyPointerScenario(client, baseUrl, scenario) {
     assert.equal(placement(cribPreview, "desk-main").xMm, deskOrigin);
   }
 
+  await dragPlacement(client, "bed-main", 50);
+  const bedPreview = await snapshot(client);
+  assertAccessiblePlacements(bedPreview, scenario.expectedIds);
+  assert.equal(placement(bedPreview, "bed-main").xMm, bedOrigin + 50);
+  assert.equal(placement(bedPreview, "desk-main").xMm, deskOrigin);
+
   await clickSelector(client, "#manualRevertButton");
   await wait(100);
   const reverted = await snapshot(client);
   assert.equal(placement(reverted, "desk-main").xMm, deskOrigin, `${scenario.name} desk revert`);
   assert.equal(reverted.revertDisabled, true, `${scenario.name} Revert should disable`);
+}
+
+async function verifyRetainedFailureScenario(client, baseUrl) {
+  const url = `${baseUrl}/?preview=1`;
+  await navigate(client, url, 3);
+  const accepted = await snapshot(client);
+  assertAccessiblePlacements(accepted, ["bed-main", "desk-main", "crib-main"]);
+  assert.match(accepted.resultBadge, /Request rejected · accepted retained/);
+  assert.match(accepted.layoutTitle, /accepted layout retained/);
+  assert.match(accepted.layoutNotice, /rejected request did not replace it/);
+  assert.match(accepted.measurementText, /70 mm \/ required 250 mm/);
+  assert.match(accepted.measurementText, /170 mm \/ required 250 mm/);
+
+  const deskOrigin = placement(accepted, "desk-main").xMm;
+  await dragPlacement(client, "desk-main", 50);
+  const adjustable = await snapshot(client);
+  assert.equal(placement(adjustable, "desk-main").xMm, deskOrigin + 50);
+  await clickSelector(client, "#manualRevertButton");
+  await waitFor("retained accepted layout revert", async () => {
+    const current = await snapshot(client);
+    return placement(current, "desk-main").xMm === deskOrigin && current.revertDisabled ? current : null;
+  });
+
+  await clickSelector(client, "#showRejectedLayoutButton");
+  const rejected = await waitFor("rejected option preview", async () => {
+    const current = await snapshot(client);
+    return current.placements.length === 0 && /rejected option preview/i.test(current.layoutTitle)
+      ? current
+      : null;
+  });
+  assert.match(rejected.resultBadge, /No feasible known option/);
+  assert.match(rejected.layoutTitle, /rejected option/);
+  assert.match(rejected.layoutNotice, /exact rejected option/);
+  assert.match(rejected.layoutNotice, /prior accepted layout remains active/);
+  assert.match(rejected.layoutNotice, /Show accepted layout/);
+  assert.match(rejected.measurementText, /70 mm \/ required 250 mm/);
+  assert.match(rejected.measurementText, /170 mm \/ required 250 mm/);
+
+  await clickSelector(client, "#showAcceptedLayoutButton");
+  const restored = await waitFor("accepted layout restoration", async () => {
+    const current = await snapshot(client);
+    return current.placements.length === 3 && /accepted layout retained/.test(current.layoutTitle)
+      ? current
+      : null;
+  });
+  assertAccessiblePlacements(restored, ["bed-main", "desk-main", "crib-main"]);
 }
 
 async function verifyKeyboardApplyAndRevert(client, baseUrl) {
@@ -496,6 +551,7 @@ try {
   for (const scenario of scenarios) {
     await verifyPointerScenario(client, baseUrl, scenario);
   }
+  await verifyRetainedFailureScenario(client, baseUrl);
   await verifyKeyboardApplyAndRevert(client, baseUrl);
 } finally {
   if (client !== undefined) {
@@ -525,5 +581,5 @@ try {
 }
 
 console.log(
-  "Furniture controls probe passed for default/imported layouts A and C, pointer capture, desk/baby-bed drag, keyboard focus, Apply, and invalid Revert.",
+  "Furniture controls probe passed for default/imported layouts A and C, retained/rejected switching, all furniture drag, pointer capture, keyboard focus, Apply, and invalid Revert.",
 );

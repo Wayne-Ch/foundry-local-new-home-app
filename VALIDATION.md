@@ -121,6 +121,7 @@ npm run test:nemotron-integration
 npm run test:audio-integration
 npm run test:floor-plan-integration
 npm run build
+npm audit --offline --json
 npm run smoke:electron
 npm run probe:reset
 npm run probe:stream-owner
@@ -165,7 +166,7 @@ npm run capture:ui
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
-| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 397,297 bytes |
+| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 407,900 bytes |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
 | Nemotron timing | Cached prepare 3,231 ms; first partial 1,269 ms; stop-to-final 196 ms |
@@ -183,7 +184,7 @@ npm run capture:ui
 | Floor-plan parser | Pass; exact neutral prompts, open positive/negative/uncertain alternatives, exact keys/counts, authoritative positive/white/rectangle-only payload replay, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
 | Floor-plan lifecycle | Pass in unit/integration harness; stale analysis, Reset/default/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
 | Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/recovery/manual chain; failure evidence retains raw attempts |
-| Dependency audit | Pass; `npm audit --json` reports 0 vulnerabilities after Electron `42.11.18` |
+| Dependency audit | Pass; `npm audit --offline --json` reports 0 vulnerabilities after Electron `42.11.18`; the live Microsoft package proxy returned HTTP 429 during this integration run |
 | Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
 
 Final command outputs from the October 31 independent revision run:

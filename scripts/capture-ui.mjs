@@ -43,13 +43,16 @@ const server = await createServer({
   logLevel: "error",
   server: {
     host: "127.0.0.1",
-    port: 4173,
-    strictPort: true,
+    port: 0,
   },
 });
 await server.listen();
 
 try {
+  const address = server.httpServer?.address();
+  if (address === null || address === undefined || typeof address === "string") {
+    throw new Error("Vite did not expose a TCP port.");
+  }
   const child = spawn(
     browserExecutable,
     [
@@ -64,7 +67,7 @@ try {
       "--window-size=1600,900",
       `--user-data-dir=${profilePath}`,
       `--screenshot=${screenshotPath}`,
-      "http://localhost:4173/?preview=1",
+      `http://127.0.0.1:${address.port}/?preview=1`,
     ],
     {
       cwd: process.cwd(),
