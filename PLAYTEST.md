@@ -1,4 +1,4 @@
-# New Home App playtest
+# New Home App Test Guide
 
 This is the complete first-time manual-validation route for New Home App.
 
