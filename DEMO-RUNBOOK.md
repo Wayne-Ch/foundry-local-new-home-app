@@ -3,11 +3,13 @@
 ## Before the session
 
 1. Open PowerShell.
-2. Run:
+2. From the parent folder containing the clone, run:
 
    ```powershell
-   Set-Location -LiteralPath 'C:\Users\waynechuang\Projects\2026 Ignite\foundry-local-new-home-demo-standard'
-   npm install
+   Set-Location -LiteralPath '.\new-home-app'
+   npm ci --no-audit --no-fund
+   npm install-scripts approve electron esbuild foundry-local-sdk
+   npm run setup:native
    npm run lint
    npm run typecheck
    npm test
@@ -27,11 +29,15 @@
 4. Launch:
 
    ```powershell
-   npm start
+   npm run start:built
    ```
 
 5. Confirm the title is **New Home App**, the verified room is already visible, and the runtime strip
    identifies `qwen3-0.6b-generic-gpu:2` with WebGPU.
+
+First model and execution-provider preparation can take several minutes and requires a substantial
+download and disk allocation. Remain online, keep New Home App open, and wait for the green
+**Local model ready** state before presenting. Subsequent demo actions may run offline.
 
 Stop before presenting if any command fails, the product title differs, the built-in room is not
 active, or another product's profile/log path is shown.
@@ -106,6 +112,6 @@ or the app reports any external endpoint use.
 ## Local launch command
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\waynechuang\Projects\2026 Ignite\foundry-local-new-home-demo-standard'
-npm start
+Set-Location -LiteralPath '.\new-home-app'
+npm run start:built
 ```

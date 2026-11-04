@@ -4,6 +4,12 @@ New Home App is a Windows Electron demonstration that combines local intent extr
 application-owned deterministic room geometry. It starts with one verified built-in bedroom active;
 there is no setup or room-selection step.
 
+> [!IMPORTANT]
+> First model and execution-provider preparation can take several minutes and requires a
+> substantial download and disk allocation. Remain online, keep New Home App open, and wait for the
+> green **Local model ready** state before continuing. After the required models and execution
+> provider are prepared, subsequent demo actions may run offline.
+
 ## Product contract
 
 - Product name: **New Home App**
@@ -69,23 +75,41 @@ App-owned writable state uses the standard-only identity `FoundryLocalNewHomeApp
 `NEW_HOME_STANDARD_APP_DATA_DIR` can override the standard product root. A shared immutable Foundry
 model cache is allowed through `FOUNDRY_MODEL_CACHE_DIR`; app cleanup never removes that cache.
 
-## Run locally
+## Validated scope
 
-Requirements:
+This release was validated only on Windows 11 x64 with an AMD Radeon 860M using
+`WebGPUExecutionProvider`. Foundry Local itself supports additional operating systems and hardware,
+but this app release makes no equivalent validation claim for other Windows hardware, Windows
+Arm64, Linux, macOS, or other execution providers.
 
-- Windows 11
-- Node.js 22+
-- WebGPU-capable GPU and current driver
-- Foundry Local prerequisites for `foundry-local-sdk` 2.2.1
+Requirements for the validated flow:
+
+- Windows 11 x64
+- Node.js 22 or newer
+- AMD Radeon 860M with a current WebGPU-capable driver
+- Network and sufficient disk space for first model and execution-provider preparation
+
+## Fresh clone, install, and launch
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\waynechuang\Projects\2026 Ignite\foundry-local-new-home-demo-standard'
-npm install
-npm start
+git clone --branch feature/new-home-ux-parity --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git new-home-app
+Set-Location -LiteralPath '.\new-home-app'
+npm ci --no-audit --no-fund
+npm install-scripts approve electron esbuild foundry-local-sdk
+npm run setup:native
+npm run build
+npm run start:built
 ```
 
-`npm start` builds and launches New Home App. On first use, select **Load local model** if the layout
-model is cached but not loaded, or **Prepare offline** to download it once.
+On first use, select **Prepare offline** to download and register the exact model and WebGPU
+execution provider. If preparation is already complete but the model is not loaded, select
+**Load local model**. Keep the app open and online until the green **Local model ready** state
+appears.
+
+Follow [PLAYTEST.md](PLAYTEST.md) from top to bottom for the complete built-in-room A through E
+story, all-furniture manual controls, typed and voice input, Reset, and clean shutdown. No
+branch-switch, copied dependency folder, shared app profile, or other workaround is part of the
+supported route.
 
 ## Validation commands
 

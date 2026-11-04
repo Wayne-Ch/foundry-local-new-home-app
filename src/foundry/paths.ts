@@ -39,7 +39,7 @@ function platformProductRootDir(): string {
   }
 
   const root = process.env.XDG_DATA_HOME?.trim() || path.join(os.homedir(), ".local", "share");
-  return path.join(root, "foundry-local-new-home-app-standard");
+  return path.join(root, "new-home-app");
 }
 
 function sharedModelCacheDir(appDataDir: string): string {

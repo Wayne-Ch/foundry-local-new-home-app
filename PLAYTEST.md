@@ -1,62 +1,142 @@
 # New Home App playtest
 
-Run these steps strictly top to bottom. Mapping: **A** Queen + desk, **B** King conflict, **C**
-Queen + desk + baby bed, **D** app-owned manual adjustment, **E** King controlled failure.
+This is the complete first-time colleague route for the validated Windows 11 x64 AMD Radeon/WebGPU
+configuration. Foundry Local supports more platforms and hardware, but New Home App has not been
+validated equivalently on other Windows hardware, Windows Arm64, Linux, macOS, or another execution
+provider.
 
-1. **Action:** Launch `npm start`.
-   **Expected:** The title is New Home App and the verified built-in bedroom is already active.
-   **Stop if:** A setup/intake screen appears, the room is absent, or the product title differs.
+> [!IMPORTANT]
+> First model and execution-provider preparation can take several minutes and requires a
+> substantial download and disk allocation. Remain online, keep New Home App open, and wait for the
+> green **Local model ready** state. After the required models and execution provider are prepared,
+> subsequent demo actions may run offline.
 
-2. **Action:** Load or prepare the local layout model.
-   **Expected:** Runtime identifies `qwen3-0.6b-generic-gpu:2` and WebGPU; no external endpoint is used.
-   **Stop if:** Another model/provider is selected or preparation fails.
+## Fresh clone, install, build, and launch
+
+Open PowerShell in the parent folder where `new-home-app` should be created:
+
+```powershell
+git clone --branch feature/new-home-ux-parity --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git new-home-app
+Set-Location -LiteralPath '.\new-home-app'
+npm ci --no-audit --no-fund
+npm install-scripts approve electron esbuild foundry-local-sdk
+npm run setup:native
+npm run build
+npm run start:built
+```
+
+Do not switch branches or reuse another checkout's `node_modules`, Electron profile, app data, or
+temporary files.
+
+## Prepare the exact local model
+
+1. **Action:** Confirm the window, page heading, and package product are **New Home App** and the
+   verified built-in bedroom is already active.
+   **Expected:** No setup, room-selection, or floor-plan import screen appears.
+   **Stop if:** The title differs, the room is absent, or an intake screen appears.
+
+2. **Action:** Select **Prepare offline** when the exact model or execution provider is not prepared,
+   or **Load local model** when they are prepared but not loaded. Keep the app open and online.
+   **Expected:** The green badge reaches **Local model ready** and identifies
+   `qwen3-0.6b-generic-gpu:2` with `WebGPUExecutionProvider`; Developer trace reports no external
+   endpoint.
+   **Stop if:** Another model/provider is selected, the app becomes ready before preparation
+   completes, preparation fails, or an external endpoint is used.
+
+## A through E
+
+Mapping: **A** Queen + desk, **B** King conflict, **C** Queen + desk + baby bed, **D** app-owned
+manual adjustment, **E** King controlled failure.
 
 3. **Action (A):** Select **Run next: A · Queen + desk**.
-   **Expected:** Queen + rotated standard desk is accepted; Buyer request appears once; Application
-   evidence is conclusion-only.
+   **Expected:** Queen + rotated standard desk is accepted; the Buyer request appears once and
+   Application evidence is conclusion-only.
    **Stop if:** The request is duplicated or the accepted layout differs.
 
 4. **Action (B):** Select **Run next: B · King conflict**.
    **Expected:** A King rejected preview appears automatically with **Rejected preview · not
-   accepted**; A remains the accepted state; rejected furniture is not interactive.
-   **Stop if:** The accepted layout is replaced, another inference is required to see rejection, or
-   rejected furniture can be focused/dragged.
+   accepted**; A remains accepted and rejected furniture is not interactive.
+   **Stop if:** A is replaced, another inference is required to see the rejection, or rejected
+   furniture can be focused, dragged, or applied.
 
 5. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
-   **Expected:** A and the same B evidence alternate without changing state version or message count.
-   **Stop if:** A new Buyer/Application message appears or inference progress starts.
+   **Expected:** The preserved A layout and the same B evidence alternate without changing state
+   version, message count, or inference activity.
+   **Stop if:** A new Buyer/Application message appears, inference starts, or the evidence changes.
 
 6. **Action (C):** Select **Run next: C · Queen + desk + baby bed**.
    **Expected:** Queen + compact desk + baby bed is accepted and E becomes the next scripted turn.
-   **Stop if:** An extra story branch appears or any locked check changes.
+   **Stop if:** An extra story branch appears, an item is missing, or a locked check changes.
 
-7. **Action (D):** Focus the Queen bed and press Right Arrow once; select **Revert**.
-   **Expected:** A 50 mm valid preview appears; Revert restores the original position.
-   **Stop if:** Movement differs from 50 mm, inference starts, or Revert changes accepted state.
+7. **Action (D):** For each accepted item - Queen bed, compact desk, and baby bed - drag it exactly
+   50 mm to the right, verify the valid ghost preview, then select **Revert**.
+   **Expected:** Every furniture type supports pointer adjustment; Revert restores the accepted
+   coordinates and no Buyer/model turn is added.
+   **Stop if:** Any item cannot be dragged, movement is not 50 mm, inference starts, or another
+   item's coordinates change.
 
-8. **Action (D):** Drag the compact desk 50 mm; select **Apply**.
-   **Expected:** A valid app-owned preview becomes a new accepted manual layout; no Buyer/model turn
-   is added.
-   **Stop if:** Apply is disabled for the valid preview or a model request appears.
+8. **Action (D):** Focus each accepted item and press Right Arrow once. Revert the Queen and baby-bed
+   previews; select **Apply** for the compact-desk preview.
+   **Expected:** Every furniture type supports a 50 mm keyboard preview. Apply creates one new
+   app-owned accepted layout version, Revert preserves the prior accepted version, and no Buyer/model
+   turn is added.
+   **Stop if:** Focus is lost, movement differs from 50 mm, Apply accepts an invalid preview, or
+   model inference starts.
 
-9. **Action (D):** Drag the baby bed 50 mm; select **Revert**.
-   **Expected:** The preview is valid and Revert preserves the accepted manual layout.
-   **Stop if:** The baby bed is not interactive or another item's coordinates change.
+9. **Action (E):** Select **Run next: E · King controlled failure**.
+   **Expected:** A King rejected preview appears automatically; C/D remains accepted and rejected
+   furniture is non-interactive.
+   **Stop if:** The preserved accepted layout changes or the rejected option can be applied.
 
-10. **Action (E):** Select **Run next: E · King controlled failure**.
-    **Expected:** A King rejected preview appears automatically; C/D remains accepted; rejected
-    furniture is non-interactive.
-    **Stop if:** The preserved accepted layout changes or the rejected option can be applied.
+10. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
+    **Expected:** The existing C/D state and the same E evidence alternate with no inference and no
+    message/state change.
+    **Stop if:** Progress starts, the applied D adjustment is lost, or evidence changes.
 
-11. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
-    **Expected:** Existing C/D and E evidence alternate with no inference and no message/state change.
-    **Stop if:** Progress starts or evidence differs from the original E result.
+## Typed input, voice input, and Reset
 
-12. **Action:** Start recording, then select **Reset**.
+11. **Action:** Select **Reset**. In **Manual prompt**, enter
+    `Can a Queen-size bed and a desk fit here without blocking the closet or the door?`, then select
+    **Send**.
+    **Expected:** State v0 retains the built-in room; the exact typed request appears once and the
+    normal local planning/validation path produces the accepted Queen + desk result.
+    **Stop if:** Reset loses the room, the prompt is changed, or typed input bypasses local planning.
+
+12. **Action:** Select **Reset**, then **Prepare Nemotron live**. Keep the app online and open until
+    the audio badge reports the exact
+    `nemotron-speech-streaming-en-0.6b-generic-cpu:3` model in **LIVE** mode.
+    **Expected:** Nemotron is the explicit default voice model; no online speech service or silent
+    fallback is used.
+    **Stop if:** Another model is selected, preparation fails, or Whisper activates without an
+    explicit choice.
+
+13. **Action:** Select **Start recording**, speak a Queen + desk request, then select **Stop**.
+    Review the editable transcript and any visible correction suggestion before selecting **Send**.
+    **Expected:** Live text remains an unsent draft until Send; the exact edited text is then
+    submitted through the same local planning/validation path.
+    **Stop if:** Stop auto-submits, a suggestion changes text without explicit action, or an
+    external endpoint is used.
+
+14. **Action:** Start another recording, then select **Reset** while recording.
     **Expected:** Recording stops, stream ownership is released, prompt/transcript/suggestions/manual
     state clear, State v0 returns, and the built-in room remains active.
     **Stop if:** Audio continues, stale results reappear, or the room is lost.
 
-13. **Action:** Start a fresh recording after Reset, then stop it.
-    **Expected:** A new lease succeeds and the editable transcript remains unsent until **Send**.
+15. **Action:** Start a fresh recording after Reset, then stop it without sending.
+    **Expected:** A new stream lease succeeds and the editable transcript remains unsent.
     **Stop if:** The old stream is reused or the transcript auto-submits.
+
+If Nemotron deterministically fails and the UI exposes **Whisper Tiny fallback (record then
+transcribe)**, selecting it is an explicit fallback check. It must never activate silently.
+
+## Clean shutdown
+
+16. **Action:** Close the New Home App window and wait for `npm run start:built` to return to the
+    PowerShell prompt.
+    **Expected:** The command exits without cleanup errors; no app-owned recording, model session,
+    Electron child process, or temporary audio capture remains.
+    **Stop if:** The command remains running, cleanup reports an error, or app-owned activity
+    continues after the window closes.
+
+Record a pass only when every step above succeeds without a branch change, copied dependencies,
+profile reuse, manual file edit, environment override, or undocumented retry.

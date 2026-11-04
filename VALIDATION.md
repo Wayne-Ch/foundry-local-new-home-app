@@ -5,7 +5,7 @@
 | Item | Required value |
 |---|---|
 | Product | New Home App |
-| Package | `foundry-local-new-home-app-standard` |
+| Package | `new-home-app` |
 | Layout model | `qwen3-0.6b-generic-gpu:2` |
 | Layout provider | `WebGPUExecutionProvider` |
 | Foundry SDK | 2.2.1 |
