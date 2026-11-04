@@ -5,13 +5,19 @@
 
 ## Preflight (before entering the room)
 
+Node.js must match `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported. npm
+must be `>=11.18.0`. The validated environment is Node `26.13.0` with npm `11.20.0`.
+
 Run while connected:
 
 ```powershell
+node --version
+npm --version
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
+npm run check:release-contract
 npm run probe:foundry
 npm run typecheck
 npm run lint
@@ -37,6 +43,16 @@ First model and execution-provider preparation can take several minutes and requ
 downloads and disk allocation. Remain online, keep Enhanced New Home App open, and wait for every
 required ready state. Subsequent demo actions may run offline.
 
+The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
+does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+
 `npm run test:floor-plan-integration` must finish with
 `FLOOR_PLAN_INTEGRATION_OK`. It is not replaced by parser mocks: the script uses the packaged PNG,
 verifies its exact SHA-256/dimensions/byte length, uses exact
@@ -57,9 +73,10 @@ In the app:
    before using recording, typed, or scripted controls: either select **Load sample floor plan**,
    confirm preview-only state, and complete **Analyze layout**, or explicitly select
    **Use default room**.
-2. Select **Prepare offline** when the exact layout model or WebGPU execution provider is not
-   prepared, or **Load local model** when the known local state is prepared but not loaded. If the
-   control already says **Local model ready**, do not select it again.
+2. Follow the setup table using the exact visible control. A cold cache shows
+   **Prepare offline**. A cached model that is not READY - including a fresh product root or
+   product-specific WebGPU registration - shows **Load local model**. If the control already says
+   **Local model ready**, do not select it again.
 3. Confirm the green badge reads
    `qwen3-0.6b · GPU · WebGPUExecutionProvider`.
 4. Open **Developer trace** and confirm:
@@ -360,7 +377,9 @@ Do this only as a manual rehearsal step:
 2. In Windows Quick Settings, disconnect Wi-Fi/Ethernet. Do not change global firewall policy.
 3. Run `npm run start:built`.
 4. Select **Use default room** so recording, typed input, and scripted controls become available.
-5. Select **Load local model** when the cached model is not already loaded.
+5. Because this rehearsal starts from a warm cache, select **Load local model** whenever the runtime
+   is not READY, including when product-specific WebGPU registration is still needed. If the
+   control says **Local model ready**, do not select it.
 6. Select **Prepare Nemotron live**.
 7. Confirm both the layout badge and voice badge are ready before claiming offline voice readiness.
 8. Record one short Queen + desk request, stop, review the transcript, and send it.
@@ -376,7 +395,7 @@ alone—is the offline readiness gate.
 
 | Failure | On-stage response |
 |---|---|
-| Model unavailable | Show the red runtime state; select **Load local model** once. If still unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
+| Model unavailable | Show the red runtime state; select **Retry local setup** once. If it remains unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
 | Invalid intent delta | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
 | No feasible layout in Beat E | This is the controlled failure. The rejected option appears automatically; verify its exact callouts and non-interactive furniture. Select **Show accepted layout** to verify the retained adjustable layout, then **Inspect rejected option** to return. Neither switch reruns inference; do not fabricate a fit. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |

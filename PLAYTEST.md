@@ -22,8 +22,10 @@ Open PowerShell in the parent folder where `enhanced-new-home-app` should be cre
 
 Required toolchain:
 
-- Node.js `>=22.12.0`; validated with Node `26.13.0`
-- npm `>=11.18.0`; validated with npm `11.20.0`, and required for `npm install-scripts`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
+  supported. Validated with Node `26.13.0`.
+- Supported npm minimum: `>=11.18.0`. The package manager pin and validation use npm `11.20.0`;
+  the minimum is required for `npm install-scripts`.
 
 ```powershell
 node --version
@@ -33,6 +35,7 @@ Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
+npm run check:release-contract
 npm run build
 npm run start:built
 ```
@@ -50,6 +53,16 @@ recording actions remain unavailable until a room is activated.
 > furniture with drag, keyboard, **Apply**, and **Revert**. There is intentionally no scripted D
 > button and no model inference in D, but D is a required step in this guide.
 
+When step 3 reaches layout-model setup, the normal button is determined only by
+`readiness.modelCached`; WebGPU provider registration does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+
 1. **Stage the exact floor-plan fixture**
    - **Action:** Select **Load sample floor plan** once.
    - **Expected:** A `1020 x 1080` preview appears. The status begins with `Preview only`, **Analyze layout** becomes available, and the room canvas still has no walls, reserved zones, or furniture.
@@ -61,7 +74,10 @@ recording actions remain unavailable until a room is activated.
    - **Stop if:** Analysis fails, remains uncertain, reports a missing visible feature, activates geometry before success, or silently substitutes default-room geometry. **Use default room** is an explicit fallback, not a successful import.
 
 3. **Prepare the layout model**
-   - **Action:** Select **Prepare offline** when the exact model is not cached, or **Load local model** when it is cached. If the button already says **Local model ready**, do not select it again.
+   - **Action:** Follow the table using the exact visible control. Select **Prepare offline** only
+     when the model is not cached. Select **Load local model** whenever the model is cached but the
+     runtime is not READY, including a fresh product root or product-specific WebGPU registration.
+     If the button already says **Local model ready**, do not select it again.
    - **Expected:** The green badge reads `qwen3-0.6b · GPU · WebGPUExecutionProvider`. **Developer trace** identifies `qwen3-0.6b-generic-gpu:2`, SDK `2.2.1`, `built_in_default`, `stageValidated: true`, and external endpoint `false`. The next-turn control reads **Run next: A · Imported Queen + desk**.
    - **Stop if:** The badge shows an override, the configured model or provider is unavailable, the trace shows an external endpoint, or the imported A/B/C/E buttons do not appear.
 
@@ -160,8 +176,11 @@ rights in their territory. See the
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
+| A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
+| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
+| The control shows **Local model ready** | The runtime is loaded and READY. Do not select the disabled control; continue with the room flow. |
 | Wrong UI or an old room is visible | Confirm the package and window title are **Enhanced New Home App**, select **Reset**, and relaunch only if the no-room checkpoint still fails. |
 | Layout model will not prepare | Connect for first preparation, clear unintended `FOUNDRY_MODEL_ALIAS`, `FOUNDRY_MODEL_ID`, or `FOUNDRY_EXECUTION_PROVIDER` variables, then select **Retry local setup**. Use `npm run probe:foundry` for a focused runtime check. |
 | Floor-plan analysis rejects | Use only the committed PNG or a byte-identical copy. Read `floorPlanVision.attempts[].rawOutput` in **Developer trace**. Retry **Analyze layout** or explicitly select **Use default room**; never relabel fallback geometry as imported geometry. |

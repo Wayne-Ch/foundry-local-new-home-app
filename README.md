@@ -220,9 +220,10 @@ Prerequisites:
   `WebGPUExecutionProvider`. Foundry Local v2.2.1 itself supports additional platforms and
   hardware, but Enhanced New Home App makes no equivalent validation claim for other Windows
   hardware, Windows Arm64, Linux, macOS, or other execution providers.
-- Node.js `>=22.12.0`; the validated machine used Node `26.13.0`.
-- npm `>=11.18.0`; the validated machine used npm `11.20.0`, and this minimum is required for
-  `npm install-scripts`.
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
+  supported. The validated machine used Node `26.13.0`.
+- Supported npm minimum: `>=11.18.0`. The package manager pin and validated environment use npm
+  `11.20.0`; the minimum is required for `npm install-scripts`.
 - Network access and sufficient disk space for first exact-model/EP preparation.
 
 ```powershell
@@ -233,9 +234,20 @@ Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
+npm run check:release-contract
 npm run build
 npm run start:built
 ```
+
+The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
+does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
 
 The root `postinstall` runs Electron's explicit `install.js` because Electron 42 no longer exposes a
 package `postinstall` script. `npm run setup:native` is the reproducible repair/checkpoint command:
@@ -253,9 +265,10 @@ In the app, complete this sequence from top to bottom:
    Only then may imported NARA room geometry appear. If analysis cannot be completed, select
    **Use default room** explicitly before continuing; default geometry must never be reported as a
    successful import.
-4. Select **Prepare offline** when the exact layout model or WebGPU execution provider is not
-   prepared, or **Load local model** when the known local state is prepared but not loaded. If the
-   control already says **Local model ready**, do not select it again. Wait for the exact
+4. Follow the setup table using the exact visible control. A cold empty cache shows
+   **Prepare offline**. A cached model that is not READY - including a fresh product root or
+   product-specific WebGPU provider registration - shows **Load local model**. If the control
+   already says **Local model ready**, do not select it again. Wait for the exact
    `qwen3-0.6b-generic-gpu:2` / `WebGPUExecutionProvider` ready state.
 5. Run the imported A, B, and C scripted turns in order; perform D through direct furniture
    manipulation with **Apply** and **Revert**; then run E. Rejected B/E options must preserve the
@@ -300,8 +313,11 @@ Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
+| A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
+| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
+| The control shows **Local model ready** | The runtime is loaded and READY. Do not select the disabled control; continue with the room flow. |
 | Layout model will not prepare | Connect for first preparation, clear unintended `FOUNDRY_MODEL_ALIAS`, `FOUNDRY_MODEL_ID`, or `FOUNDRY_EXECUTION_PROVIDER` variables, then select **Retry local setup**. Use `npm run probe:foundry` for a focused runtime check. |
 | Floor-plan analysis rejects | Use only the committed PNG or a byte-identical copy. Read `floorPlanVision.attempts[].rawOutput` in **Developer trace**. Retry **Analyze layout** or explicitly select **Use default room**; never relabel fallback geometry as imported geometry. |
 | Electron binary or native binding is missing | Confirm `node_modules\electron\path.txt` exists. Run `npm run setup:native`, then `npm run build` and `npm run start:built`. |
@@ -311,6 +327,7 @@ Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 ```powershell
 npm run probe:foundry
 npm run benchmark:layout
+npm run check:release-contract
 npm run typecheck
 npm run lint
 npm test
@@ -418,7 +435,7 @@ evidence in this execution environment.
 
 As verified on October 28, 2026:
 
-- Latest SDK/runtime package: `foundry-local-sdk@2.2.1`, Node `>=20`.
+- Latest SDK/runtime package: `foundry-local-sdk@2.2.1`.
 - Latest public CLI release: `0.12.1 Preview`.
 - The validation machine still had CLI `0.11.0`; this app does not invoke or depend on the CLI.
 - Public v2.2.1 platforms: Windows, Linux, and Apple-silicon macOS.
