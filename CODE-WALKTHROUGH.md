@@ -24,7 +24,8 @@ Put on screen:
 - one-time exact-model download when the cache is empty;
 - exact `WebGPUExecutionProvider` matching and registration;
 - exact default `nemotron-speech-streaming-en-0.6b-generic-cpu:3` selection on CPU;
-- explicit `openai-whisper-tiny-generic-cpu:4` fallback selection only after user action;
+- explicit `openai-whisper-tiny-generic-cpu:4` selection only through
+  **Use Whisper Tiny fallback (record then transcribe)**;
 - separate text/audio readiness from one `FoundryLocalManager`;
 - `downloadAndRegisterEps`;
 - `model.load()` / `model.unload()` / `manager.dispose()`.
@@ -97,7 +98,8 @@ Put on screen:
 - exact raw text first, with explicit **Apply suggested furniture corrections**, **Dismiss**, and
   post-Apply **Undo suggestions** controls;
 - Send transition to the exact edited submitted prompt and submitted/processing label;
-- explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
+- exact **Use Whisper Tiny fallback (record then transcribe)** control with owner-only temporary WAV
+  cleanup.
 
 Message:
 
@@ -191,10 +193,14 @@ Message:
 Put on screen:
 
 - rejected-option preview whose placements, checks, and conflicts all come from one exact option;
+- B/E automatically opening that exact rejected preview, with **Show accepted layout** displaying
+  the preserved adjustable layout and **Inspect rejected option** returning without a Buyer message
+  or Qwen rerun;
 - visible requirements/measurements and red/green SVG gap callouts from that same option;
 - retained accepted-layout labeling when no option was evaluated;
 - current accepted layout preservation;
 - pointer/keyboard drag preview with original-position ghost and explicit Apply/Revert;
+- required D direct manipulation between C and E, with no scripted D model turn or inference;
 - manual-placement provenance separated from model/tool evidence;
 - structured tool plan;
 - separate ASR model/transcript evidence;

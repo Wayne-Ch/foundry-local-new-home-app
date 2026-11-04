@@ -6,7 +6,7 @@
 flowchart LR
   MIC[Optional microphone] --> R[Electron renderer<br/>permission + PCM conversion]
   R --> ASR[Foundry Local AudioSession<br/>Nemotron live PCM ItemQueue]
-  R -. explicit fallback .-> W[Whisper Tiny<br/>record then transcribe]
+  R -. explicit fallback .-> W[Use Whisper Tiny fallback<br/>(record then transcribe)]
   ASR --> D[Editable transcript draft]
   W --> D
   D --> U[User review/edit + Send]
@@ -147,7 +147,7 @@ sequenceDiagram
   U->>T: Review/edit, then click Send
 
   opt Explicit fallback after deterministic Nemotron failure/user action
-    U->>R: Choose Whisper Tiny fallback
+    U->>R: Select Use Whisper Tiny fallback (record then transcribe)
     R->>R: Record PCM locally
     R->>M: One bounded final capture
     M->>M: Write owner-only tracked WAV
@@ -206,7 +206,8 @@ explicit recovery selection.
 
 Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
-visible fallback control. No code path silently substitutes it.
+visible **Use Whisper Tiny fallback (record then transcribe)** control. No code path silently
+substitutes it.
 
 Current validation covers worklet startup cleanup, generation-tagged renderer/main state-v0 reset,
 renderer reset concurrency, active-stream ownership revocation, cancellation failure/timeout
@@ -334,15 +335,23 @@ The app deliberately evaluates a small fixture set rather than claiming global o
 | Queen + compact desk | Baby bed removed | Feasible |
 
 If the exact combination has no verified option set, the tool returns
-`NO_KNOWN_OPTION_SET`; it never invents coordinates. If an accepted layout already exists, the UI
-keeps that layout on the main canvas and labels it as retained rather than misrepresenting a
-rejected option as accepted.
+`NO_KNOWN_OPTION_SET`; it never invents coordinates.
+
+The guided contract is `A -> B -> C -> D -> E`. A and C create accepted layouts. B and E
+automatically open the exact rejected option represented by `evidenceOptionId`, while the prior
+accepted layout remains preserved. **Show accepted layout** displays that preserved, adjustable
+layout. **Inspect rejected option** returns to the same rejected placements, measurements, checks,
+and conflicts. These switches change presentation only: they do not add a Buyer message, call Qwen,
+or rerun geometry.
+
+D is a required application-owned direct-manipulation step between C and E. It has no scripted model
+button and no inference. A valid Apply creates a new accepted application layout version; Revert
+discards only the current preview. E must preserve the resulting C/D accepted state.
 
 For rejected alternatives, top-level checks and conflicts are tied to `evidenceOptionId`, the exact
-option represented in the evidence column. The user can explicitly inspect that rejected option in
-the SVG, then return to the accepted layout without rerunning a turn. Deduplicated reasons across
-all rejected alternatives live in `aggregateConflicts` and are labeled as aggregate evidence in
-the trace and application response.
+option represented in the evidence column. Deduplicated reasons across all rejected alternatives
+live in `aggregateConflicts` and are labeled as aggregate evidence in the trace and application
+response.
 
 ## Why not native `ToolCallItem` for this milestone
 
@@ -388,6 +397,28 @@ path, not a hidden fake.
 Electron's `before-quit` handler waits for bounded cleanup before exiting. A timeout or locked-file
 failure is logged as an unclean shutdown with a nonzero exit code; any owned capture obligation is
 left discoverable for next-launch recovery rather than reported as clean.
+
+The install contract explicitly materializes the Electron runtime and rebuilds esbuild plus the
+Foundry Local native binding. `npm run setup:native` is the reproducible repair/checkpoint command;
+a missing `node_modules/electron/path.txt` is an installation failure, not a condition the app
+masks. [VALIDATION.md](VALIDATION.md) is authoritative for the current Electron version and package
+audit result.
+
+## SDK reference grounding
+
+- [Foundry Local v2.2.1 release](https://github.com/microsoft/Foundry-Local/releases/tag/v2.2.1)
+- [Pinned v2.2.1 README](https://github.com/microsoft/Foundry-Local/blob/v2.2.1/README.md)
+- [Pinned native chat sample](https://github.com/microsoft/Foundry-Local/blob/v2.2.1/samples/js/native-chat-completions/app.js)
+- [Pinned tool-calling tutorial](https://github.com/microsoft/Foundry-Local/blob/v2.2.1/samples/js/tutorial-tool-calling/app.js)
+- [Pinned Electron sample](https://github.com/microsoft/Foundry-Local/tree/v2.2.1/samples/js/electron-chat-application)
+- [Pinned audio transcription sample](https://github.com/microsoft/Foundry-Local/tree/v2.2.1/samples/js/audio-transcription-example)
+- [Pinned live audio sample](https://github.com/microsoft/Foundry-Local/tree/v2.2.1/samples/js/live-audio-transcription)
+- [Pinned chat + audio sample](https://github.com/microsoft/Foundry-Local/tree/v2.2.1/samples/js/chat-and-audio-foundry-local)
+- [Pinned v2 inference guide](https://github.com/microsoft/Foundry-Local/blob/v2.2.1/sdk_v2/INFERENCING.md)
+
+The app pins `foundry-local-sdk@2.2.1` and does not invoke or depend on the Foundry Local CLI.
+Foundry Local v2.2.1 publicly supports Windows, Linux, and Apple-silicon macOS; equivalent app
+validation is documented separately rather than inferred from SDK platform support.
 
 ## Cross-platform status
 

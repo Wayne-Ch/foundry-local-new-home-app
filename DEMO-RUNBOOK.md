@@ -39,9 +39,9 @@ npm run capture:ui
 npm run start:built
 ```
 
-First local model and execution-provider preparation can take several minutes while assets
-download. Stay online and keep Enhanced New Home App open until the required local ready states
-appear; later demo actions can run offline.
+First preparation downloads local model and execution-provider assets, so stay online and keep
+Enhanced New Home App open until the required ready states appear; later demo actions can run
+offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:
@@ -90,8 +90,8 @@ In the app:
    - planning mode: runtime-guided intent-delta JSON Schema to app-derived tool invocation.
 5. Select **Prepare Nemotron live** and confirm the separate voice badge shows the exact
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
-   Confirm the separately labeled Whisper Tiny record-then-transcribe fallback is visible, but do
-   not select it for the default stage flow.
+   Confirm **Use Whisper Tiny fallback (record then transcribe)** is visible, but do not select it
+   for the default stage flow.
 6. In **Runtime + locked state**, confirm audio readiness identifies
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, streaming PCM `ItemQueue`,
    and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
@@ -124,9 +124,10 @@ Optional enhanced-room preflight:
 
 1. Confirm launch shows the no-room placeholder with conversation controls disabled. Select **Load
    sample floor plan** and confirm the exact NARA `1020 x 1080` preview without room walls, reserved
-   zones, or furniture. **Choose exact fixture copy** accepts only byte-identical PNG bytes. Commons
-   marks the source `PD-US`; public-domain status may differ outside the United States, so
-   downstream users must assess rights in their territory.
+   zones, or furniture. **Choose exact fixture copy** accepts only byte-identical PNG bytes.
+   Wikimedia Commons marks the source `PD-US` and does not require attribution;
+   public-domain status may differ outside the United States, so downstream users must assess rights
+   in their territory.
 2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
    endpoint, and the non-forced categories: rectangular room and room label/door/window present.
 3. If analysis fails, open **Developer trace -> Runtime + locked state** and record
@@ -146,14 +147,17 @@ evidence, not stage-time guarantees.
 
 ## Minute-by-minute flow
 
-The hands-on story is intentionally explicit:
+The hands-on story is the required `A -> B -> C -> D -> E` sequence. For B and E, the exact rejected
+option opens automatically. **Show accepted layout** displays the preserved, adjustable accepted
+layout; **Inspect rejected option** returns to the same rejected evidence. These switches do not add
+a Buyer message or rerun Qwen.
 
 | Beat | Action | Expected evidence |
 |---|---|---|
 | A | Queen + desk | Feasible accepted layout |
 | B | Change to King | Closet conflict; app asks which preference may change |
 | C | Select **Run next: C · Queen + desk + baby bed** or say “Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.” | Queen + compact desk + baby bed is feasible; the full new buyer request is visible before Application evidence while door, closet, window, and 250 mm clearance remain locked |
-| D | Optionally drag accepted furniture, then Apply or Revert | App-owned 50 mm-grid preview with live deterministic measurements; no Qwen geometry |
+| D | Perform the required accepted-furniture adjustment; Apply one valid preview, then create and Revert another preview | App-owned 50 mm-grid evidence with live deterministic measurements; no Buyer message or Qwen inference |
 | E | Use King while retaining compact desk + baby bed | Controlled failure with exact 70 / 250 mm and 170 / 250 mm gap callouts |
 
 Optional enhanced beat before A:
@@ -283,7 +287,7 @@ Spend the majority of the talk here. Explain the native `ToolCallItem` evidence 
 milestone uses the explicit bounded structured-output escalation rather than hiding an unreliable
 function-call path.
 
-### 11:15–11:45 — Optional app-owned manual adjustment
+### 11:15–11:45 — Required app-owned manual adjustment
 
 Starting from the accepted Turn C layout:
 
@@ -291,8 +295,8 @@ Starting from the accepted Turn C layout:
 2. Point to the original-position ghost, live pair measurements, and deterministic checks.
 3. If the preview is valid, select **Apply** and show the new application layout version plus
    `application-owned direct manipulation` provenance in Developer trace.
-4. Demonstrate **Revert** for a rejected preview if time permits. An invalid drop never replaces the
-   accepted model-generated layout.
+4. Create another preview and select **Revert**. An invalid drop never replaces the accepted
+   model-generated layout.
 
 Say:
 
@@ -308,7 +312,7 @@ During rehearsal, disconnect the network adapter manually after preflight. On st
 offline-ready state if venue policy permits; otherwise state that the adapter-disconnect proof was
 performed during rehearsal.
 
-Starting from the pre-run Turn C state, select:
+Starting from the accepted C/D state, select:
 
 **Run next: E · King controlled failure**
 
@@ -327,9 +331,10 @@ Expected live result:
   `King bed ↔ Baby bed: 170 mm / required 250 mm`;
 - that rejected preview shows dimension lines at the exact gaps, only its own furniture-clearance
   failures, the door-open check at `PASS`, and non-interactive furniture;
-- **Show accepted layout** reveals the preserved Queen Turn C layout, which remains adjustable;
+- **Show accepted layout** reveals the preserved Queen C/D layout, including the applied D
+  adjustment, and it remains adjustable;
 - **Inspect rejected option** returns to the same rejected east evidence;
-- both switches are immediate and do not rerun a turn;
+- both switches are immediate, add no Buyer message, and do not rerun Qwen;
 - Developer trace separately labels aggregate reasons across both rejected alternatives, including
   the south option's door-swing conflict;
 - response asks which preference may change.
@@ -398,12 +403,12 @@ alone—is the offline readiness gate.
 |---|---|
 | Model unavailable | Show the red runtime state; select **Retry local setup** once. If it remains unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
 | Invalid intent delta | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
-| No feasible layout in Beat E | This is the controlled failure. The rejected option appears automatically; verify its exact callouts and non-interactive furniture. Select **Show accepted layout** to verify the retained adjustable layout, then **Inspect rejected option** to return. Neither switch reruns inference; do not fabricate a fit. |
+| No feasible layout in Beat E | This is the controlled failure. The rejected option appears automatically; verify its exact callouts and non-interactive furniture. Select **Show accepted layout** to verify the retained adjustable layout, then **Inspect rejected option** to return to the same rejected evidence. Neither switch adds a Buyer message or reruns Qwen; do not fabricate a fit. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |
 | GPU/EP issue | Only use a pretested alternate by setting both exact `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`. The badge will identify it as an override and, unless it is the exact default pair, as not stage-validated. Do not improvise a new target on stage. |
 | Microphone permission denied / no mic | State the error shown by the app and use the existing typed Turn A prompt. Never bypass transcript review or switch to an online speech service. |
-| Nemotron unavailable or live stream fails | If the labeled **Whisper Tiny fallback (record then transcribe)** action is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
+| Nemotron unavailable or live stream fails | If **Use Whisper Tiny fallback (record then transcribe)** is present and Whisper was prepared during preflight, select it explicitly and record again. Otherwise use typed input. Never silently switch models or use an online speech service. |
 | Whisper fallback unavailable | Keep typed input. The voice badge must not claim fallback readiness. |
 | No feasible layout after Turn B | Select **Run next: C · Queen + desk + baby bed**, or submit the equivalent full buyer request. The action enters the same Qwen/app validation pipeline as typed input; nothing runs automatically. |
 | Empty/incorrect transcript | Review the exact raw draft and visible replacement diff. Apply explicitly, Dismiss, edit, or Undo before Send. The raw ASR transcript remains in Developer trace and the app never auto-rewrites or auto-submits it. |

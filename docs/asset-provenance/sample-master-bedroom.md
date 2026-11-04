@@ -12,7 +12,8 @@
   the U.S. federal record is held by the National Archives and Records Administration.
 - **Required attribution:** None under the Commons `PD-US` marking.
 
-Wikimedia Commons identifies the source as public domain in the United States (`PD-US`) and says attribution is not required. The work may not be in the public domain outside the United States, particularly in territories that do not apply the rule of the shorter term to United States works. Legal review is required before relying on its public-domain status for wider or non-US distribution.
+Wikimedia Commons marks the source `PD-US` and does not require attribution; public-domain status
+may differ outside the United States, so downstream users must assess rights in their territory.
 
 ## Derivation
 
@@ -41,7 +42,7 @@ The crop was visually inspected and contains the empty `MASTER BEDROOM`, one inw
 
 ## Application support boundary
 
-The optional New Home demo accepts only these exact committed PNG bytes. The main process requires
+Enhanced New Home App accepts only these exact committed PNG bytes. The main process requires
 the documented PNG format, `1020 x 1080` dimensions, `194,686`-byte length, and SHA-256 before
 analysis or import. A renamed byte-identical copy is allowed; modified, re-encoded, or arbitrary
 images are rejected and never receive the fixture's canonical geometry.
@@ -52,4 +53,5 @@ The application—not the VLM—applies the documented `3650 x 3950 mm` scale an
 door/window/closet/clearance geometry. No VLM output supplies millimetres, hinges, coordinates, or a
 fit verdict.
 
-Wikimedia Commons marks the source `PD-US`, but public-domain status may differ outside the United States. Downstream users must assess rights in their territory. Enhanced New Home App supports only this exact derived fixture or a byte-identical renamed copy; it does not claim general floor-plan support.
+Enhanced New Home App supports only this exact derived fixture or a byte-identical renamed copy; it
+does not claim general floor-plan support.

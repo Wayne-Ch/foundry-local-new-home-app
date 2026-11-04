@@ -35,7 +35,7 @@ not yet have equivalent validation evidence.
 | Audio device / EP | CPU / `CPUExecutionProvider` |
 | Audio language | English |
 | Default audio path | AudioWorklet -> PCM16LE 16 kHz mono -> typed bounded chunks -> native `AudioSession` PCM `ItemQueue` |
-| Explicit fallback | `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
+| Explicit fallback | **Use Whisper Tiny fallback (record then transcribe)** selects `openai-whisper-tiny-generic-cpu:4`, 131 MB, temporary owner-only WAV URI |
 | Audio submission policy | live partials are display-only; raw final transcript stays in trace and the editable prompt; suggestions require explicit Apply; never auto-submit |
 | Optional floor-plan VLM | exact `qwen3.5-0.8b-generic-cpu:3` |
 | Floor-plan task / device / EP | `vision-language-chat` / CPU / `CPUExecutionProvider` |
@@ -73,9 +73,10 @@ Repeated Reset and a subsequent recording use a fresh ownership lease after expl
 Enhanced New Home App preserves the New Home App default-room path and adds one exact image
 fixture. The canonical source is the Wikimedia/NARA record
 [`400 Family Housing Units 2 Bedroom Unit Typical Floor Plans, July 24, 1989`](https://commons.wikimedia.org/wiki/File:400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans,_July_24,_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff),
-NARA ID `167060897`, DPLA ID `c7a8b82ce8562d0a20b33b02d2f5f6fd`. Commons marks it
-`PD-US` with no required attribution and an explicit territorial caveat outside the United States.
-Downstream users must assess rights in their territory. The committed
+NARA ID `167060897`, DPLA ID `c7a8b82ce8562d0a20b33b02d2f5f6fd`. Wikimedia Commons marks the
+source `PD-US` and does not require attribution;
+public-domain status may differ outside the United States, so downstream users must assess rights
+in their territory. The committed
 derivative is a faithful crop from the actual 3840px preview, resized/contrasted/sharpened only; full
 recipe and hashes are in `docs/asset-provenance/sample-master-bedroom.md`.
 
@@ -143,7 +144,7 @@ npm run capture:ui
 |---|---|
 | TypeScript | Pass |
 | Biome lint/format | Pass |
-| Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved in `package.json`; the valid cached Electron archive was extracted after npm omitted the binary |
+| Required package install scripts | Pass; Electron, esbuild, and Foundry Local SDK are explicitly approved, and `npm run setup:native` materialized Electron `42.11.18` plus the required native bindings |
 | Unit tests | 31 files / 742 tests pass |
 | Electron/Vite build | Pass |
 | Actual Electron smoke launch + SDK/catalog initialization | Pass |
@@ -153,13 +154,13 @@ npm run capture:ui
 | Turn A Queen + desk | Feasible |
 | Turn B King + desk | No feasible option; one closet conflict |
 | Turn C Queen + desk + baby bed | Feasible; the full new buyer request is preserved exactly before Application evidence |
-| King + compact desk + baby bed | No feasible bounded option; the accepted Queen Turn C layout stays visible and adjustable, while rejected east evidence retains 70 / 250 mm and 170 / 250 mm measurements |
+| King + compact desk + baby bed | No feasible bounded option; the exact rejected east evidence opens automatically with 70 / 250 mm and 170 / 250 mm measurements, while the accepted Queen C/D state remains preserved and adjustable through **Show accepted layout** |
 | Turn C action | Pass; **Run next: C · Queen + desk + baby bed** enters the same real Qwen/app validation pipeline and keeps door, closet, window, and 250 mm clearance locked |
 | Baby-bed aliases | Pass; `baby bed`, `baby-bed`, `baby cot`, and technical `crib` resolve to `crib-standard` |
 | Visible ASR suggestions | Pass; raw text is initial, exact replacements require a direct candidate-local governing-action span and explicit Apply, Dismiss preserves raw, Undo restores it, and provenance remains visible; additive/request/placement `creep` positives, keep/move/remove-person negatives, punctuated/adverb negation, exact `baby bed`, local luggage, and independent later clauses across `but`, `then`, commas, and subordinators are focused-tested |
 | Reset consistency | Pass; reset initiation immediately creates one generation-tagged renderer/main no-room intake state, clears accepted/transient evidence, rejects stale bootstrap/results, preserves that state through timeout and late recovery, stops active tracks, releases ownership, and permits a fresh recording lease after explicit room selection |
-| Manual placement | Pass; coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
-| Renderer interaction | Pass in browser preview; A -> B -> C -> E defaults to the retained accepted C layout, **Inspect rejected option** exposes E without accepting it, **Show accepted layout** returns without rerunning, and retained furniture remains adjustable. The headless-browser renderer probe covers default/imported layouts A and C; standard/compact desks and baby beds stay pointer-draggable while another preview is pending, pointer capture is acquired/released, accessible focus survives repeated SVG redraws, every Arrow key uses the 50 mm grid, valid Apply advances accepted state, and invalid previews keep Apply disabled until Revert restores the accepted layout |
+| Manual placement | Pass; required guided step D uses application-owned direct manipulation with no Buyer message or Qwen inference. Coordinate conversion, grid-quantized bounds for non-grid footprints, 50 mm snap, keyboard movement, collision, reserved-zone, door-swing, clearance, valid commit, invalid revert, stale state, and retain-only conversational preservation are covered |
+| Renderer interaction | Pass in browser preview; the guided contract is A -> B -> C -> D -> E. B and E automatically open their exact rejected option, **Show accepted layout** displays the preserved adjustable accepted layout, and **Inspect rejected option** returns to the same rejected evidence without adding a Buyer message or rerunning Qwen. The headless-browser renderer probe covers default/imported layouts A and C; standard/compact desks and baby beds stay pointer-draggable while another preview is pending, pointer capture is acquired/released, accessible focus survives repeated SVG redraws, every Arrow key uses the 50 mm grid, valid Apply advances accepted state, and invalid previews keep Apply disabled until Revert restores the accepted layout |
 | Requirements / measurements | Pass; accepted-layout provenance stays visible while rejected exact-option measurements, checks, and conflicts remain tied to the same `evidenceOptionId`; accepted and rejected exact-option measurements share the same evaluated option as checks/conflicts |
 | Adversarial negation/correction | Feasible Queen + compact desk |
 | Exact default model/EP enforced | Pass; integration asserts exact ID and canonical WebGPU EP |
@@ -192,7 +193,7 @@ npm run capture:ui
 | Floor-plan parser | Pass; exact neutral prompts, open positive/negative/uncertain alternatives, exact keys/counts, authoritative positive/white/rectangle-only payload replay, duplicates/extras, content mismatch, legacy forced-numeric attempts, repetition, truncation, and harmless object-key ordering covered |
 | Floor-plan lifecycle | Pass in unit/integration harness; fresh no-room bootstrap, preview-only staging, imported/default activation, failed-analysis no-room retention, Reset/reload cleanup, byte zeroing, manager ownership, exact-model absence, and no endpoint fallback covered |
 | Floor-plan real Windows gate | `npm run test:floor-plan-integration`; must emit `FLOOR_PLAN_INTEGRATION_OK` only after exact-fixture recognition, white and rectangle-only control rejection, and the imported Queen/King/Turn C/manual chain; failure evidence retains raw attempts |
-| Dependency audit | Pass; `npm audit --offline --json` reports 0 vulnerabilities after Electron `42.11.18`; the live Microsoft package proxy returned HTTP 429 during this integration run |
+| Dependency audit | Pass; `npm audit --offline --json` reports 0 vulnerabilities with Electron `42.11.18` |
 | Repository line endings | Pass; `.gitattributes` and Biome enforce LF, with binary image/audio exclusions |
 
 Final command outputs from the October 31 independent revision run:
@@ -419,8 +420,8 @@ Final real app-service Whisper fallback integration:
 
 - No Apple-silicon Mac was available. macOS install, EP selection, model variant, rendering, and
   performance are not validated.
-- A physical network-disconnect rehearsal still requires Wayne's manual adapter action.
-- Real microphone permission and human-spoken acceptance still require one Wayne interaction:
+- A physical network-disconnect rehearsal still requires an operator's manual adapter action.
+- Real microphone permission and human-spoken acceptance still require one operator interaction:
   **Prepare Nemotron live -> Start recording -> say “Can we do a Queen bed and a desk, and also add
   a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave
   the 250 mm furniture-clearance rule locked.” -> confirm partial revisions -> Stop -> verify the

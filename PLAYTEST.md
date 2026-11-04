@@ -6,32 +6,30 @@ with exact-fixture image preview, local VLM topology analysis, imported-room pla
 explicit default-room fallback.
 
 This is the complete first-time tester route for Enhanced New Home App. Complete the guided flow in
-order; do not skip from C to E.
+the required `A -> B -> C -> D -> E` order; do not skip from C to E.
 
 ## Requirements
 
 - Windows 11 x64 for the currently validated setup and playtest route; other app environments do
   not yet have equivalent validation evidence
-- Git
-- A WebGPU-capable graphics adapter and current driver; the layout model uses
-  `WebGPUExecutionProvider`
-- The floor-plan VLM remains on CPU / `CPUExecutionProvider`
+- Git for Windows
 - Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
 - Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
-- Internet access for installation and first preparation
+- Internet access for installation and first local model/execution-provider preparation
 - Several GB of free disk space for dependencies and model assets
-- No minimum RAM value has been established by testing
-- A microphone is needed only for voice-path testing; typed and scripted flows remain available
-  without one
+- A WebGPU-capable graphics adapter and current driver; the layout model uses
+  `WebGPUExecutionProvider`
+- A microphone only for voice-path testing; typed and scripted flows remain available without one
 
-## Validated configuration
+## Validated configuration and current limits
 
 This playtest's current E2E evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows
 11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon 860M identifies the evidence machine; it is
 not a minimum or required adapter. The product requirement is a WebGPU-capable graphics
-adapter/driver for the current layout model configuration; the floor-plan VLM remains on CPU.
-Foundry Local's broader public platform and hardware support is separate, and other app environments
-must not be presented as having equivalent evidence until tested to the same depth.
+adapter/driver for the current layout model configuration. No minimum RAM value has been
+established. The floor-plan VLM remains on CPU / `CPUExecutionProvider`. Foundry Local's broader
+public platform and hardware support is separate, and other app environments must not be presented
+as having equivalent evidence until tested to the same depth.
 
 ## Fresh clone, install, build, and launch
 
@@ -65,9 +63,9 @@ recording actions remain unavailable until a room is activated.
 
 ### Prepare the required local models
 
-First local model and execution-provider preparation can take several minutes while assets
-download. Stay online and keep Enhanced New Home App open until the required local ready states
-appear; later demo actions can run offline.
+First preparation downloads local model and execution-provider assets, so stay online and keep
+Enhanced New Home App open until the required ready states appear; later demo actions can run
+offline.
 
 When step 3 reaches layout-model setup, the normal button is determined only by
 `readiness.modelCached`; WebGPU provider registration does not select the wording:
@@ -103,9 +101,9 @@ When step 3 reaches layout-model setup, the normal button is determined only by
    - **Stop if:** The turn rejects, different furniture is accepted, geometry appears before model and application validation finish, or the Buyer request is duplicated in **Application evidence**.
 
 5. **B — Imported King conflict (model turn plus rejected/accepted inspection)**
-   - **Action:** Select **B · Imported King conflict**. The failure opens with the rejected option already visible: verify the exact `70 mm / required 250 mm` measurement, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + standard desk layout is preserved and adjustable. Select **Inspect rejected option** to return to the rejected evidence.
-   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved Queen + standard desk layout, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another inference turn.
-   - **Stop if:** B is feasible, the failure does not initially show the rejected option, its measurement/checks/conflicts do not agree, rejected furniture can be dragged or keyboard-moved, **Apply** can accept rejected furniture, the prior accepted layout is missing or not adjustable, or either switch reruns inference.
+   - **Action:** Select **B · Imported King conflict**. The failure automatically opens the exact rejected option: verify the `70 mm / required 250 mm` measurement, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + standard desk layout is preserved and adjustable. Select **Inspect rejected option** to return to the same rejected evidence.
+   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved Queen + standard desk layout, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another Buyer message or inference turn.
+   - **Stop if:** B is feasible, the failure does not initially show the rejected option, its measurement/checks/conflicts do not agree, rejected furniture can be dragged or keyboard-moved, **Apply** can accept rejected furniture, the prior accepted layout is missing or not adjustable, or either switch adds a Buyer message or reruns inference.
 
 6. **C — Imported Queen + desk + baby bed (model turn)**
    - **Action:** Select **C · Imported Queen + desk + baby bed** and wait for the model turn to finish.
@@ -118,9 +116,9 @@ When step 3 reaches layout-model setup, the normal button is determined only by
    - **Stop if:** A scripted D model button appears, any accepted furniture type cannot be dragged or keyboard-moved, a rejected-option preview is editable, an Arrow key moves by a value other than `50 mm`, **Apply** is enabled for an invalid preview, or manual adjustment starts model inference.
 
 8. **E — Imported King failure (model turn plus preserved accepted layout)**
-   - **Action:** Select **E · Imported King failure**. The failure opens with the rejected east option already visible: verify the `70 / 250 mm` and `170 / 250 mm` measurements, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + compact desk + baby bed layout, including any applied D adjustment, is preserved and adjustable. Select **Inspect rejected option** to return to the rejected evidence.
-   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved C/D accepted state, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another inference turn.
-   - **Stop if:** E becomes feasible, the failure does not initially show the rejected east option, its exact measurements/checks/conflicts do not agree, rejected furniture is interactive, the D-adjusted accepted state is lost or not adjustable, the rejected King layout becomes accepted, or either switch starts another model turn.
+   - **Action:** Select **E · Imported King failure**. The failure automatically opens the exact rejected east option: verify the `70 / 250 mm` and `170 / 250 mm` measurements, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + compact desk + baby bed layout, including any applied D adjustment, is preserved and adjustable. Select **Inspect rejected option** to return to the same rejected evidence.
+   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved C/D accepted state, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another Buyer message or inference turn.
+   - **Stop if:** E becomes feasible, the failure does not initially show the rejected east option, its exact measurements/checks/conflicts do not agree, rejected furniture is interactive, the D-adjusted accepted state is lost or not adjustable, the rejected King layout becomes accepted, or either switch adds a Buyer message or starts another model turn.
 
 9. **Confirm the evidence boundary**
    - **Action:** Review the conversation, **Application evidence**, and **Developer trace** after A through E.
@@ -146,7 +144,7 @@ When step 3 reaches layout-model setup, the normal button is determined only by
     - **Action:** Select **Prepare Nemotron live** and wait for `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, and **LIVE** mode. Select **Start recording**, speak a request, then select **Stop**.
     - **Expected:** The final transcript enters **Manual prompt** without being submitted. Review the raw text and use **Apply suggested furniture corrections**, **Dismiss**, or **Undo suggestions** only when those exact controls are shown, then select **Send**.
     - **Stop if:** Recording is available before a room is active, Stop submits automatically, a suggestion changes text without explicit action, Whisper activates silently, or an online speech service is used.
-    - **Fallback:** If Nemotron deterministically fails, use **Whisper Tiny fallback (record then transcribe)** only when the explicit action is visible and intentionally selected.
+    - **Fallback:** If Nemotron deterministically fails, select **Use Whisper Tiny fallback (record then transcribe)** only when the explicit action is visible and intentionally selected.
 
 14. **Reset back to no-room intake**
     - **Action:** Select **Reset**.
@@ -184,15 +182,15 @@ Modified, re-encoded, or arbitrary drawings must reject before canonical geometr
 This is not general floor-plan or CAD support.
 
 The fixture is derived from a NARA-held U.S. federal record. Wikimedia Commons marks the source
-`PD-US`, but public-domain status can differ outside the United States. Downstream users must assess
-rights in their territory. See the
+`PD-US` and does not require attribution; public-domain status may differ outside the United States,
+so downstream users must assess rights in their territory. See the
 [full provenance record](docs/asset-provenance/sample-master-bedroom.md).
 
 ## Troubleshooting
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 | A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
 | A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
@@ -203,7 +201,7 @@ rights in their territory. See the
 | Drag or Arrow keys do nothing | Confirm **Show accepted layout** is active, the app is not busy, and a feasible accepted layout is displayed. |
 | **Apply** is disabled | The preview is rejected, stale, or an operation is active. Select **Revert** and try another accepted-furniture move. |
 | Microphone is denied, absent, or busy | Grant permission or close the competing app. Typed input remains valid; do not bypass transcript review. |
-| Nemotron does not prepare or stream | Retry **Prepare Nemotron live** while connected. Use the explicit Whisper action only if it is visible and pretested; otherwise use typed input. |
+| Nemotron does not prepare or stream | Retry **Prepare Nemotron live** while connected. Select **Use Whisper Tiny fallback (record then transcribe)** only if that explicit control is visible and pretested; otherwise use typed input. |
 | Electron binary or native binding is missing | Confirm `node_modules\electron\path.txt` exists. Run `npm run setup:native`, then `npm run build` and `npm run start:built`. |
 
 ## Detailed pass / stop gate
@@ -217,7 +215,7 @@ Record a pass only when all of these are visible:
 - D completed through direct manipulation with no scripted D button and no inference;
 - accepted layout preserved across B and E, including an applied D adjustment;
 - B and E initially display their rejected option; **Show accepted layout** reveals the preserved,
-  adjustable layout and **Inspect rejected option** returns without inference;
+  adjustable layout and **Inspect rejected option** returns without a Buyer message or inference;
 - rejected furniture remains non-interactive;
 - accepted bed, compact desk, and baby bed all support drag plus `50 mm` Arrow-key previews;
 - **Apply** creates an accepted application layout version and **Revert** discards a preview;
