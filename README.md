@@ -62,7 +62,7 @@ state appears. Later app actions can run offline.
 **Prepare offline** downloads missing assets; **Load local model** loads assets that are already
 cached. Continue when the control changes to **Local model ready**.
 
-Follow [PLAYTEST.md](PLAYTEST.md) from top to bottom for the complete A through E flow, typed and
+Follow [New Home App Test Guide](PLAYTEST.md) from top to bottom for the complete A through E flow, typed and
 voice input, Reset, and clean shutdown.
 
 ## Troubleshooting
