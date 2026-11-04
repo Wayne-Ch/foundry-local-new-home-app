@@ -1,6 +1,6 @@
 # New Home App Test Guide
 
-This is the complete first-time manual-validation route for New Home App.
+This is the complete first-time test flow for New Home App.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ This is the complete first-time manual-validation route for New Home App.
 
 ## Validated configuration and current limits
 
-This playtest's current E2E evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows
+Current E2E evidence for this test guide was collected with Node `26.13.0` and npm `11.20.0` on Windows
 11 x64 with an AMD Radeon 860M and 64 GB RAM. Those hardware values describe the evidence machine,
 not product minimums; no minimum RAM value has been established by testing. The product requirement
 is a WebGPU-capable graphics adapter with a current driver for the layout model. Foundry Local's

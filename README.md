@@ -157,6 +157,6 @@ npm run capture:ui
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 | A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
 | A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
-| The control shows **Local model ready** | The runtime is already loaded and READY. Do not select the disabled control; continue with the playtest. |
+| The control shows **Local model ready** | The runtime is already loaded and READY. Do not select the disabled control; continue with the test guide. |
 
-Use `PLAYTEST.md` for the strict operator walkthrough and `DEMO-RUNBOOK.md` for live delivery.
+Use `PLAYTEST.md` for the complete test guide and `DEMO-RUNBOOK.md` for live delivery.
