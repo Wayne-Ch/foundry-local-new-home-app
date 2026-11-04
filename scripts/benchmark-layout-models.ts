@@ -921,7 +921,7 @@ if (selectedCandidates.length === 0) {
 
 const paths = await resolveFoundryPaths();
 const manager = FoundryLocalManager.create({
-  appName: "FoundryLocalNewHomeLayoutModelBenchmark",
+  appName: "FoundryLocalNewHomeAppLayoutBenchmark",
   appDataDir: paths.appDataDir,
   modelCacheDir: paths.modelCacheDir,
   logsDir: paths.logsDir,

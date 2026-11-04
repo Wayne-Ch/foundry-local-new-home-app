@@ -630,5 +630,5 @@ try {
 }
 
 console.log(
-  "Standard furniture controls probe passed for A/C bed, desk, and baby-bed pointer + 50 mm keyboard previews, Apply/Revert, automatic B/E rejected previews, non-interactive rejected furniture, and no-inference accepted/rejected switching.",
+  "New Home App furniture controls probe passed for A/C bed, desk, and baby-bed pointer + 50 mm keyboard previews, Apply/Revert, automatic B/E rejected previews, non-interactive rejected furniture, and no-inference accepted/rejected switching.",
 );

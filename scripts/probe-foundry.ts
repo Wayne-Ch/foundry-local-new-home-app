@@ -7,7 +7,7 @@ import { canonicalExecutionProvider, resolveRuntimeTarget } from "../src/foundry
 const paths = await resolveFoundryPaths();
 const target = resolveRuntimeTarget();
 const manager = FoundryLocalManager.create({
-  appName: "FoundryLocalNewHomeLayoutProbe",
+  appName: "FoundryLocalNewHomeAppProbe",
   appDataDir: paths.appDataDir,
   modelCacheDir: paths.modelCacheDir,
   logsDir: paths.logsDir,
