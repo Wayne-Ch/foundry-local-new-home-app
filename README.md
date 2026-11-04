@@ -8,7 +8,7 @@ Enhanced New Home App extends the standard New Home App planning flow with:
 - imported-room `A -> B -> C -> D -> E` planning;
 - an explicit **Use default room** fallback that is not reported as a successful import.
 
-For the complete first-time route, follow [PLAYTEST.md](PLAYTEST.md).
+For the complete first-time route, follow [Enhanced New Home App Test Guide](PLAYTEST.md).
 
 ## Exact local models
 
