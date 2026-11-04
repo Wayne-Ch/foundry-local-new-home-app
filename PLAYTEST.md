@@ -1,7 +1,7 @@
 # Enhanced New Home App playtest
 
 Enhanced New Home App extends
-[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-demo/tree/feature/new-home-ux-parity)
+[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-app)
 with exact-fixture image preview, local VLM topology analysis, imported-room planning, and an
 explicit default-room fallback.
 
@@ -21,7 +21,7 @@ execution provider. Complete the guided flow in order; do not skip from C to E.
 Open PowerShell in the parent folder where `enhanced-new-home-app` should be created:
 
 ```powershell
-git clone --branch feature/enhanced-new-home --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git enhanced-new-home-app
+git clone --branch enhanced-new-home-app --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git enhanced-new-home-app
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk

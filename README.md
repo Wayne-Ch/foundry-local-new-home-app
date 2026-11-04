@@ -1,8 +1,8 @@
 # Enhanced New Home App
 
 Enhanced New Home App extends
-[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-demo/tree/feature/new-home-ux-parity)
-and its [standard guide](https://github.com/Wayne-Ch/foundry-local-new-home-demo/blob/feature/new-home-ux-parity/README.md).
+[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-app)
+and its [standard guide](https://github.com/Wayne-Ch/foundry-local-new-home-app/blob/main/README.md).
 It keeps the standard local planning, deterministic geometry, furniture controls, voice input, and
 Reset lifecycle while adding these Enhanced-only capabilities:
 
@@ -98,7 +98,7 @@ image-generation pipeline, hidden canned model response, TTS, or success-shaped 
 
 ## Optional experimental floor-plan import
 
-This feature branch starts in an explicit no-room intake state. **Load sample floor plan** shows only
+The Enhanced product branch starts in an explicit no-room intake state. **Load sample floor plan** shows only
 the bounded image preview; deterministic room geometry becomes active only after **Analyze layout**
 succeeds. **Use default room** remains an explicit fallback that activates the original verified
 bedroom. The main process owns image selection and bytes; the renderer receives only a bounded
@@ -225,7 +225,7 @@ Prerequisites:
 - Network access and sufficient disk space for first exact-model/EP preparation.
 
 ```powershell
-git clone --branch feature/enhanced-new-home --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git enhanced-new-home-app
+git clone --branch enhanced-new-home-app --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git enhanced-new-home-app
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk

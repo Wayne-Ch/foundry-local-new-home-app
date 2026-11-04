@@ -168,7 +168,7 @@ npm run capture:ui
 | Rejected-preview evidence consistency | Pass; preview checks/conflicts come from one exact option |
 | Model/EP cached and loadable | Pass |
 | External inference endpoint used | No |
-| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 430,250 bytes |
+| Labeled browser visual-preview screenshot | `docs/screenshots/stage-ui.png`, 1,600 x 900, 398,381 bytes, SHA-256 `6B5B51405698922DBD27AF3FA1FF07F8693F5A03E3DA400BBB282B79A8AB6497` |
 | Real Nemotron integration | 31 changing partials; exact English words; 100% key-word recall |
 | Nemotron model/EP | Exact `nemotron-speech-streaming-en-0.6b-generic-cpu:3` on CPU EP |
 | Nemotron timing | Cached prepare 3,231 ms; first partial 1,269 ms; stop-to-final 196 ms |

@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "Enhanced New Home App with exact-fixture floor-plan analysis and local room planning.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wayne-Ch/foundry-local-new-home-app.git"
+  },
+  "homepage": "https://github.com/Wayne-Ch/foundry-local-new-home-app/tree/enhanced-new-home-app#readme",
   "main": "dist/main/main.mjs",
   "type": "module",
   "scripts": {
