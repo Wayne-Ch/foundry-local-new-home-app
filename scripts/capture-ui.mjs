@@ -32,7 +32,7 @@ if (!browserExecutable) {
 }
 
 const screenshotPath = path.join(process.cwd(), "docs", "screenshots", "stage-ui.png");
-const profilePath = path.join(os.tmpdir(), `new-home-layout-browser-${process.pid}`);
+const profilePath = path.join(os.tmpdir(), `new-home-app-standard-browser-${process.pid}`);
 await Promise.all([
   mkdir(path.dirname(screenshotPath), { recursive: true }),
   mkdir(profilePath, { recursive: true }),

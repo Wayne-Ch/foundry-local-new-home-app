@@ -1,5 +1,5 @@
 import type { DemoStateSnapshot } from "../domain/types";
-import type { StageTurnDefinition } from "../shared/contracts";
+import type { StageTurnDefinition, StageTurnId } from "../shared/contracts";
 
 export const stageTurns: readonly StageTurnDefinition[] = [
   {
@@ -14,8 +14,9 @@ export const stageTurns: readonly StageTurnDefinition[] = [
   },
   {
     id: "turn-c",
-    label: "C · Choose Queen + baby bed",
-    prompt: "Keep the Queen bed. Add a baby bed. Use a compact desk if needed. Keep the closet clear.",
+    label: "C · Queen + desk + baby bed",
+    prompt:
+      "Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.",
   },
   {
     id: "controlled-failure",
@@ -23,6 +24,13 @@ export const stageTurns: readonly StageTurnDefinition[] = [
     prompt: "Use a King bed. Keep the compact desk and baby bed. Keep the door, closet, and window clear.",
   },
 ] as const;
+
+export function nextPendingStageTurnIndex(
+  turns: readonly StageTurnDefinition[],
+  completedTurnIds: readonly StageTurnId[],
+): number {
+  return turns.findIndex((turn) => !completedTurnIds.includes(turn.id));
+}
 
 export const systemPrompt = `
 Return one JSON semantic delta for the bedroom request.

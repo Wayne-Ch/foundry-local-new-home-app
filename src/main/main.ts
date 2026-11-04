@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +20,7 @@ import type {
   PrepareAudioRequest,
 } from "../audio/audio-types";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
+import { NEW_HOME_APP_ID, NEW_HOME_PRODUCT_NAME, resolveNewHomeProductPaths } from "../foundry/paths";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import {
   type AudioStreamLease,
@@ -113,6 +115,24 @@ let microphonePermissionProbeRequest:
     }
   | undefined;
 
+const productPaths = resolveNewHomeProductPaths();
+for (const directory of [
+  productPaths.electronProfileDir,
+  productPaths.electronSessionDir,
+  productPaths.electronLogsDir,
+  productPaths.electronTempDir,
+  productPaths.crashDumpsDir,
+]) {
+  mkdirSync(directory, { recursive: true });
+}
+app.setName(NEW_HOME_PRODUCT_NAME);
+app.setAppUserModelId(NEW_HOME_APP_ID);
+app.setPath("userData", productPaths.electronProfileDir);
+app.setPath("sessionData", productPaths.electronSessionDir);
+app.setPath("logs", productPaths.electronLogsDir);
+app.setPath("temp", productPaths.electronTempDir);
+app.setPath("crashDumps", productPaths.crashDumpsDir);
+
 if (process.env.DEMO_CAPTURE_PATH?.trim()) {
   app.disableHardwareAcceleration();
 }
@@ -143,7 +163,7 @@ function createWindow(): BrowserWindow {
     minHeight: 720,
     show: false,
     backgroundColor: "#07111f",
-    title: "Foundry Local New Home Layout Demo",
+    title: NEW_HOME_PRODUCT_NAME,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(currentDirectory, "..", "preload", "preload.cjs"),

@@ -22,8 +22,8 @@ import { applyToolResult, createInitialDemoState } from "../domain/demo-state";
 import { roomPlan } from "../domain/fixture";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../domain/manual-placement";
 import type { DemoState, EvaluatedLayoutOption } from "../domain/types";
-import { FoundryLayoutService } from "../foundry/foundry-service";
-import { stageTurns } from "../foundry/prompt";
+import { FoundryLayoutService, type FoundryTurnOutcome } from "../foundry/foundry-service";
+import { nextPendingStageTurnIndex, stageTurns } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
@@ -49,6 +49,24 @@ function message(role: ConversationMessage["role"], text: string, status?: Conve
     text,
     ...(status ? { status } : {}),
   };
+}
+
+function manuallyCompletedStageTurn(
+  completedTurnIds: readonly StageTurnId[],
+  outcome: FoundryTurnOutcome,
+): StageTurnId | undefined {
+  const nextTurn = stageTurns[nextPendingStageTurnIndex(stageTurns, completedTurnIds)];
+  const candidates = outcome.validatedInput.candidateFurnitureIds;
+  if (
+    nextTurn?.id === "turn-c" &&
+    outcome.toolResult.status === "feasible" &&
+    candidates.bed === "bed-queen" &&
+    candidates.desk === "desk-compact" &&
+    candidates.crib === "crib-standard"
+  ) {
+    return "turn-c";
+  }
+  return undefined;
 }
 
 type DemoFoundryService = Pick<
@@ -79,7 +97,7 @@ export class DemoController {
   #messages: ConversationMessage[] = [
     message(
       "system",
-      "Verified room plan loaded. Geometry remains deterministic; Foundry Local interprets requirements and calls the tool.",
+      "Verified built-in room loaded. Geometry remains deterministic; Foundry Local interprets requirements and calls the tool.",
     ),
   ];
   #trace: TraceEntry[] = [];
@@ -308,11 +326,10 @@ export class DemoController {
             (option) => option.id === outcome.toolResult.selectedOptionId,
           ) ?? null;
       }
-      if (
-        request.scriptedTurnId !== undefined &&
-        !this.#completedStageTurnIds.includes(request.scriptedTurnId)
-      ) {
-        this.#completedStageTurnIds.push(request.scriptedTurnId);
+      const completedStageTurnId =
+        request.scriptedTurnId ?? manuallyCompletedStageTurn(this.#completedStageTurnIds, outcome);
+      if (completedStageTurnId !== undefined && !this.#completedStageTurnIds.includes(completedStageTurnId)) {
+        this.#completedStageTurnIds.push(completedStageTurnId);
       }
       this.#lastInteraction = "turn";
 
@@ -408,7 +425,10 @@ export class DemoController {
     this.#state = createInitialDemoState();
     this.#selectedLayout = null;
     this.#messages = [
-      message("system", "Conversation reset. Verified dimensions and locked room constraints remain loaded."),
+      message(
+        "system",
+        "Conversation reset. The verified built-in room and locked constraints remain loaded.",
+      ),
     ];
     this.#trace = [];
     this.#completedStageTurnIds = [];

@@ -3,14 +3,14 @@ import { applyToolResult, createInitialDemoState } from "../src/domain/demo-stat
 import { compareKnownLayoutOptions } from "../src/domain/layout-engine";
 import { evaluateManualPlacement, type ManualPlacementRequest } from "../src/domain/manual-placement";
 import { createToolInputForTests } from "../src/domain/tool-contract";
-import type { DemoState, EvaluatedLayoutOption } from "../src/domain/types";
+import type { DemoState, EvaluatedLayoutOption, FurnitureId } from "../src/domain/types";
 import {
   clientPointToRoomPoint,
   keyboardPlacementOrigin,
   snappedPlacementOrigin,
 } from "../src/renderer/placement-interaction";
 
-function acceptedQueenDesk(): {
+function acceptedLayout(candidateFurnitureIds: readonly FurnitureId[]): {
   readonly state: DemoState;
   readonly layout: EvaluatedLayoutOption;
 } {
@@ -18,16 +18,23 @@ function acceptedQueenDesk(): {
   const result = compareKnownLayoutOptions(
     createToolInputForTests({
       state: initial,
-      candidateFurnitureIds: ["bed-queen", "desk-standard"],
-      changedPreference: "Queen and desk",
+      candidateFurnitureIds,
+      changedPreference: candidateFurnitureIds.join(", "),
     }),
     initial,
   );
   const layout = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
   if (layout === undefined) {
-    throw new Error("Missing accepted Queen layout");
+    throw new Error(`Missing accepted layout for ${candidateFurnitureIds.join(", ")}`);
   }
   return { state: applyToolResult(initial, result), layout };
+}
+
+function acceptedQueenDesk(): {
+  readonly state: DemoState;
+  readonly layout: EvaluatedLayoutOption;
+} {
+  return acceptedLayout(["bed-queen", "desk-standard"]);
 }
 
 function request(
@@ -85,6 +92,42 @@ describe("manual placement coordinate conversion", () => {
         depthMm: 3600,
       }),
     ).toEqual({ xMm: 2350, yMm: 500 });
+  });
+
+  it.each([
+    ["A Queen bed", ["bed-queen", "desk-standard"], "bed-main"],
+    ["A standard desk", ["bed-queen", "desk-standard"], "desk-main"],
+    ["C Queen bed", ["bed-queen", "desk-compact", "crib-standard"], "bed-main"],
+    ["C compact desk", ["bed-queen", "desk-compact", "crib-standard"], "desk-main"],
+    ["C baby bed", ["bed-queen", "desk-compact", "crib-standard"], "crib-main"],
+  ] as const)("supports a valid one-grid preview for %s", (_label, furnitureIds, instanceId) => {
+    const { state, layout } = acceptedLayout(furnitureIds);
+    const placement = layout.placements.find((candidate) => candidate.instanceId === instanceId);
+    if (placement === undefined) {
+      throw new Error(`Missing ${instanceId}`);
+    }
+
+    const origin = keyboardPlacementOrigin(placement.rect, "ArrowRight", {
+      widthMm: 4200,
+      depthMm: 3600,
+    });
+    const outcome = evaluateManualPlacement(
+      state,
+      layout,
+      request(state, layout, {
+        instanceId,
+        xMm: origin.xMm,
+        yMm: origin.yMm,
+      }),
+    );
+
+    expect(outcome.accepted).toBe(true);
+    expect(
+      outcome.preview?.placements.find((candidate) => candidate.instanceId === instanceId),
+    ).toMatchObject({
+      xMm: placement.xMm + 50,
+      yMm: placement.yMm,
+    });
   });
 });
 

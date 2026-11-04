@@ -56,7 +56,7 @@ import type {
   RuntimeReadiness,
   RuntimeTargetIdentity,
 } from "../domain/types";
-import { type FoundryPaths, resolveFoundryPaths } from "./paths";
+import { type FoundryPaths, NEW_HOME_FOUNDRY_APP_NAME, resolveFoundryPaths } from "./paths";
 import { formatTurnPrompt, systemPrompt } from "./prompt";
 import {
   canonicalExecutionProvider,
@@ -70,7 +70,7 @@ import {
 const MAX_TOOL_ATTEMPTS = 3;
 const MAX_INTENT_OUTPUT_TOKENS = 256;
 const DEFAULT_OPERATION_DRAIN_TIMEOUT_MS = 10_000;
-const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding", "vision-language-chat"]);
+const SUPPORTED_LAYOUT_TASKS = new Set(["chat-completion", "coding"]);
 
 interface FoundryCatalogHandle {
   getCachedModels(): Promise<IModel[]>;
@@ -489,7 +489,7 @@ export class FoundryLayoutService {
     }
     try {
       this.#manager = this.#createManager({
-        appName: "FoundryLocalNewHomeLayoutDemo",
+        appName: NEW_HOME_FOUNDRY_APP_NAME,
         appDataDir: this.#paths.appDataDir,
         modelCacheDir: this.#paths.modelCacheDir,
         logsDir: this.#paths.logsDir,
@@ -1596,7 +1596,7 @@ export class FoundryLayoutService {
     const toolResult = compareKnownLayoutOptions(validatedInput, state, currentAcceptedLayout);
     const geometryMs = performance.now() - geometryStarted;
     onPhase?.("model-summarizing", "Rendering an application-evidence response from the typed result.");
-    const assistantText = renderApplicationEvidence(toolResult);
+    const assistantText = renderApplicationEvidence(toolResult, currentAcceptedLayout);
 
     return {
       modelIntent: {
@@ -2381,18 +2381,16 @@ export class FoundryLayoutService {
   }
 }
 
-function renderApplicationEvidence(result: LayoutToolResult): string {
+export function renderApplicationEvidence(
+  result: LayoutToolResult,
+  currentAcceptedLayout: EvaluatedLayoutOption | null,
+): string {
   if (result.status === "feasible") {
     const selected = result.feasibleOptions.find((option) => option.id === result.selectedOptionId);
-    return [
-      "Application evidence:",
-      selected?.label ?? "The selected known option",
-      "passes every locked deterministic check.",
-      `Preference interpreted: ${result.changedPreference}`,
-    ].join(" ");
+    return `${selected?.label ?? "The selected known option"} passes every locked deterministic check.`;
   }
   if (result.status === "clarification_required") {
-    return `Application evidence: geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}.`;
+    return `Geometry did not run. Missing verified facts: ${result.unknowns.join(", ")}.`;
   }
   const evidenceOption = result.rejectedOptions.find((option) => option.id === result.evidenceOptionId);
   const conflictText =
@@ -2404,11 +2402,13 @@ function renderApplicationEvidence(result: LayoutToolResult): string {
           .join(" ")} ${
           evidenceOption === undefined
             ? ""
-            : `The UI preview is ${evidenceOption.label} and shows only that option's checks and conflicts.`
+            : currentAcceptedLayout === null
+              ? `The rejected preview is ${evidenceOption.label}; no layout has been accepted.`
+              : `The prior accepted layout remains active. Rejected evidence for ${evidenceOption.label} is shown automatically, and the accepted/rejected view controls switch existing evidence without rerunning inference.`
         }`
       : (result.noResultReason?.message ?? "No bounded known option is feasible.");
   const choices = result.noResultReason?.preferencesThatMayChange.join(", ") ?? "a locked preference";
-  return `Application evidence: no feasible known option. ${conflictText} Which preference may change: ${choices}?`;
+  return `No feasible known option. ${conflictText} Which preference may change: ${choices}?`;
 }
 
 export function summarizeModelInfo(info: ModelInfo): string {

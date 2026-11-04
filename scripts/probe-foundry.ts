@@ -48,9 +48,7 @@ try {
       .filter(
         (model) =>
           model.supportsToolCalling === true &&
-          ["chat-completion", "coding", "vision-language-chat"].includes(
-            model.info.task?.toLowerCase() ?? "",
-          ),
+          ["chat-completion", "coding"].includes(model.info.task?.toLowerCase() ?? ""),
       )
       .map((model) => ({
         alias: model.alias,

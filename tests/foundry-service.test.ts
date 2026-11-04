@@ -650,14 +650,14 @@ describe("Foundry offline preparation", () => {
     await service.shutdown();
   });
 
-  it("accepts a text-capable vision-language-chat override after JSON-schema compatibility", async () => {
+  it("accepts a text-capable coding override after JSON-schema compatibility", async () => {
     const model = new FakeModel(
       "qwen3.5-0.8b-generic-gpu:2",
       "qwen3.5-0.8b",
       VALIDATED_EXECUTION_PROVIDER,
       true,
       null,
-      "vision-language-chat",
+      "coding",
     );
     const service = createService(new FakeManager(model, true), {
       FOUNDRY_MODEL_ID: model.id,

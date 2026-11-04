@@ -72,9 +72,17 @@ const audioReadiness: AudioReadiness = {
   lastTranscriptionMs: 6183,
 };
 
+type PreviewStep = "queen" | "conflict" | "request" | "failure";
+
+function requestedPreviewStep(): PreviewStep {
+  const step = new URLSearchParams(window.location.search).get("step");
+  return step === "queen" || step === "conflict" || step === "request" ? step : "failure";
+}
+
 function buildPreview(conversationGeneration: number): BootstrapPayload {
-  const recoveryOnly = new URLSearchParams(window.location.search).get("step") === "recovery";
-  let state: DemoState = createInitialDemoState();
+  const previewStep = requestedPreviewStep();
+  const initialState = createInitialDemoState();
+  let state: DemoState = initialState;
   const turnAInput = createToolInputForTests({
     state,
     candidateFurnitureIds: ["bed-queen", "desk-standard"],
@@ -82,6 +90,8 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
   });
   const turnA = compareKnownLayoutOptions(turnAInput, state);
   state = applyToolResult(state, turnA);
+  const queenState = state;
+  const queenLayout = turnA.feasibleOptions.find((option) => option.id === turnA.selectedOptionId) ?? null;
 
   const turnBInput = createToolInputForTests({
     state,
@@ -89,7 +99,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
     retainFurnitureIds: ["desk-standard"],
     changedPreference: stageTurns[1]?.prompt ?? "",
   });
-  const turnB = compareKnownLayoutOptions(turnBInput, state);
+  const turnB = compareKnownLayoutOptions(turnBInput, state, queenLayout);
   state = applyToolResult(state, turnB);
   const afterBState = state;
 
@@ -99,84 +109,128 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
     retainFurnitureIds: ["bed-queen"],
     changedPreference: stageTurns[2]?.prompt ?? "",
   });
-  const turnC = compareKnownLayoutOptions(turnCInput, state);
+  const turnC = compareKnownLayoutOptions(turnCInput, state, queenLayout);
   state = applyToolResult(state, turnC);
-  const recoveryState = state;
-  const selectedLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
+  const turnCState = state;
+  const turnCLayout = turnC.feasibleOptions.find((option) => option.id === turnC.selectedOptionId) ?? null;
   const failureInput = createToolInputForTests({
     state,
     candidateFurnitureIds: ["bed-king", "desk-compact", "crib-standard"],
     retainFurnitureIds: ["desk-compact", "crib-standard"],
     changedPreference: stageTurns[3]?.prompt ?? "",
   });
-  const controlledFailure = compareKnownLayoutOptions(failureInput, state);
+  const controlledFailure = compareKnownLayoutOptions(failureInput, state, turnCLayout);
   const failureState = applyToolResult(state, controlledFailure);
-  const evidenceInput = recoveryOnly ? turnCInput : failureInput;
-  const evidenceResult = recoveryOnly ? turnC : controlledFailure;
-  const evidencePrompt = stageTurns[recoveryOnly ? 2 : 3]?.prompt ?? "";
+  const evidenceInput =
+    previewStep === "queen"
+      ? turnAInput
+      : previewStep === "conflict"
+        ? turnBInput
+        : previewStep === "request"
+          ? turnCInput
+          : failureInput;
+  const evidenceResult =
+    previewStep === "queen"
+      ? turnA
+      : previewStep === "conflict"
+        ? turnB
+        : previewStep === "request"
+          ? turnC
+          : controlledFailure;
+  const evidencePrompt =
+    stageTurns[
+      previewStep === "queen" ? 0 : previewStep === "conflict" ? 1 : previewStep === "request" ? 2 : 3
+    ]?.prompt ?? "";
+  const evidencePriorState =
+    previewStep === "queen"
+      ? initialState
+      : previewStep === "conflict"
+        ? queenState
+        : previewStep === "request"
+          ? afterBState
+          : turnCState;
+  const messages = [
+    {
+      id: "preview-system",
+      role: "system" as const,
+      text: "Verified built-in room loaded. Geometry remains application-owned.",
+    },
+    {
+      id: "preview-user-a",
+      role: "user" as const,
+      text: stageTurns[0]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-a",
+      role: "application" as const,
+      text: "Queen + rotated standard desk passes every locked deterministic check.",
+    },
+    {
+      id: "preview-user-b",
+      role: "user" as const,
+      text: stageTurns[1]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-b",
+      role: "application" as const,
+      text: "The King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation?",
+    },
+    {
+      id: "preview-user-c",
+      role: "user" as const,
+      text: stageTurns[2]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-c",
+      role: "application" as const,
+      text: "Queen + baby bed + rotated compact desk passes every locked deterministic check.",
+    },
+    {
+      id: "preview-user-failure",
+      role: "user" as const,
+      text: stageTurns[3]?.prompt ?? "",
+    },
+    {
+      id: "preview-app-failure",
+      role: "application" as const,
+      text: "No feasible known option. The prior accepted layout remains active. Exact rejected-option evidence is shown automatically; the view controls switch existing evidence without rerunning inference. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
+    },
+  ];
+  const messageCount =
+    previewStep === "queen"
+      ? 3
+      : previewStep === "conflict"
+        ? 5
+        : previewStep === "request"
+          ? 7
+          : messages.length;
 
   return {
     conversationGeneration,
     roomPlan,
-    state: recoveryOnly ? recoveryState : failureState,
+    state:
+      previewStep === "queen"
+        ? queenState
+        : previewStep === "conflict"
+          ? afterBState
+          : previewStep === "request"
+            ? turnCState
+            : failureState,
     readiness,
     audioReadiness,
     stageTurns,
-    completedStageTurnIds: recoveryOnly ? ["turn-a", "turn-b", "turn-c"] : stageTurns.map((turn) => turn.id),
+    completedStageTurnIds:
+      previewStep === "queen"
+        ? ["turn-a"]
+        : previewStep === "conflict"
+          ? ["turn-a", "turn-b"]
+          : previewStep === "request"
+            ? ["turn-a", "turn-b", "turn-c"]
+            : stageTurns.map((turn) => turn.id),
     lastInteraction: "turn",
-    selectedLayout,
+    selectedLayout: previewStep === "queen" || previewStep === "conflict" ? queenLayout : turnCLayout,
     lastToolResult: evidenceResult,
-    messages: [
-      {
-        id: "preview-system",
-        role: "system",
-        text: "Verified room plan loaded. Geometry remains application-owned.",
-      },
-      {
-        id: "preview-user-a",
-        role: "user",
-        text: stageTurns[0]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-a",
-        role: "application",
-        text: "Application evidence: Queen + rotated standard desk passes every locked deterministic check.",
-      },
-      {
-        id: "preview-user-b",
-        role: "user",
-        text: stageTurns[1]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-b",
-        role: "application",
-        text: "Application evidence: the King + desk option conflicts with closet access. Which preference may change: bed size, desk footprint or orientation, baby bed requirement?",
-      },
-      {
-        id: "preview-user-c",
-        role: "user",
-        text: stageTurns[2]?.prompt ?? "",
-      },
-      {
-        id: "preview-app-c",
-        role: "application",
-        text: "Application evidence: Queen + baby bed + rotated compact desk passes every locked deterministic check.",
-      },
-      ...(recoveryOnly
-        ? []
-        : [
-            {
-              id: "preview-user-failure",
-              role: "user" as const,
-              text: stageTurns[3]?.prompt ?? "",
-            },
-            {
-              id: "preview-app-failure",
-              role: "application" as const,
-              text: "Application evidence: no feasible known option. The preview shows one rejected option with only its own checks and conflicts; aggregate reasons across both alternatives remain labeled in Developer trace.",
-            },
-          ]),
-    ],
+    messages: messages.slice(0, messageCount),
     trace: [
       {
         id: "preview-runtime",
@@ -190,7 +244,7 @@ function buildPreview(conversationGeneration: number): BootstrapPayload {
         timestamp: new Date().toISOString(),
         kind: "model-tool-call",
         title: "Schema-guided model intent delta",
-        payload: preferredLayoutIntentDelta(recoveryOnly ? afterBState : recoveryState, evidencePrompt),
+        payload: preferredLayoutIntentDelta(evidencePriorState, evidencePrompt),
       },
       {
         id: "preview-validation",
@@ -226,7 +280,7 @@ function buildResetPreview(conversationGeneration: number): BootstrapPayload {
       {
         id: "preview-reset-system",
         role: "system",
-        text: "Conversation reset. Verified dimensions and locked room constraints remain loaded.",
+        text: "Conversation reset. The verified built-in room and locked constraints remain loaded.",
       },
     ],
     trace: [],

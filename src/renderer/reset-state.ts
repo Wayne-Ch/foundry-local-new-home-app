@@ -4,7 +4,7 @@ import type { BootstrapPayload, TraceEntry } from "../shared/contracts";
 
 export const DEFAULT_AUDIO_NOTICE = "Editable draft only; click Send to submit.";
 export const RESET_SYSTEM_MESSAGE =
-  "Conversation reset. Verified dimensions and locked room constraints remain loaded.";
+  "Conversation reset. The verified built-in room and locked constraints remain loaded.";
 
 export interface RendererTransientState<
   SpeechCorrection = unknown,

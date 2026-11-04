@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Foundry Local New Home Layout Demo - deterministic geometry with local model tool calling."
+      content="New Home App - verified built-in room planning with local model intent extraction and deterministic geometry."
     />
-    <title>Foundry Local New Home Layout Demo</title>
+    <title>New Home App</title>
   </head>
   <body>
     <div id="app">
@@ -19,7 +19,7 @@
           <div class="brand-mark" aria-hidden="true">FL</div>
           <div>
             <p class="eyebrow">Microsoft Ignite · Level 300</p>
-            <h1>Foundry Local New Home Layout Demo</h1>
+            <h1>New Home App</h1>
           </div>
         </div>
         <div class="runtime-strip">
@@ -51,16 +51,6 @@
           </button>
 
           <div id="messages" class="messages" aria-live="polite"></div>
-
-          <section id="recoveryActions" class="recovery-actions" hidden aria-live="polite">
-            <div>
-              <strong>Choose the changed preference</strong>
-              <span>Keep Queen; allow a compact desk; add a baby bed. Door, closet, window, and 250 mm clearance stay locked.</span>
-            </div>
-            <button id="recoveryPrimaryButton" class="button button-primary" type="button">
-              Run recovery choice
-            </button>
-          </section>
 
           <form id="promptForm" class="prompt-form">
             <div class="prompt-heading-row">
@@ -135,16 +125,41 @@
           <div class="panel-heading layout-heading">
             <div>
               <p class="eyebrow">Application-owned evidence</p>
-              <h2 id="layoutTitle">Verified room plan</h2>
+              <h2 id="layoutTitle">Verified built-in room plan</h2>
             </div>
             <div id="resultBadge" class="result-badge is-neutral">Waiting for a request</div>
           </div>
 
           <div class="layout-content">
             <fieldset
+              id="roomCard"
               class="room-card"
               aria-label="Interactive bedroom layout diagram. Accepted furniture can be adjusted with arrow keys."
             >
+              <div id="layoutViewActions" class="layout-view-actions" hidden>
+                <p
+                  id="layoutViewStatus"
+                  class="layout-view-status"
+                  role="status"
+                  aria-live="polite"
+                ></p>
+                <button
+                  id="showAcceptedLayoutButton"
+                  class="layout-view-button is-accepted-action"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  Show accepted layout
+                </button>
+                <button
+                  id="showRejectedLayoutButton"
+                  class="layout-view-button is-rejected"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  Inspect rejected option
+                </button>
+              </div>
               <svg
                 id="roomSvg"
                 class="room-svg"
@@ -164,7 +179,7 @@
                 <p id="verdictSummary">The model has not proposed a tool call yet.</p>
               </div>
 
-              <div class="evidence-card requirements-card">
+              <div id="requirementsCard" class="evidence-card requirements-card">
                 <p class="evidence-label">Requirements / Measurements</p>
                 <div id="requirementSummary" class="requirement-summary"></div>
                 <div id="measurementList" class="measurement-list"></div>

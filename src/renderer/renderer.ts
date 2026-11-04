@@ -19,6 +19,7 @@ import { clearanceRuleSet, furnitureCatalog } from "../domain/fixture";
 import { rectangleSeparation } from "../domain/geometry";
 import {
   evaluateManualPlacement,
+  MANUAL_PLACEMENT_GRID_MM,
   type ManualPlacementOutcome,
   type ManualPlacementRequest,
 } from "../domain/manual-placement";
@@ -33,6 +34,7 @@ import type {
   ResolvedPlacement,
   RuntimeReadiness,
 } from "../domain/types";
+import { nextPendingStageTurnIndex } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
   BootstrapPayload,
@@ -50,7 +52,11 @@ import {
   releaseMediaStream,
   shouldOfferWhisperFallback,
 } from "./audio-capture";
-import { createLayoutPresentation } from "./layout-presentation";
+import {
+  createLayoutPresentation,
+  defaultLayoutEvidenceView,
+  type LayoutEvidenceView,
+} from "./layout-presentation";
 import { RendererOperationBarrier } from "./operation-barrier";
 import {
   clientPointToRoomPoint,
@@ -86,7 +92,8 @@ import {
 import "./styles.css";
 
 const svgNamespace = "http://www.w3.org/2000/svg";
-const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+const previewParameters = new URLSearchParams(window.location.search);
+const previewMode = previewParameters.get("preview") === "1";
 const demoApi = window.demoApi ?? (previewMode ? createPreviewApi() : null);
 
 let viewState: BootstrapPayload;
@@ -112,6 +119,8 @@ let resetRecoveryMonitor: {
 } | null = null;
 let manualPreview: ManualPlacementOutcome | null = null;
 let manualPreviewOrigin: { readonly instanceId: string; readonly rect: Rectangle } | null = null;
+let layoutEvidenceView: LayoutEvidenceView = "accepted";
+let focusedPlacementInstanceId: string | null = null;
 let speechCorrection: SpeechSuggestionState | null = null;
 let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
 
@@ -119,6 +128,7 @@ interface PlacementDragState {
   readonly pointerId: number;
   readonly instanceId: string;
   readonly grabOffset: Point;
+  readonly originRect: Rectangle;
 }
 
 let placementDrag: PlacementDragState | null = null;
@@ -147,8 +157,6 @@ const traceToggle = requiredButton("traceToggle");
 const traceClose = requiredButton("traceClose");
 const resetButton = requiredButton("resetButton");
 const nextTurnButton = requiredButton("nextTurnButton");
-const recoveryActions = requiredElement("recoveryActions");
-const recoveryPrimaryButton = requiredButton("recoveryPrimaryButton");
 const messagesElement = requiredElement("messages");
 const promptForm = requiredForm("promptForm");
 const promptInput = requiredTextArea("promptInput");
@@ -157,10 +165,16 @@ const stageSteps = requiredElement("stageSteps");
 const turnCounter = requiredElement("turnCounter");
 const resultBadge = requiredElement("resultBadge");
 const layoutTitle = requiredElement("layoutTitle");
+const roomCard = requiredElement("roomCard");
 const layoutNotice = requiredElement("layoutNotice");
+const layoutViewActions = requiredElement("layoutViewActions");
+const layoutViewStatus = requiredElement("layoutViewStatus");
+const showAcceptedLayoutButton = requiredButton("showAcceptedLayoutButton");
+const showRejectedLayoutButton = requiredButton("showRejectedLayoutButton");
 const roomSvg = requiredSvg("roomSvg");
 const verdictTitle = requiredElement("verdictTitle");
 const verdictSummary = requiredElement("verdictSummary");
+const requirementsCard = requiredElement("requirementsCard");
 const requirementSummary = requiredElement("requirementSummary");
 const measurementList = requiredElement("measurementList");
 const manualPlacementCard = requiredElement("manualPlacementCard");
@@ -210,6 +224,7 @@ async function initialize(): Promise<void> {
   previewBanner.hidden = !previewMode;
   viewState = await demoApi.getBootstrap();
   latestToolResult = viewState.lastToolResult;
+  layoutEvidenceView = initialLayoutEvidenceView(latestToolResult);
   renderAll();
   demoApi.onProgress(renderProgress);
   demoApi.onAudioPartial(handleAudioPartial);
@@ -236,6 +251,14 @@ async function initialize(): Promise<void> {
       renderAudio();
     }
   }
+}
+
+function initialLayoutEvidenceView(result: LayoutToolResult | null): LayoutEvidenceView {
+  const requestedView = previewMode ? previewParameters.get("layoutView") : null;
+  if (requestedView === "accepted" || requestedView === "rejected") {
+    return requestedView;
+  }
+  return defaultLayoutEvidenceView(result);
 }
 
 prepareButton.addEventListener("click", async () => {
@@ -344,6 +367,7 @@ resetButton.addEventListener("click", async () => {
   resetRecoveryMonitor = null;
   viewState = createAuthoritativeResetBootstrap(viewState, conversationGeneration);
   latestToolResult = null;
+  layoutEvidenceView = "accepted";
   resetRendererTransientUi();
   renderAll();
   setBusy(true);
@@ -360,6 +384,7 @@ resetButton.addEventListener("click", async () => {
     }
     viewState = bootstrap;
     latestToolResult = bootstrap.lastToolResult;
+    layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
     resetRendererTransientUi();
     renderAll();
   } catch (error) {
@@ -374,6 +399,7 @@ resetButton.addEventListener("click", async () => {
       ) {
         viewState = bootstrap;
         latestToolResult = bootstrap.lastToolResult;
+        layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
         renderAll();
       }
     } catch {
@@ -400,13 +426,6 @@ nextTurnButton.addEventListener("click", () => {
   const turn = viewState.stageTurns[index];
   if (turn !== undefined) {
     void runTurn(turn.prompt, turn.id);
-  }
-});
-
-recoveryPrimaryButton.addEventListener("click", () => {
-  const recoveryTurn = viewState.stageTurns.find((turn) => turn.id === "turn-c");
-  if (recoveryTurn !== undefined) {
-    void runTurn(recoveryTurn.prompt, recoveryTurn.id);
   }
 });
 
@@ -478,6 +497,24 @@ manualRevertButton.addEventListener("click", () => {
   revertManualPreview();
 });
 
+showAcceptedLayoutButton.addEventListener("click", () => {
+  layoutEvidenceView = "accepted";
+  renderLayout();
+});
+
+showRejectedLayoutButton.addEventListener("click", () => {
+  layoutEvidenceView = "rejected";
+  renderLayout();
+});
+
+document.addEventListener("focusin", (event) => {
+  const target = event.target;
+  focusedPlacementInstanceId =
+    target instanceof Element
+      ? (target.closest<SVGElement>("[data-placement-id]")?.dataset.placementId ?? null)
+      : null;
+});
+
 roomSvg.addEventListener("pointermove", (event) => {
   updatePlacementDrag(event);
 });
@@ -526,6 +563,8 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
   const conversationGeneration = viewState.conversationGeneration;
+  releasePlacementDrag();
+  focusedPlacementInstanceId = null;
   manualPreview = null;
   manualPreviewOrigin = null;
   setBusy(true);
@@ -557,6 +596,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
     ) {
       viewState = bootstrap;
       latestToolResult = bootstrap.lastToolResult;
+      layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
       renderAll();
     }
   } finally {
@@ -568,6 +608,7 @@ async function runTurn(prompt: string, scriptedTurnId?: StageTurnId): Promise<vo
 
 function applyTurnResponse(response: RunTurnResponse): void {
   latestToolResult = response.toolResult;
+  layoutEvidenceView = defaultLayoutEvidenceView(response.toolResult);
   viewState = {
     ...viewState,
     state: response.state,
@@ -586,7 +627,6 @@ function renderAll(): void {
   renderAudio();
   renderStageSteps(viewState.stageTurns);
   renderMessages(viewState.messages);
-  renderRecoveryActions();
   renderLayout();
   renderSpeechSuggestion();
   renderTrace();
@@ -601,7 +641,7 @@ function renderAll(): void {
 }
 
 function nextStageTurnIndex(): number {
-  return viewState.stageTurns.findIndex((turn) => !viewState.completedStageTurnIds.includes(turn.id));
+  return nextPendingStageTurnIndex(viewState.stageTurns, viewState.completedStageTurnIds);
 }
 
 function renderRuntime(readiness: RuntimeReadiness): void {
@@ -773,20 +813,6 @@ function renderMessages(messages: readonly ConversationMessage[]): void {
   messagesElement.scrollTop = messagesElement.scrollHeight;
 }
 
-function renderRecoveryActions(): void {
-  const recoveryPending =
-    latestToolResult?.status === "no_feasible_option" &&
-    viewState.completedStageTurnIds.includes("turn-b") &&
-    !viewState.completedStageTurnIds.includes("turn-c");
-  recoveryActions.hidden = !recoveryPending;
-  recoveryPrimaryButton.disabled =
-    !recoveryPending ||
-    isBusy ||
-    isAudioBusy() ||
-    operationBarrier.operationsBlocked ||
-    !viewState.readiness.localInferenceReady;
-}
-
 function renderSpeechSuggestion(): void {
   speechSuggestionPanel.hidden = speechCorrection === null;
   if (speechCorrection === null) {
@@ -820,9 +846,8 @@ function resetRendererTransientUi(): void {
     manualPreviewOrigin,
     placementDrag,
   });
-  if (placementDrag !== null && roomSvg.hasPointerCapture(placementDrag.pointerId)) {
-    roomSvg.releasePointerCapture(placementDrag.pointerId);
-  }
+  releasePlacementDrag();
+  focusedPlacementInstanceId = null;
   promptInput.blur();
   promptInput.value = resetState.promptValue;
   liveTranscriptDraft = resetState.liveTranscriptDraft;
@@ -838,10 +863,12 @@ function resetRendererTransientUi(): void {
 }
 
 function renderLayout(): void {
-  const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout);
+  const base = createLayoutPresentation(latestToolResult, viewState.selectedLayout, layoutEvidenceView);
   let displayLayout = base.displayLayout;
-  let displayConflicts = base.conflicts;
-  let displayChecks = base.checks;
+  let evidenceLayout = base.evidenceLayout;
+  let roomConflicts = base.roomConflicts;
+  let evidenceConflicts = base.conflicts;
+  let evidenceChecks = base.checks;
   let badgeClass = base.resultBadgeClass;
   let badgeText = base.resultBadgeText;
   let title = base.layoutTitle;
@@ -853,8 +880,10 @@ function renderLayout(): void {
 
   if (manualPreview?.preview !== null && manualPreview?.preview !== undefined) {
     displayLayout = manualPreview.preview;
-    displayConflicts = manualPreview.preview.conflicts;
-    displayChecks = manualPreview.preview.checkedStates;
+    evidenceLayout = manualPreview.preview;
+    roomConflicts = manualPreview.preview.conflicts;
+    evidenceConflicts = manualPreview.preview.conflicts;
+    evidenceChecks = manualPreview.preview.checkedStates;
     badgeClass = manualPreview.accepted ? "result-badge is-success" : "result-badge is-error";
     badgeText = manualPreview.accepted ? "Valid manual preview" : "Rejected manual preview";
     title = `${manualPreview.preview.label} · ${manualPreview.accepted ? "ready to apply" : "rejected"}`;
@@ -867,8 +896,10 @@ function renderLayout(): void {
     displayConflictsLabel = "Manual preview conflicts";
   } else if (viewState.lastInteraction === "manual" && viewState.selectedLayout !== null) {
     displayLayout = viewState.selectedLayout;
-    displayConflicts = viewState.selectedLayout.conflicts;
-    displayChecks = viewState.selectedLayout.checkedStates;
+    evidenceLayout = viewState.selectedLayout;
+    roomConflicts = viewState.selectedLayout.conflicts;
+    evidenceConflicts = viewState.selectedLayout.conflicts;
+    evidenceChecks = viewState.selectedLayout.checkedStates;
     badgeClass = "result-badge is-success";
     badgeText = "Manual adjustment accepted";
     title = viewState.selectedLayout.label;
@@ -880,7 +911,52 @@ function renderLayout(): void {
     displayConflictsLabel = "Accepted manual conflicts";
   }
 
-  renderRoomSvg(displayLayout, displayConflicts, manualPreview !== null);
+  const layoutViewSwitchVisible =
+    manualPreview === null &&
+    viewState.lastInteraction === "turn" &&
+    base.canShowAcceptedLayout &&
+    base.canShowRejectedOption;
+  const showingRejectedResultPreview =
+    manualPreview === null && base.mode === "rejected_option" && base.activeView === "rejected";
+  layoutViewActions.hidden = !layoutViewSwitchVisible;
+  layoutViewActions.classList.toggle(
+    "is-rejected-preview",
+    layoutViewSwitchVisible && base.activeView === "rejected",
+  );
+  layoutViewActions.classList.toggle(
+    "is-accepted-preserved",
+    layoutViewSwitchVisible && base.activeView === "accepted",
+  );
+  if (layoutViewSwitchVisible && viewState.selectedLayout !== null) {
+    const acceptedIdentity = `${viewState.selectedLayout.label} (${viewState.selectedLayout.id})`;
+    layoutViewStatus.textContent =
+      base.activeView === "rejected"
+        ? `Rejected preview is displayed and is not accepted. Accepted layout preserved: ${acceptedIdentity}.`
+        : `Accepted layout preserved: ${acceptedIdentity}. The rejected preview remains available without rerunning inference.`;
+  } else {
+    layoutViewStatus.textContent = "";
+  }
+  showAcceptedLayoutButton.hidden = !layoutViewSwitchVisible || base.activeView !== "rejected";
+  showRejectedLayoutButton.hidden = !layoutViewSwitchVisible || base.activeView !== "accepted";
+  showAcceptedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
+  showRejectedLayoutButton.disabled = isBusy || operationBarrier.operationsBlocked;
+  showAcceptedLayoutButton.setAttribute(
+    "aria-pressed",
+    String(layoutViewSwitchVisible && base.activeView === "accepted"),
+  );
+  showRejectedLayoutButton.setAttribute(
+    "aria-pressed",
+    String(layoutViewSwitchVisible && base.activeView === "rejected"),
+  );
+
+  roomCard.setAttribute(
+    "aria-label",
+    showingRejectedResultPreview
+      ? "Rejected bedroom layout preview. Furniture is not accepted and cannot be adjusted."
+      : "Interactive accepted bedroom layout diagram. Accepted furniture can be adjusted with arrow keys.",
+  );
+  roomSvg.classList.toggle("is-rejected-preview", showingRejectedResultPreview);
+  renderRoomSvg(displayLayout, roomConflicts, manualPreview !== null);
   resultBadge.className = badgeClass;
   resultBadge.textContent = badgeText;
   layoutTitle.textContent = title;
@@ -889,10 +965,10 @@ function renderLayout(): void {
   verdictSummary.textContent = summary;
   checksLabel.textContent = displayChecksLabel;
   conflictsLabel.textContent = displayConflictsLabel;
-  renderRequirements(displayLayout);
+  renderRequirements(displayLayout, evidenceLayout);
   renderManualPlacement();
-  renderChecks(displayChecks);
-  renderConflicts(displayConflicts);
+  renderChecks(evidenceChecks);
+  renderConflicts(evidenceConflicts);
 }
 
 function renderRoomSvg(
@@ -1013,17 +1089,24 @@ function renderRoomSvg(
       "stroke-width": conflicted ? "34" : "22",
       opacity: isManualPreview ? "0.82" : "1",
     });
-    if (placementIsAdjustable(layout, placement)) {
+    const adjustable = placementIsAdjustable(layout, placement);
+    placementRect.classList.add("furniture-placement");
+    placementRect.setAttribute("data-rendered-placement-id", placement.instanceId);
+    placementRect.setAttribute("data-layout-status", layout?.status ?? "unknown");
+    placementRect.setAttribute("data-interactive", String(adjustable));
+    if (adjustable) {
       placementRect.classList.add("draggable-placement");
       if (placementDrag?.instanceId === placement.instanceId) {
         placementRect.classList.add("is-dragging");
       }
       placementRect.setAttribute("tabindex", "0");
+      placementRect.setAttribute("focusable", "true");
       placementRect.setAttribute("role", "button");
       placementRect.setAttribute("data-placement-id", placement.instanceId);
+      placementRect.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown ArrowLeft ArrowRight Enter Escape");
       placementRect.setAttribute(
         "aria-label",
-        `${placement.label}, draggable. Use arrow keys for ${50} millimetre adjustments.`,
+        `${placement.label}, draggable. Use arrow keys for ${MANUAL_PLACEMENT_GRID_MM} millimetre adjustments.`,
       );
       placementRect.addEventListener("pointerdown", (event) => {
         beginPlacementDrag(event, placement);
@@ -1053,6 +1136,7 @@ function renderRoomSvg(
   });
   depth.textContent = `${viewState.roomPlan.depthMm} mm`;
   roomSvg.append(depth);
+  focusPlacement(focusedPlacementInstanceId);
 }
 
 function renderSvgMeasurements(layout: EvaluatedLayoutOption | null): void {
@@ -1114,12 +1198,18 @@ function placementCenter(placement: ResolvedPlacement): Point {
   };
 }
 
-function renderRequirements(layout: EvaluatedLayoutOption | null): void {
+function renderRequirements(
+  layout: EvaluatedLayoutOption | null,
+  evidenceLayout: EvaluatedLayoutOption | null,
+): void {
+  requirementsCard.classList.toggle("is-rejected-evidence", evidenceLayout?.status === "rejected");
   requirementSummary.replaceChildren();
   const acceptedFurniture = viewState.state.activeFurnitureIds
     .map((id) => furnitureCatalog[id].label)
     .join(", ");
   const displayFurniture = layout?.placements.map((placement) => placement.label).join(", ") ?? "None";
+  const evidenceFurniture =
+    evidenceLayout?.placements.map((placement) => placement.label).join(", ") ?? "None";
   const closet = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "closet-access");
   const windowZone = viewState.roomPlan.reservedZones.find((zone) => zone.kind === "window-clearance");
   const requirements = [
@@ -1130,6 +1220,22 @@ function renderRequirements(layout: EvaluatedLayoutOption | null): void {
     `<strong>Accepted state:</strong> ${escapeHtml(acceptedFurniture || "No furniture accepted yet")}`,
     `<strong>${layout?.status === "rejected" ? "Preview" : "Displayed"} furniture:</strong> ${escapeHtml(displayFurniture)}`,
   ];
+  if (viewState.state.currentLayoutId !== null) {
+    requirements.push(
+      `<strong>Accepted provenance:</strong> ${escapeHtml(
+        viewState.state.currentLayoutSource?.replaceAll("-", " ") ?? "unknown source",
+      )} · ${escapeHtml(viewState.state.currentLayoutId)}`,
+    );
+  }
+  if (evidenceLayout?.status === "rejected") {
+    requirements.push(
+      `<strong>Rejected option:</strong> ${escapeHtml(evidenceLayout.label)} · ${escapeHtml(evidenceLayout.id)}`,
+      `<strong>Rejected option furniture:</strong> ${escapeHtml(evidenceFurniture)}`,
+      `<strong>Rejected provenance:</strong> deterministic ${escapeHtml(
+        evidenceLayout.placementSource.replaceAll("-", " "),
+      )}; not accepted`,
+    );
+  }
   const changedPreference =
     viewState.lastInteraction === "manual"
       ? viewState.state.lastChangedPreference
@@ -1145,18 +1251,20 @@ function renderRequirements(layout: EvaluatedLayoutOption | null): void {
   }
 
   measurementList.replaceChildren();
-  if (layout === null || layout.measurements.length === 0) {
+  const measurementLayout = evidenceLayout ?? layout;
+  if (measurementLayout === null || measurementLayout.measurements.length === 0) {
     const empty = document.createElement("div");
     empty.className = "measurement-item";
     empty.textContent = "No furniture-pair measurements yet.";
     measurementList.append(empty);
     return;
   }
-  for (const measurement of layout.measurements) {
+  for (const measurement of measurementLayout.measurements) {
     const item = document.createElement("div");
     item.className = `measurement-item ${measurement.passed ? "is-pass" : "is-fail"}`;
     const shortfall = Math.max(0, measurement.requiredDistanceMm - measurement.actualDistanceMm);
-    item.innerHTML = `<strong>${escapeHtml(measurement.labels[0])} ↔ ${escapeHtml(
+    const evidencePrefix = measurementLayout.status === "rejected" ? "Rejected evidence · " : "";
+    item.innerHTML = `<strong>${evidencePrefix}${escapeHtml(measurement.labels[0])} ↔ ${escapeHtml(
       measurement.labels[1],
     )}:</strong> ${measurement.actualDistanceMm} mm / required ${measurement.requiredDistanceMm} mm${
       shortfall > 0 ? ` · ${shortfall} mm short` : ""
@@ -1178,9 +1286,13 @@ function renderManualPlacement(): void {
       viewState.state.lastChangedPreference ?? "The accepted manual placement passes all locked checks.";
   } else if (viewState.selectedLayout === null) {
     manualPlacementStatus.textContent = "Accept a feasible layout before using direct manipulation.";
-  } else if (latestToolResult?.status === "no_feasible_option") {
+  } else if (latestToolResult?.status === "no_feasible_option" && layoutEvidenceView === "rejected") {
     manualPlacementStatus.textContent =
-      "The screen is showing a rejected option preview. Return to the accepted layout before dragging.";
+      'Rejected preview is displayed and cannot be edited or applied. Select "Show accepted layout" to return to the preserved active layout.';
+  } else if (latestToolResult?.status === "no_feasible_option") {
+    manualPlacementCard.classList.add("is-valid");
+    manualPlacementStatus.textContent =
+      "The accepted layout remains active after the rejected request. Drag it, or focus furniture and use the arrow keys.";
   } else {
     manualPlacementStatus.textContent =
       "Drag accepted furniture, or focus it and use the arrow keys. Movement snaps to a 50 mm grid.";
@@ -1203,13 +1315,10 @@ function placementIsAdjustable(layout: EvaluatedLayoutOption | null, placement: 
   }
   const displaysAcceptedLayout = layout.id === viewState.selectedLayout.id;
   const displaysManualPreview = manualPreview?.preview?.id === layout.id;
+  if (layout.status === "rejected" && !displaysManualPreview) {
+    return false;
+  }
   if (!displaysAcceptedLayout && !displaysManualPreview) {
-    return false;
-  }
-  if (latestToolResult?.status === "no_feasible_option" && !displaysManualPreview) {
-    return false;
-  }
-  if (manualPreview !== null && manualPreview.request.instanceId !== placement.instanceId) {
     return false;
   }
   return viewState.selectedLayout.placements.some(
@@ -1237,15 +1346,16 @@ function manualRequest(instanceId: string, origin: Point): ManualPlacementReques
   };
 }
 
-function evaluateManualPreview(request: ManualPlacementRequest, focusInstanceId?: string): void {
+function evaluateManualPreview(request: ManualPlacementRequest): void {
+  focusedPlacementInstanceId = request.instanceId;
   manualPreview = evaluateManualPlacement(currentDemoState(), viewState.selectedLayout, request);
   renderLayout();
-  if (focusInstanceId !== undefined) {
-    focusPlacement(focusInstanceId);
-  }
 }
 
-function focusPlacement(instanceId: string): void {
+function focusPlacement(instanceId: string | null): void {
+  if (instanceId === null) {
+    return;
+  }
   const placement = [...roomSvg.querySelectorAll<SVGRectElement>("[data-placement-id]")].find(
     (element) => element.dataset.placementId === instanceId,
   );
@@ -1264,10 +1374,11 @@ function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): 
     return;
   }
   event.preventDefault();
-  manualPreviewOrigin = {
-    instanceId: placement.instanceId,
-    rect: acceptedPlacement.rect,
-  };
+  focusedPlacementInstanceId = placement.instanceId;
+  if (event.currentTarget instanceof SVGElement) {
+    event.currentTarget.focus({ preventScroll: true });
+  }
+  releasePlacementDrag();
   placementDrag = {
     pointerId: event.pointerId,
     instanceId: placement.instanceId,
@@ -1275,6 +1386,7 @@ function beginPlacementDrag(event: PointerEvent, placement: ResolvedPlacement): 
       xMm: point.xMm - placement.rect.xMm,
       yMm: point.yMm - placement.rect.yMm,
     },
+    originRect: acceptedPlacement.rect,
   };
   roomSvg.setPointerCapture(event.pointerId);
   renderLayout();
@@ -1300,6 +1412,10 @@ function updatePlacementDrag(event: PointerEvent): void {
   );
   const request = manualRequest(drag.instanceId, origin);
   if (request !== null) {
+    manualPreviewOrigin = {
+      instanceId: drag.instanceId,
+      rect: drag.originRect,
+    };
     evaluateManualPreview(request);
   }
 }
@@ -1308,14 +1424,22 @@ function finishPlacementDrag(event: PointerEvent): void {
   if (placementDrag?.pointerId !== event.pointerId) {
     return;
   }
-  if (roomSvg.hasPointerCapture(event.pointerId)) {
-    roomSvg.releasePointerCapture(event.pointerId);
-  }
-  placementDrag = null;
+  releasePlacementDrag(event.pointerId);
   if (manualPreview === null) {
     manualPreviewOrigin = null;
   }
   renderLayout();
+}
+
+function releasePlacementDrag(pointerId?: number): void {
+  const drag = placementDrag;
+  if (drag === null || (pointerId !== undefined && drag.pointerId !== pointerId)) {
+    return;
+  }
+  if (roomSvg.hasPointerCapture(drag.pointerId)) {
+    roomSvg.releasePointerCapture(drag.pointerId);
+  }
+  placementDrag = null;
 }
 
 function pointerRoomPoint(event: PointerEvent): Point {
@@ -1364,7 +1488,8 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
     return;
   }
   event.preventDefault();
-  manualPreviewOrigin ??= {
+  focusedPlacementInstanceId = placement.instanceId;
+  manualPreviewOrigin = {
     instanceId: placement.instanceId,
     rect: acceptedPlacement.rect,
   };
@@ -1372,11 +1497,11 @@ function handlePlacementKey(event: KeyboardEvent, placement: ResolvedPlacement):
     placement.rect,
     event.key,
     viewState.roomPlan,
-    event.shiftKey ? 100 : 50,
+    MANUAL_PLACEMENT_GRID_MM,
   );
   const request = manualRequest(placement.instanceId, origin);
   if (request !== null) {
-    evaluateManualPreview(request, placement.instanceId);
+    evaluateManualPreview(request);
   }
 }
 
@@ -1419,7 +1544,7 @@ async function applyManualPreview(): Promise<void> {
 }
 
 function revertManualPreview(): void {
-  placementDrag = null;
+  releasePlacementDrag();
   manualPreview = null;
   manualPreviewOrigin = null;
   renderLayout();
@@ -1990,6 +2115,7 @@ async function monitorResetRecovery(conversationGeneration: number): Promise<voi
       }
       viewState = bootstrap;
       latestToolResult = bootstrap.lastToolResult;
+      layoutEvidenceView = defaultLayoutEvidenceView(bootstrap.lastToolResult);
       renderAll();
       if (
         bootstrap.readiness.status !== "recovering" &&

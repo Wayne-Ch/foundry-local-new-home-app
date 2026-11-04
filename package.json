@@ -1,8 +1,9 @@
 {
-  "name": "foundry-local-new-home-layout-demo",
+  "name": "foundry-local-new-home-app-standard",
+  "productName": "New Home App",
   "version": "0.1.0",
   "private": true,
-  "description": "Stage-ready Foundry Local demo for verified bedroom layout planning.",
+  "description": "New Home App with a verified built-in bedroom and fully local layout planning.",
   "main": "dist/main/main.mjs",
   "type": "module",
   "scripts": {
@@ -24,8 +25,10 @@
     "probe:microphone-permission": "npm run build && node scripts/probe-electron-microphone.mjs",
     "probe:reset": "npm run build && node scripts/probe-electron-reset.mjs",
     "probe:stream-owner": "npm run build && node scripts/probe-electron-stream-owner.mjs",
+    "probe:furniture-controls": "node scripts/probe-furniture-controls.mjs",
     "smoke:electron": "npm run build && node scripts/smoke-electron.mjs",
     "capture:ui": "npm run build && node scripts/capture-ui.mjs",
+    "setup:native": "node node_modules/electron/install.js && npm rebuild esbuild foundry-local-sdk",
     "start": "npm run build && electron .",
     "start:built": "electron ."
   },
@@ -36,7 +39,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@types/node": "24.19.2",
-    "electron": "42.3.3",
+    "electron": "42.11.18",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
@@ -46,6 +49,6 @@
   "allowScripts": {
     "esbuild@0.28.2": true,
     "foundry-local-sdk@2.2.1": true,
-    "electron@42.3.3": true
+    "electron@42.11.18": true
   }
 }

@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { applyToolResult, createInitialDemoState } from "../src/domain/demo-state";
 import { expandCandidateFurnitureIds } from "../src/domain/tool-contract";
-import type { DemoState, FurnitureId, LayoutToolResult } from "../src/domain/types";
+import type { DemoState, EvaluatedLayoutOption, FurnitureId, LayoutToolResult } from "../src/domain/types";
 import { FoundryLayoutService } from "../src/foundry/foundry-service";
 import { stageTurns } from "../src/foundry/prompt";
 import { VALIDATED_EXECUTION_PROVIDER, VALIDATED_MODEL_ID } from "../src/foundry/runtime-config";
@@ -35,11 +35,21 @@ async function runAndCommit(
   prompt: string,
   expectedFurniture: readonly FurnitureId[],
   expectedStatus: LayoutToolResult["status"],
-): Promise<{ readonly state: DemoState; readonly evidence: TurnEvidence }> {
+  currentAcceptedLayout: EvaluatedLayoutOption | null = null,
+): Promise<{
+  readonly state: DemoState;
+  readonly selectedLayout: EvaluatedLayoutOption | null;
+  readonly evidence: TurnEvidence;
+}> {
   const started = performance.now();
-  const outcome = await service.runTurn(prompt, state, (_phase, detail) => {
-    process.stdout.write(`\r${label}: ${detail.padEnd(96).slice(0, 96)}`);
-  });
+  const outcome = await service.runTurn(
+    prompt,
+    state,
+    (_phase, detail) => {
+      process.stdout.write(`\r${label}: ${detail.padEnd(96).slice(0, 96)}`);
+    },
+    currentAcceptedLayout,
+  );
   process.stdout.write("\n");
   assertSet(
     expandCandidateFurnitureIds(outcome.validatedInput.candidateFurnitureIds),
@@ -52,6 +62,12 @@ async function runAndCommit(
 
   return {
     state: applyToolResult(state, outcome.toolResult),
+    selectedLayout:
+      outcome.toolResult.status === "feasible"
+        ? (outcome.toolResult.feasibleOptions.find(
+            (option) => option.id === outcome.toolResult.selectedOptionId,
+          ) ?? currentAcceptedLayout)
+        : currentAcceptedLayout,
     evidence: {
       label,
       prompt,
@@ -72,6 +88,7 @@ async function runAndCommit(
 
 const service = new FoundryLayoutService();
 let state = createInitialDemoState();
+let selectedLayout: EvaluatedLayoutOption | null = null;
 const turns: TurnEvidence[] = [];
 
 try {
@@ -107,6 +124,7 @@ try {
     "feasible",
   );
   state = turnA.state;
+  selectedLayout = turnA.selectedLayout;
   turns.push(turnA.evidence);
   assert.equal(turnA.evidence.selectedOptionId, "queen-desk-standard-v1");
 
@@ -117,14 +135,20 @@ try {
     stageTurns[1]?.prompt ?? "",
     ["bed-king", "desk-standard"],
     "no_feasible_option",
+    selectedLayout,
   );
   state = turnB.state;
+  selectedLayout = turnB.selectedLayout;
   turns.push(turnB.evidence);
   assert.ok(
     turnB.evidence.conflicts.some((conflict) => conflict.toLowerCase().includes("closet")),
     "Turn B must surface the deterministic closet conflict.",
   );
   assert.ok(turnB.evidence.assistantText.includes("?"), "Turn B must ask which preference may change.");
+  assert.ok(
+    turnB.evidence.assistantText.includes("prior accepted layout remains active"),
+    "Turn B must report that A remains accepted.",
+  );
 
   const turnC = await runAndCommit(
     service,
@@ -133,8 +157,10 @@ try {
     stageTurns[2]?.prompt ?? "",
     ["bed-queen", "desk-compact", "crib-standard"],
     "feasible",
+    selectedLayout,
   );
   state = turnC.state;
+  selectedLayout = turnC.selectedLayout;
   turns.push(turnC.evidence);
   assert.equal(turnC.evidence.selectedOptionId, "queen-crib-compact-v1");
 
@@ -145,8 +171,10 @@ try {
     stageTurns[3]?.prompt ?? "",
     ["bed-king", "desk-compact", "crib-standard"],
     "no_feasible_option",
+    selectedLayout,
   );
   state = failureTurn.state;
+  selectedLayout = failureTurn.selectedLayout;
   turns.push(failureTurn.evidence);
   assert.ok(failureTurn.evidence.conflicts.length > 0);
   assert.ok(failureTurn.evidence.evidenceOptionId);
@@ -161,6 +189,10 @@ try {
   assert.ok(
     failureTurn.evidence.assistantText.includes("?"),
     "Controlled failure must ask which preference may change.",
+  );
+  assert.ok(
+    failureTurn.evidence.assistantText.includes("prior accepted layout remains active"),
+    "Controlled failure must report that C remains accepted.",
   );
 
   const correctionPrompt =

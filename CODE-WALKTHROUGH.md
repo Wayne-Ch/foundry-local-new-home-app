@@ -179,7 +179,7 @@ Message:
 
 Show only:
 
-- explicit A/B/recovery/E story plus baby-bed alias turns;
+- explicit linear A/B/C/D/E story plus baby-bed alias turns;
 - expected furniture IDs;
 - closet conflict assertion;
 - no-feasible assertion;
