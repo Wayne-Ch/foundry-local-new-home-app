@@ -12,12 +12,9 @@ Reset lifecycle while adding these Enhanced-only capabilities:
 - imported-room A/B/C/D/E planning with door, window, closet, and clearance constraints;
 - an explicit **Use default room** fallback that is never reported as a successful import.
 
-> [!IMPORTANT]
-> First model and execution-provider preparation can take several minutes and requires substantial
-> downloads and disk allocation for the layout model, WebGPU provider, floor-plan VLM, and optional
-> voice models. Remain online, keep Enhanced New Home App open, and wait for each required green
-> ready state before continuing. After the required models and providers are prepared, subsequent
-> demo actions may run offline.
+First preparation can take several minutes while model and execution-provider assets are
+downloaded. Stay online and keep Enhanced New Home App open until the required local setup is ready;
+later demo actions can run offline.
 
 ![Stage UI](docs/screenshots/stage-ui.png)
 
@@ -214,17 +211,30 @@ native function-call marker.
 
 ## Install and run
 
-Prerequisites:
+### Requirements
 
-- This app release was validated only on Windows 11 x64 with an AMD Radeon 860M using
-  `WebGPUExecutionProvider`. Foundry Local v2.2.1 itself supports additional platforms and
-  hardware, but Enhanced New Home App makes no equivalent validation claim for other Windows
-  hardware, Windows Arm64, Linux, macOS, or other execution providers.
-- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
-  supported. The validated machine used Node `26.13.0`.
-- Supported npm minimum: `>=11.18.0`. The package manager pin and validated environment use npm
-  `11.20.0`; the minimum is required for `npm install-scripts`.
-- Network access and sufficient disk space for first exact-model/EP preparation.
+- Windows 11 x64
+- Git
+- A WebGPU-capable graphics adapter and current driver; the layout model uses
+  `WebGPUExecutionProvider`
+- The floor-plan VLM remains on CPU / `CPUExecutionProvider`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
+- Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
+- Network access for installation and first exact-model/execution-provider preparation
+- Several GB of free disk space for dependencies and model assets
+- No minimum RAM value has been established by testing
+- A microphone is needed only for voice-path testing; typed and scripted flows remain available
+  without one
+
+### Validated configuration
+
+Formal app validation and current E2E evidence for this release were executed with Node
+`26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon
+860M identifies the evidence machine; it is not a minimum or required adapter. The product
+requirement is a WebGPU-capable graphics adapter/driver for the current layout model configuration;
+the floor-plan VLM remains on CPU. Foundry Local v2.2.1's broader public platform and hardware
+support is separate, and other app environments must not be presented as having equivalent evidence
+until tested to the same depth.
 
 ```powershell
 node --version
@@ -443,7 +453,7 @@ As verified on October 28, 2026:
 - The validation machine still had CLI `0.11.0`; this app does not invoke or depend on the CLI.
 - Public v2.2.1 platforms: Windows, Linux, and Apple-silicon macOS.
 
-## Validated Windows machine
+## Currently validated configuration
 
 | Item | Value |
 |---|---|
@@ -511,6 +521,7 @@ See [PLAYTEST.md](PLAYTEST.md), [ARCHITECTURE.md](ARCHITECTURE.md),
 - The committed deterministic WAV validates ASR, not real microphone permission or human speech.
 - The internal catalog ID remains `crib-standard`; audience-facing prompts and labels use
   **baby bed** for speech reliability.
-- Only the validated Windows 11 x64 AMD Radeon/WebGPU configuration is release-qualified here.
-  Other Windows hardware, Windows Arm64, Linux, macOS, and other execution providers remain outside
-  this app validation scope even where Foundry Local supports them.
+- Documented release qualification and current E2E evidence cover the currently validated Windows
+  11 x64 AMD Radeon/WebGPU configuration. This does not make that hardware the app's only intended
+  target. Other app environments have not yet been validated to the same depth, even where Foundry
+  Local supports them, and must not be presented as having equivalent evidence until tested.

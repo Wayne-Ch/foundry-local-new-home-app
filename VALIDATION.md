@@ -211,8 +211,8 @@ Final command outputs from the October 31 independent revision run:
 
 ## November 3 neutral-prompt follow-up
 
-The final source revision was validated on the remote Linux host with the Windows-only VLM gate
-left for the target laptop:
+The final source revision was validated on the remote Linux host for the checks below. The VLM gate
+for the currently validated Windows configuration remained a separate app-E2E requirement:
 
 | Command / check | Result |
 |---|---|
