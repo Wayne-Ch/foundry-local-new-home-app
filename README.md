@@ -85,9 +85,10 @@ Arm64, Linux, macOS, or other execution providers.
 Requirements for the validated flow:
 
 - Windows 11 x64
-- Node.js `>=22.12.0`; the validated machine used Node `26.13.0`
-- npm `>=11.18.0`; the validated machine used npm `11.20.0`, and this minimum is required for
-  `npm install-scripts`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
+  supported. The validated machine used Node `26.13.0`.
+- Supported npm minimum: `>=11.18.0`. The package manager pin and validated environment use npm
+  `11.20.0`; the minimum is required for `npm install-scripts`.
 - AMD Radeon 860M with a current WebGPU-capable driver
 - Network and sufficient disk space for first model and execution-provider preparation
 
@@ -99,14 +100,24 @@ Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
+npm run check:release-contract
 npm run build
 npm run start:built
 ```
 
-On first use, select **Prepare offline** to download and register the exact model and WebGPU
-execution provider. If preparation is already complete but the model is not loaded, select
-**Load local model**. Keep the app open and online until the green **Local model ready** state
-appears.
+The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
+does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+
+On a cold run, select **Prepare offline**. If the operation finishes without reaching READY and the
+button now says **Load local model**, select that exact control. Keep the app open and online until
+the green **Local model ready** state appears.
 
 Follow [PLAYTEST.md](PLAYTEST.md) from top to bottom for the complete built-in-room A through E
 story, all-furniture manual controls, typed and voice input, Reset, and clean shutdown. No
@@ -118,6 +129,7 @@ supported route.
 ```powershell
 npm run lint
 npm run typecheck
+npm run check:release-contract
 npm test
 npm run build
 npm audit
@@ -136,7 +148,10 @@ npm run capture:ui
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
+| A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
+| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
+| The control shows **Local model ready** | The runtime is already loaded and READY. Do not select the disabled control; continue with the playtest. |
 
 Use `PLAYTEST.md` for the strict operator walkthrough and `DEMO-RUNBOOK.md` for live delivery.

@@ -5,13 +5,13 @@
   "private": true,
   "packageManager": "npm@11.20.0",
   "engines": {
-    "node": ">=22.12.0",
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0",
     "npm": ">=11.18.0"
   },
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": ">=22.12.0",
+      "version": "^22.12.0 || ^24.0.0 || >=26.0.0",
       "onFail": "error"
     },
     "packageManager": {
@@ -30,6 +30,7 @@
   "type": "module",
   "scripts": {
     "clean": "node scripts/clean.mjs",
+    "check:release-contract": "node scripts/check-release-contract.mjs",
     "build:main": "esbuild src/main/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/main/main.mjs --external:electron --external:foundry-local-sdk --sourcemap",
     "build:preload": "esbuild src/preload/preload.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/preload/preload.cjs --external:electron --sourcemap",
     "build:renderer": "vite build",
@@ -37,7 +38,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "vitest run",
+    "test": "npm run check:release-contract && vitest run",
     "test:watch": "vitest",
     "test:integration": "tsx scripts/run-foundry-integration.ts",
     "test:audio-integration": "tsx scripts/run-audio-integration.ts",
@@ -63,6 +64,7 @@
     "@types/node": "24.19.2",
     "electron": "42.11.18",
     "esbuild": "0.28.2",
+    "semver": "7.8.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vite": "8.3.4",

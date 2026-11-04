@@ -17,8 +17,10 @@ Open PowerShell in the parent folder where `new-home-app` should be created:
 
 Required toolchain:
 
-- Node.js `>=22.12.0`; validated with Node `26.13.0`
-- npm `>=11.18.0`; validated with npm `11.20.0`, and required for `npm install-scripts`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
+  supported. Validated with Node `26.13.0`.
+- Supported npm minimum: `>=11.18.0`. The package manager pin and validation use npm `11.20.0`;
+  the minimum is required for `npm install-scripts`.
 
 ```powershell
 node --version
@@ -28,6 +30,7 @@ Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
+npm run check:release-contract
 npm run build
 npm run start:built
 ```
@@ -37,13 +40,25 @@ temporary files.
 
 ## Prepare the exact local model
 
+The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
+does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+
 1. **Action:** Confirm the window, page heading, and package product are **New Home App** and the
    verified built-in bedroom is already active.
    **Expected:** No setup, room-selection, or floor-plan import screen appears.
    **Stop if:** The title differs, the room is absent, or an intake screen appears.
 
-2. **Action:** Select **Prepare offline** when the exact model or execution provider is not prepared,
-   or **Load local model** when they are prepared but not loaded. Keep the app open and online.
+2. **Action:** Follow the table using the exact visible control. On a cold cache, select
+   **Prepare offline**. When the model is already cached but the runtime is not READY - including
+   product-specific WebGPU provider registration - select **Load local model**. Keep the app open
+   and online.
    **Expected:** The green badge reaches **Local model ready** and identifies
    `qwen3-0.6b-generic-gpu:2` with `WebGPUExecutionProvider`; Developer trace reports no external
    endpoint.
@@ -140,8 +155,11 @@ transcribe)**, selecting it is an explicit fallback check. It must never activat
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
+| A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
+| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
+| The control shows **Local model ready** | The runtime is loaded and READY. Do not select the disabled control; continue to A. |
 
 ## Clean shutdown
 

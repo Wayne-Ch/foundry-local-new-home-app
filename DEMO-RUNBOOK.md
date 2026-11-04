@@ -3,13 +3,19 @@
 ## Before the session
 
 1. Open PowerShell.
-2. From the parent folder containing the clone, run:
+2. Confirm the supported toolchain. Node.js must match
+   `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported. npm must be
+   `>=11.18.0`. The validated environment is Node `26.13.0` with npm `11.20.0`.
+3. From the parent folder containing the clone, run:
 
    ```powershell
+   node --version
+   npm --version
    Set-Location -LiteralPath '.\new-home-app'
    npm ci --no-audit --no-fund
    npm install-scripts approve electron esbuild foundry-local-sdk
    npm run setup:native
+   npm run check:release-contract
    npm run lint
    npm run typecheck
    npm test
@@ -25,19 +31,33 @@
    npm run capture:ui
    ```
 
-3. Confirm `docs\screenshots\stage-ui.png` was refreshed.
-4. Launch:
+4. Confirm `docs\screenshots\stage-ui.png` was refreshed.
+5. Launch:
 
    ```powershell
    npm run start:built
    ```
 
-5. Confirm the title is **New Home App**, the verified room is already visible, and the runtime strip
+6. Confirm the title is **New Home App**, the verified room is already visible, and the runtime strip
    identifies `qwen3-0.6b-generic-gpu:2` with WebGPU.
 
 First model and execution-provider preparation can take several minutes and requires a substantial
 download and disk allocation. Remain online, keep New Home App open, and wait for the green
 **Local model ready** state before presenting. Subsequent demo actions may run offline.
+
+The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
+does not select the wording:
+
+| Normal setup state | `modelCached` | Exact control | Operator action |
+|---|---:|---|---|
+| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
+| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
+| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+
+On a cold cache, select **Prepare offline**. If the app is still not READY and the control changes
+to **Load local model**, select it. A fresh product root backed by a warm shared cache starts at
+**Load local model**, including when product-specific WebGPU registration remains.
 
 Stop before presenting if any command fails, the product title differs, the built-in room is not
 active, or another product's profile/log path is shown.
@@ -115,3 +135,12 @@ or the app reports any external endpoint use.
 Set-Location -LiteralPath '.\new-home-app'
 npm run start:built
 ```
+
+## Setup troubleshooting
+
+| Symptom | Action |
+|---|---|
+| npm rejects the runtime before install or a script run | Use Node.js `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are excluded; the validated pair is Node `26.13.0` with npm `11.20.0`. |
+| A cold empty cache shows **Prepare offline** | Select it while online. Do not expect **Load local model** until `modelCached` becomes `true`. |
+| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | Select it. This exact label is correct whenever `modelCached=true` and the runtime is not READY. |
+| The control shows **Local model ready** | Do not select it. Continue only after confirming the green ready badge and exact model/provider identity. |
