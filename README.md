@@ -1,11 +1,11 @@
 # New Home App
 
-New Home App is the standard Windows Electron application for local furniture-planning requests in
-one verified built-in bedroom. It combines local intent extraction with deterministic room
-geometry and starts with the room already active.
+New Home App is a Windows Electron application for planning furniture in one verified built-in
+bedroom. It uses a local model to understand each request, checks layouts against fixed room
+dimensions and clearance rules, and opens with the room ready to use.
 
-Enhanced New Home App on branch `enhanced-new-home-app` extends this standard flow with
-exact-fixture floor-plan intake, local image analysis, and an explicit default-room fallback.
+Enhanced New Home App on branch `enhanced-new-home-app` extends this app with intake and local
+analysis of the included sample floor plan, and an explicit fallback to the built-in room.
 
 ## Product flow
 
@@ -14,12 +14,12 @@ exact-fixture floor-plan intake, local image analysis, and an explicit default-r
 | A | Queen bed + standard desk | Accepted |
 | B | Replace Queen with King | Rejected preview appears automatically; A remains accepted |
 | C | Queen bed + desk + baby bed; compact desk allowed | Accepted |
-| D | Drag or use arrow keys on accepted furniture | 50 mm preview with Apply/Revert; no model request |
-| E | Replace Queen with King while retaining compact desk and baby bed | Rejected preview appears automatically; C remains accepted |
+| D | Drag or use arrow keys on accepted furniture | 50 mm preview with Apply/Revert; no new conversation turn |
+| E | Replace Queen with King while retaining compact desk and baby bed | Rejected preview appears automatically; the accepted C/D state remains accepted |
 
-**Show accepted layout** and **Inspect rejected option** switch between already-computed accepted
-and rejected results. Accepted furniture supports pointer and keyboard adjustment; rejected
-furniture remains read-only.
+**Show accepted layout** and **Inspect rejected option** switch between the accepted layout and
+rejected preview without rerunning the request. Accepted furniture supports pointer and keyboard
+adjustment; rejected furniture remains read-only.
 
 ## Exact local models
 
@@ -38,16 +38,10 @@ microphone.
 - Git for Windows.
 - Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported.
 - npm `>=11.18.0`, required for `npm install-scripts`.
-- Internet access for installation and first model/execution-provider preparation.
+- Internet access for installation and first local model preparation.
 - Several GB of free disk space for dependencies and model assets.
 - A WebGPU-capable graphics adapter with a current driver.
-- An optional microphone for voice-path testing.
-
-## Tested configuration
-
-This guide was tested with Node `26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon
-860M and 64 GB RAM. The layout model requires a WebGPU-capable graphics adapter with a current
-driver.
+- An optional microphone for voice testing.
 
 ## Fresh clone, install, and launch
 
@@ -65,10 +59,8 @@ First preparation may download uncached assets. Stay online, select the visible 
 or **Load local model** control, and keep New Home App open until the green **Local model ready**
 state appears. Later app actions can run offline.
 
-A **Cold, empty shared model cache** shows **Prepare offline**. A
-**Warm shared cache with a fresh product root** or
-**Model cached; product-specific WebGPU provider registration still needed** shows
-**Load local model**. The **Loaded READY state** shows **Local model ready**.
+**Prepare offline** downloads missing assets; **Load local model** loads assets that are already
+cached. Continue when the control changes to **Local model ready**.
 
 Follow [PLAYTEST.md](PLAYTEST.md) from top to bottom for the complete A through E flow, typed and
 voice input, Reset, and clean shutdown.
@@ -80,11 +72,11 @@ voice input, Reset, and clean shutdown.
 | npm rejects the Node.js or npm version | Install a supported Node.js version and npm `>=11.18.0`, then confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | Upgrade npm, rerun `npm ci --no-audit --no-fund`, then approve Electron, esbuild, and Foundry Local SDK. |
 | **Prepare offline** or **Load local model** does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Local model ready**. |
-| Voice input is unavailable | Use typed input, or retry Nemotron preparation and use the explicit Whisper Tiny fallback only when its control is visible. |
+| Voice input is unavailable | Use typed input, or select **Prepare Nemotron live** again. Use **Use Whisper Tiny fallback (record then transcribe)** only if that control appears. |
 
 ## Current limitations
 
-- The standard app uses one verified built-in bedroom and has no room-import flow.
+- The app uses one verified built-in bedroom and has no room-import flow.
 - The layout model requires WebGPU.
 - Voice input is English only.
 - The app evaluates the guided furniture options rather than arbitrary architectural layouts.
