@@ -1,4 +1,4 @@
-# Validation record
+# Enhanced New Home App validation record
 
 **Date:** November 3, 2026
 
@@ -64,12 +64,12 @@ recovery can re-enable setup controls only for the same reset generation, and st
 payloads are rejected. Conversation controls remain disabled until a room is explicitly activated.
 Repeated Reset and a subsequent recording use a fresh ownership lease after explicit room selection.
 
-The optional enhanced branch preserves the default-room path and adds one experimental image
+Enhanced New Home App preserves the New Home App default-room path and adds one exact image
 fixture. The canonical source is the Wikimedia/NARA record
 [`400 Family Housing Units 2 Bedroom Unit Typical Floor Plans, July 24, 1989`](https://commons.wikimedia.org/wiki/File:400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans,_July_24,_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff),
 NARA ID `167060897`, DPLA ID `c7a8b82ce8562d0a20b33b02d2f5f6fd`. Commons marks it
 `PD-US` with no required attribution and an explicit territorial caveat outside the United States.
-The fixture remains private unless legal review approves wider distribution. The committed
+Downstream users must assess rights in their territory. The committed
 derivative is a faithful crop from the actual 3840px preview, resized/contrasted/sharpened only; full
 recipe and hashes are in `docs/asset-provenance/sample-master-bedroom.md`.
 

@@ -1,36 +1,28 @@
-# Enhanced New Home playtest guide
+# Enhanced New Home App playtest
 
-Use this guide for the
-[`feature/enhanced-new-home`](https://github.com/Wayne-Ch/foundry-local-new-home-demo/tree/feature/enhanced-new-home)
-branch. **`main` is not the Enhanced New Home flow.**
+Enhanced New Home App extends
+[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-demo/tree/feature/new-home-ux-parity)
+with exact-fixture image preview, local VLM topology analysis, imported-room planning, and an
+explicit default-room fallback.
 
-This is the top-to-bottom first-time tester route. Complete the guided flow in order; do not skip
-from C to E.
+This is the complete first-time tester route for the validated Windows 11 x64 AMD Radeon/WebGPU
+configuration. Foundry Local supports more platforms and hardware, but Enhanced New Home App has
+not been validated equivalently on other Windows hardware, Windows Arm64, Linux, macOS, or another
+execution provider. Complete the guided flow in order; do not skip from C to E.
 
-## Launch and establish a fresh state
+> [!IMPORTANT]
+> First model and execution-provider preparation can take several minutes and requires substantial
+> downloads and disk allocation. Remain online, keep Enhanced New Home App open, and wait for each
+> required green ready state before continuing. After the required models and providers are
+> prepared, subsequent demo actions may run offline.
 
-### If the app is already open
+## Fresh clone, install, build, and launch
 
-Keep the current Electron window open. Select **Reset**, wait for **Choose a room to begin** and
-**Room required**, confirm that the room canvas has no walls, reserved zones, or furniture, and then
-start at Step 1 below. Rebuild or relaunch only if that fresh-state checkpoint fails.
-
-### If the app is not open
-
-From an existing checkout:
-
-```powershell
-git fetch origin
-git switch feature/enhanced-new-home
-git pull --ff-only origin feature/enhanced-new-home
-git branch --show-current
-```
-
-The final command must print `feature/enhanced-new-home`.
-
-For a first launch or a checkout whose dependencies changed:
+Open PowerShell in the parent folder where `enhanced-new-home-app` should be created:
 
 ```powershell
+git clone --branch feature/enhanced-new-home --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git enhanced-new-home-app
+Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
@@ -38,15 +30,10 @@ npm run build
 npm run start:built
 ```
 
-For an unchanged checkout that was already built:
-
-```powershell
-npm run start:built
-```
-
-After launch, select **Reset** if any earlier room, conversation, evidence, or manual preview is
-visible. The fresh state must show **Choose a room to begin**, **Room required**, **Load sample floor
-plan**, **Choose exact fixture copy**, **Analyze layout**, and **Use default room**. Conversation and
+Do not switch branches or reuse another checkout's `node_modules`, Electron profile, app data, or
+temporary files. The window and page heading must say **Enhanced New Home App**. The fresh state
+must show **Choose a room to begin**, **Room required**, **Load sample floor plan**,
+**Choose exact fixture copy**, **Analyze layout**, and **Use default room**. Conversation and
 recording actions remain unavailable until a room is activated.
 
 ## Quick guided playtest
@@ -106,7 +93,14 @@ recording actions remain unavailable until a room is activated.
     - **Expected:** The app returns to **Choose a room to begin** and **Room required**; floor-plan preview and geometry, accepted/rejected evidence, prompts, transcript state, and manual previews clear. The stable layout model may remain ready, but no room is active.
     - **Stop if:** Any room geometry, fixture preview, furniture, accepted/rejected evidence, pending manual preview, or enabled room conversation remains.
 
-11. **Shut down cleanly**
+11. **Exercise the explicit default-room boundary**
+    - **Action:** Select **Use default room**.
+    - **Expected:** The original verified built-in bedroom becomes active without VLM analysis. Developer trace identifies the default-room source; no imported-room or successful floor-plan-analysis claim appears.
+    - **Stop if:** The fixture preview or imported NARA geometry returns, a VLM request starts, or default geometry is labeled as an imported result.
+    - **Action:** Select **Reset** again.
+    - **Expected:** The app returns to the fresh no-room intake state.
+
+12. **Shut down cleanly**
     - **Action:** Close the Electron window and wait for `npm run start:built` to return to the PowerShell prompt.
     - **Expected:** The window closes, active sessions and owned resources are disposed, and the launch command exits without a cleanup error.
     - **Stop if:** The launch command does not return, a cleanup error is reported, or a recording/import operation remains visibly active during close.
@@ -136,9 +130,9 @@ or a renamed byte-for-byte copy:
 Modified, re-encoded, or arbitrary drawings must reject before canonical geometry is activated.
 This is not general floor-plan or CAD support.
 
-The optional fixture is derived from a NARA-held U.S. federal record. Wikimedia Commons marks the
-source `PD-US`, but public-domain status can differ outside the United States. Keep the fixture in
-the private demo unless legal review approves wider distribution. See the
+The fixture is derived from a NARA-held U.S. federal record. Wikimedia Commons marks the source
+`PD-US`, but public-domain status can differ outside the United States. Downstream users must assess
+rights in their territory. See the
 [full provenance record](docs/asset-provenance/sample-master-bedroom.md).
 
 ## Optional voice check
@@ -159,7 +153,7 @@ Run this only after the main linear flow:
 
 | Symptom | Action |
 |---|---|
-| Wrong UI or an old room is visible | Confirm `git branch --show-current` is `feature/enhanced-new-home`, select **Reset**, and relaunch only if the no-room checkpoint still fails. |
+| Wrong UI or an old room is visible | Confirm the package and window title are **Enhanced New Home App**, select **Reset**, and relaunch only if the no-room checkpoint still fails. |
 | Layout model will not prepare | Connect for first preparation, clear unintended `FOUNDRY_MODEL_ALIAS`, `FOUNDRY_MODEL_ID`, or `FOUNDRY_EXECUTION_PROVIDER` variables, then select **Retry local setup**. Use `npm run probe:foundry` for a focused runtime check. |
 | Floor-plan analysis rejects | Use only the committed PNG or a byte-identical copy. Read `floorPlanVision.attempts[].rawOutput` in **Developer trace**. Retry **Analyze layout** or explicitly select **Use default room**; never relabel fallback geometry as imported geometry. |
 | Drag or Arrow keys do nothing | Confirm **Show accepted layout** is active, the app is not busy, and a feasible accepted layout is displayed. |
@@ -172,7 +166,7 @@ Run this only after the main linear flow:
 
 Record a pass only when all of these are visible:
 
-- `feature/enhanced-new-home`, fresh no-room launch, and preview-only sample load;
+- fresh `enhanced-new-home-app` clone, **Enhanced New Home App** title, no-room launch, and preview-only sample load;
 - successful exact-fixture analysis before imported geometry appears;
 - exact local VLM and layout-model identities with no external endpoint;
 - A and C feasible; B and E rejected;
@@ -185,10 +179,11 @@ Record a pass only when all of these are visible:
 - **Apply** creates an accepted application layout version and **Revert** discards a preview;
 - Buyer request appears once, **Application evidence** is conclusion-only, and
   **Developer trace** retains exact request/model/application evidence;
+- explicit **Use default room** activates only the built-in room and is never labeled as an import;
 - **Reset** returns to no-room intake and the Electron window closes cleanly.
 
 Stop and record a failure if the fixture identity or analysis gate fails, default geometry appears
 without **Use default room**, the wrong model or execution provider is active, A/B/C/E changes
 verdict, D invokes Qwen, any rejected request replaces the accepted layout, accepted/rejected
 evidence is mixed, or reset/shutdown leaves stale owned state. Do not reinterpret any of those
-results as a successful Enhanced New Home run.
+results as a successful Enhanced New Home App run.

@@ -49,4 +49,4 @@ if (!output.includes(successMarker)) {
   throw new Error(`Electron renderer Reset probe exited without ${successMarker}.`);
 }
 
-console.log("Electron renderer Reset probe completed.");
+console.log("Enhanced New Home App renderer Reset probe completed.");

@@ -1,8 +1,9 @@
 {
-  "name": "foundry-local-new-home-layout-demo",
+  "name": "enhanced-new-home-app",
+  "productName": "Enhanced New Home App",
   "version": "0.1.0",
   "private": true,
-  "description": "Stage-ready Foundry Local demo for verified bedroom layout planning.",
+  "description": "Enhanced New Home App with exact-fixture floor-plan analysis and local room planning.",
   "main": "dist/main/main.mjs",
   "type": "module",
   "scripts": {

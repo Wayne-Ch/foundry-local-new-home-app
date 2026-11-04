@@ -49,4 +49,4 @@ if (!output.includes(successMarker)) {
   throw new Error(`Electron stream-owner probe exited without ${successMarker}.`);
 }
 
-console.log("Electron stream-owner probe completed.");
+console.log("Enhanced New Home App stream-owner probe completed.");

@@ -49,4 +49,4 @@ if (!output.includes(successMarker)) {
   throw new Error(`Electron floor-plan UI probe exited without ${successMarker}.`);
 }
 
-console.log("Electron floor-plan UI probe completed.");
+console.log("Enhanced New Home App floor-plan UI probe completed.");

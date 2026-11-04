@@ -20,4 +20,4 @@ if (exitCode !== 0) {
   throw new Error(`Electron smoke launch exited with code ${exitCode}.`);
 }
 
-console.log("Electron smoke launch completed.");
+console.log("Enhanced New Home App Electron smoke launch completed.");

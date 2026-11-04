@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -22,6 +23,11 @@ import type {
 } from "../audio/audio-types";
 import { FLOOR_PLAN_SAMPLE_ASSET_PATH } from "../domain/floor-plan-import";
 import type { ManualPlacementRequest } from "../domain/manual-placement";
+import {
+  ENHANCED_NEW_HOME_APP_ID,
+  ENHANCED_NEW_HOME_PRODUCT_NAME,
+  resolveEnhancedNewHomeProductPaths,
+} from "../foundry/paths";
 import { FLOOR_PLAN_INFERENCE_MAX_DIMENSION } from "../layout-import/image-security";
 import { ipcChannels, type MicrophoneAuthorizationRequest, type RunTurnRequest } from "../shared/contracts";
 import {
@@ -149,6 +155,24 @@ let microphonePermissionProbeRequest:
     }
   | undefined;
 
+const productPaths = resolveEnhancedNewHomeProductPaths();
+for (const directory of [
+  productPaths.electronProfileDir,
+  productPaths.electronSessionDir,
+  productPaths.electronLogsDir,
+  productPaths.electronTempDir,
+  productPaths.crashDumpsDir,
+]) {
+  mkdirSync(directory, { recursive: true });
+}
+app.setName(ENHANCED_NEW_HOME_PRODUCT_NAME);
+app.setAppUserModelId(ENHANCED_NEW_HOME_APP_ID);
+app.setPath("userData", productPaths.electronProfileDir);
+app.setPath("sessionData", productPaths.electronSessionDir);
+app.setPath("logs", productPaths.electronLogsDir);
+app.setPath("temp", productPaths.electronTempDir);
+app.setPath("crashDumps", productPaths.crashDumpsDir);
+
 if (process.env.DEMO_CAPTURE_PATH?.trim()) {
   app.disableHardwareAcceleration();
 }
@@ -179,7 +203,7 @@ function createWindow(): BrowserWindow {
     minHeight: 720,
     show: false,
     backgroundColor: "#07111f",
-    title: "Foundry Local New Home Layout Demo",
+    title: ENHANCED_NEW_HOME_PRODUCT_NAME,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(currentDirectory, "..", "preload", "preload.cjs"),

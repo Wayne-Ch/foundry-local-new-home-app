@@ -1,15 +1,29 @@
-# Foundry Local New Home Layout Demo
+# Enhanced New Home App
 
-A stage-ready Windows prototype for a 15-minute Microsoft Ignite level-300 demo. A local model
-interprets multi-turn furniture requirements, proposes a runtime-constrained structured invocation,
-and the Electron application validates and executes deterministic geometry before rendering a 2D
-room plan.
+Enhanced New Home App extends
+[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-demo/tree/feature/new-home-ux-parity)
+and its [standard guide](https://github.com/Wayne-Ch/foundry-local-new-home-demo/blob/feature/new-home-ux-parity/README.md).
+It keeps the standard local planning, deterministic geometry, furniture controls, voice input, and
+Reset lifecycle while adding these Enhanced-only capabilities:
+
+- a fresh no-room intake state;
+- exact sample floor-plan image preview and byte-identity validation;
+- local VLM topology analysis before any imported geometry appears;
+- imported-room A/B/C/D/E planning with door, window, closet, and clearance constraints;
+- an explicit **Use default room** fallback that is never reported as a successful import.
+
+> [!IMPORTANT]
+> First model and execution-provider preparation can take several minutes and requires substantial
+> downloads and disk allocation for the layout model, WebGPU provider, floor-plan VLM, and optional
+> voice models. Remain online, keep Enhanced New Home App open, and wait for each required green
+> ready state before continuing. After the required models and providers are prepared, subsequent
+> demo actions may run offline.
 
 ![Stage UI](docs/screenshots/stage-ui.png)
 
-> **Playtest the Enhanced New Home flow:** follow the top-to-bottom
+> **Playtest Enhanced New Home App:** follow the top-to-bottom
 > [PLAYTEST.md](PLAYTEST.md) for the exact fixture boundary, full A/B/C/D/E story, visible
-> checkpoints, and adjacent stop conditions. `main` is not the enhanced flow.
+> checkpoints, explicit default-room boundary, and adjacent stop conditions.
 
 ## What is real
 
@@ -135,7 +149,7 @@ printed dimensions. The VLM recognizes topology only; the application owns all g
 | Canonical source | [Wikimedia Commons: `400 Family Housing Units 2 Bedroom Unit Typical Floor Plans, July 24, 1989`](https://commons.wikimedia.org/wiki/File:400_Family_Housing_Units_2_Bedroom_Unit_Typical_Floor_Plans,_July_24,_1989_-_DPLA_-_c7a8b82ce8562d0a20b33b02d2f5f6fd.tiff) |
 | Author / archive | U.S. federal architectural record held by the National Archives and Records Administration; specific drafter not identified in the fixture metadata |
 | IDs | NARA `167060897`; DPLA `c7a8b82ce8562d0a20b33b02d2f5f6fd` |
-| License | Commons marks the work `PD-US`; attribution is not required. Public-domain status may differ outside the United States. This fixture is for the private optional demo unless legal review approves wider distribution. |
+| License | Commons marks the work `PD-US`; attribution is not required. Public-domain status may differ outside the United States, so downstream users must assess rights in their territory. |
 | Local derivative | `public/assets/floor-plan/sample-master-bedroom.png` |
 | Derivative operation | Crop `(1660,1180)-(2000,1540)` from the actual `3840 x 2840` Commons preview; resize to `1020 x 1080` Lanczos, contrast `1.35`, one sharpen pass; no annotation, inpainting, or geometry change |
 | SHA-256 | `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587` |
@@ -202,14 +216,17 @@ native function-call marker.
 
 Prerequisites:
 
-- Windows x64 or Arm64, Linux x64 or Arm64, or Apple-silicon macOS supported by Foundry Local
-  v2.2.1. Only Windows x64 was validated here.
+- This app release was validated only on Windows 11 x64 with an AMD Radeon 860M using
+  `WebGPUExecutionProvider`. Foundry Local v2.2.1 itself supports additional platforms and
+  hardware, but Enhanced New Home App makes no equivalent validation claim for other Windows
+  hardware, Windows Arm64, Linux, macOS, or other execution providers.
 - Node.js 20 or newer. The validated machine used Node `26.13.0`.
 - npm with install scripts approved for `foundry-local-sdk` and `esbuild`.
-- Network access for the first exact-model/EP preparation, unless both are already cached and
-  registered.
+- Network access and sufficient disk space for first exact-model/EP preparation.
 
 ```powershell
+git clone --branch feature/enhanced-new-home --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git enhanced-new-home-app
+Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
@@ -460,4 +477,6 @@ See [PLAYTEST.md](PLAYTEST.md), [ARCHITECTURE.md](ARCHITECTURE.md),
 - The committed deterministic WAV validates ASR, not real microphone permission or human speech.
 - The internal catalog ID remains `crib-standard`; audience-facing prompts and labels use
   **baby bed** for speech reliability.
-- Windows was validated. Apple-silicon macOS remains a documented validation blocker.
+- Only the validated Windows 11 x64 AMD Radeon/WebGPU configuration is release-qualified here.
+  Other Windows hardware, Windows Arm64, Linux, macOS, and other execution providers remain outside
+  this app validation scope even where Foundry Local supports them.

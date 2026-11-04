@@ -25,4 +25,4 @@ if (exitCode !== 0) {
   throw new Error(`Electron microphone permission probe exited with code ${exitCode}.`);
 }
 
-console.log("Electron microphone permission probe completed.");
+console.log("Enhanced New Home App microphone permission probe completed.");

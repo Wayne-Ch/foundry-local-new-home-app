@@ -782,5 +782,5 @@ try {
 }
 
 console.log(
-  "Furniture controls probe passed for default/imported layouts A and C, automatic imported B/E rejected previews, preserved-layout banners, no-inference toggles, rejected drag blocking, accepted drag, pointer capture, keyboard focus, Apply, and invalid Revert.",
+  "Enhanced New Home App furniture controls probe passed for default/imported layouts A and C, automatic imported B/E rejected previews, preserved-layout banners, no-inference toggles, rejected drag blocking, accepted drag, pointer capture, keyboard focus, Apply, and invalid Revert.",
 );

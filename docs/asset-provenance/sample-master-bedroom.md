@@ -52,4 +52,4 @@ The application—not the VLM—applies the documented `3650 x 3950 mm` scale an
 door/window/closet/clearance geometry. No VLM output supplies millimetres, hinges, coordinates, or a
 fit verdict.
 
-This derived asset is for use only as a private demo fixture for the optional New Home feature unless legal review approves wider distribution.
+Wikimedia Commons marks the source `PD-US`, but public-domain status may differ outside the United States. Downstream users must assess rights in their territory. Enhanced New Home App supports only this exact derived fixture or a byte-identical renamed copy; it does not claim general floor-plan support.

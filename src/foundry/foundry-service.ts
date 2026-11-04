@@ -70,7 +70,7 @@ import type {
   RuntimeTargetIdentity,
 } from "../domain/types";
 import { type FloorPlanImageFormat, zeroFill } from "../layout-import/image-security";
-import { type FoundryPaths, resolveFoundryPaths } from "./paths";
+import { ENHANCED_NEW_HOME_FOUNDRY_APP_NAME, type FoundryPaths, resolveFoundryPaths } from "./paths";
 import { formatTurnPrompt, systemPrompt } from "./prompt";
 import {
   canonicalExecutionProvider,
@@ -577,7 +577,7 @@ export class FoundryLayoutService {
     }
     try {
       this.#manager = this.#createManager({
-        appName: "FoundryLocalNewHomeLayoutDemo",
+        appName: ENHANCED_NEW_HOME_FOUNDRY_APP_NAME,
         appDataDir: this.#paths.appDataDir,
         modelCacheDir: this.#paths.modelCacheDir,
         logsDir: this.#paths.logsDir,

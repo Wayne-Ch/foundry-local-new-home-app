@@ -28,7 +28,7 @@ function responseText(response: Response): string {
 
 const paths = await resolveFoundryPaths();
 const manager = FoundryLocalManager.create({
-  appName: "FoundryLocalNewHomeLayoutStructuredProbe",
+  appName: "EnhancedNewHomeAppStructuredProbe",
   appDataDir: paths.appDataDir,
   modelCacheDir: paths.modelCacheDir,
   logsDir: paths.logsDir,

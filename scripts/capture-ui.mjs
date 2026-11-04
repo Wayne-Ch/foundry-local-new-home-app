@@ -85,4 +85,4 @@ try {
   await server.close();
 }
 
-console.log(`Captured labeled visual preview: ${screenshotPath}`);
+console.log(`Captured Enhanced New Home App labeled visual preview: ${screenshotPath}`);

@@ -1,4 +1,4 @@
-# 15-minute demo runbook
+# Enhanced New Home App demo runbook
 
 > For a top-to-bottom first-time playtest with the full A/B/C/D/E story and adjacent stop gates, use
 > [PLAYTEST.md](PLAYTEST.md). This runbook remains the full stage choreography.
@@ -8,7 +8,7 @@
 Run while connected:
 
 ```powershell
-cd C:\Users\waynechuang\Projects\foundry-local-ignite-new-home-demo
+Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
 npm run setup:native
@@ -32,6 +32,10 @@ npm run probe:microphone-permission
 npm run capture:ui
 npm run start:built
 ```
+
+First model and execution-provider preparation can take several minutes and requires substantial
+downloads and disk allocation. Remain online, keep Enhanced New Home App open, and wait for every
+required ready state. Subsequent demo actions may run offline.
 
 `npm run test:floor-plan-integration` must finish with
 `FLOOR_PLAN_INTEGRATION_OK`. It is not replaced by parser mocks: the script uses the packaged PNG,
@@ -97,8 +101,8 @@ Optional enhanced-room preflight:
 1. Confirm launch shows the no-room placeholder with conversation controls disabled. Select **Load
    sample floor plan** and confirm the exact NARA `1020 x 1080` preview without room walls, reserved
    zones, or furniture. **Choose exact fixture copy** accepts only byte-identical PNG bytes. Commons
-   marks the source `PD-US`; keep this optional fixture private unless legal review approves wider
-   use.
+   marks the source `PD-US`; public-domain status may differ outside the United States, so
+   downstream users must assess rights in their territory.
 2. Select **Analyze layout**. Developer trace must show the exact Qwen3.5 CPU VLM, no external
    endpoint, and the non-forced categories: rectangular room and room label/door/window present.
 3. If analysis fails, open **Developer trace -> Runtime + locked state** and record
