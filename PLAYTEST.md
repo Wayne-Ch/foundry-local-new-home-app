@@ -2,13 +2,10 @@
 
 This is the complete first-time colleague route for New Home App.
 
-First preparation can take several minutes while model and execution-provider assets are
-downloaded. Stay online and keep New Home App open until local setup is ready; later demo actions
-can run offline.
-
 ## Requirements
 
-- Windows 11 x64
+- Windows 11 x64 for the currently validated setup and playtest route; other app environments do
+  not yet have equivalent validation evidence
 - Git
 - A WebGPU-capable graphics adapter and current driver; the layout model uses
   `WebGPUExecutionProvider`
@@ -50,6 +47,10 @@ Do not switch branches or reuse another checkout's `node_modules`, Electron prof
 temporary files.
 
 ## Prepare the exact local model
+
+First model and execution-provider preparation can take several minutes while assets download.
+Stay online and keep New Home App open until the green **Local model ready** state appears; later
+demo actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:

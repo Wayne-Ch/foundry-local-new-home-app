@@ -41,9 +41,9 @@
 6. Confirm the title is **New Home App**, the verified room is already visible, and the runtime strip
    identifies `qwen3-0.6b-generic-gpu:2` with WebGPU.
 
-First model and execution-provider preparation can take several minutes and requires a substantial
-download and disk allocation. Remain online, keep New Home App open, and wait for the green
-**Local model ready** state before presenting. Subsequent demo actions may run offline.
+First model and execution-provider preparation can take several minutes while assets download.
+Stay online and keep New Home App open until the green **Local model ready** state appears; later
+demo actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:

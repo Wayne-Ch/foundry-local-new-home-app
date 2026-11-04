@@ -4,10 +4,6 @@ New Home App is a Windows Electron demonstration that combines local intent extr
 application-owned deterministic room geometry. It starts with one verified built-in bedroom active;
 there is no setup or room-selection step.
 
-First preparation can take several minutes while model and execution-provider assets are
-downloaded. Stay online and keep New Home App open until local setup is ready; later demo actions
-can run offline.
-
 ## Product contract
 
 - Product name: **New Home App**
@@ -75,7 +71,8 @@ model cache is allowed through `FOUNDRY_MODEL_CACHE_DIR`; app cleanup never remo
 
 ## Requirements
 
-- Windows 11 x64
+- - Windows 11 x64 for the currently validated setup and playtest route; other app environments do
+ not yet have equivalent validation evidence
 - Git
 - A WebGPU-capable graphics adapter and current driver; the layout model uses
   `WebGPUExecutionProvider`
@@ -108,6 +105,10 @@ npm run check:release-contract
 npm run build
 npm run start:built
 ```
+
+First model and execution-provider preparation can take several minutes while assets download.
+Stay online and keep New Home App open until the green **Local model ready** state appears; later
+demo actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:

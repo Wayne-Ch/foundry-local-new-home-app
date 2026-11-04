@@ -13,6 +13,11 @@
 | Room | Verified built-in bedroom active at startup |
 | Network | No external inference endpoint |
 
+Current recorded app evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows 11
+x64 using an AMD Radeon 860M and 64 GB RAM. Those values describe the evidence machine, not product
+minimums: the current layout model requires a WebGPU-capable graphics adapter/driver, no minimum RAM
+has been established, and other app environments do not yet have equivalent validation evidence.
+
 ## Recorded results — 2026-11-03
 
 | Gate | Result |
