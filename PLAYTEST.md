@@ -1,26 +1,37 @@
 # New Home App playtest
 
-This is the complete first-time colleague route for the validated Windows 11 x64 AMD Radeon/WebGPU
-configuration. Foundry Local supports more platforms and hardware, but New Home App has not been
-validated equivalently on other Windows hardware, Windows Arm64, Linux, macOS, or another execution
-provider.
+This is the complete first-time colleague route for New Home App.
 
-> [!IMPORTANT]
-> First model and execution-provider preparation can take several minutes and requires a
-> substantial download and disk allocation. Remain online, keep New Home App open, and wait for the
-> green **Local model ready** state. After the required models and execution provider are prepared,
-> subsequent demo actions may run offline.
+First preparation can take several minutes while model and execution-provider assets are
+downloaded. Stay online and keep New Home App open until local setup is ready; later demo actions
+can run offline.
+
+## Requirements
+
+- Windows 11 x64
+- Git
+- A WebGPU-capable graphics adapter and current driver; the layout model uses
+  `WebGPUExecutionProvider`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
+- Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
+- Internet access for installation and first preparation
+- Several GB of free disk space for dependencies and model assets
+- No minimum RAM value has been established by testing
+- A microphone is needed only for voice-path testing; typed and scripted flows remain available
+  without one
+
+## Validated configuration
+
+This playtest's current E2E evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows
+11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon 860M identifies the evidence machine; it is
+not a minimum or required adapter. The product requirement is a WebGPU-capable graphics
+adapter/driver for the current layout model configuration. Foundry Local's broader public platform
+and hardware support is separate, and other app environments must not be presented as having
+equivalent evidence until tested to the same depth.
 
 ## Fresh clone, install, build, and launch
 
 Open PowerShell in the parent folder where `new-home-app` should be created:
-
-Required toolchain:
-
-- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
-  supported. Validated with Node `26.13.0`.
-- Supported npm minimum: `>=11.18.0`. The package manager pin and validation use npm `11.20.0`;
-  the minimum is required for `npm install-scripts`.
 
 ```powershell
 node --version

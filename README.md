@@ -4,11 +4,9 @@ New Home App is a Windows Electron demonstration that combines local intent extr
 application-owned deterministic room geometry. It starts with one verified built-in bedroom active;
 there is no setup or room-selection step.
 
-> [!IMPORTANT]
-> First model and execution-provider preparation can take several minutes and requires a
-> substantial download and disk allocation. Remain online, keep New Home App open, and wait for the
-> green **Local model ready** state before continuing. After the required models and execution
-> provider are prepared, subsequent demo actions may run offline.
+First preparation can take several minutes while model and execution-provider assets are
+downloaded. Stay online and keep New Home App open until local setup is ready; later demo actions
+can run offline.
 
 ## Product contract
 
@@ -75,22 +73,28 @@ App-owned writable state uses the standard-only identity `FoundryLocalNewHomeApp
 `NEW_HOME_STANDARD_APP_DATA_DIR` can override the standard product root. A shared immutable Foundry
 model cache is allowed through `FOUNDRY_MODEL_CACHE_DIR`; app cleanup never removes that cache.
 
-## Validated scope
-
-This release was validated only on Windows 11 x64 with an AMD Radeon 860M using
-`WebGPUExecutionProvider`. Foundry Local itself supports additional operating systems and hardware,
-but this app release makes no equivalent validation claim for other Windows hardware, Windows
-Arm64, Linux, macOS, or other execution providers.
-
-Requirements for the validated flow:
+## Requirements
 
 - Windows 11 x64
-- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`. Node 23.x and 25.x are not
-  supported. The validated machine used Node `26.13.0`.
-- Supported npm minimum: `>=11.18.0`. The package manager pin and validated environment use npm
-  `11.20.0`; the minimum is required for `npm install-scripts`.
-- AMD Radeon 860M with a current WebGPU-capable driver
-- Network and sufficient disk space for first model and execution-provider preparation
+- Git
+- A WebGPU-capable graphics adapter and current driver; the layout model uses
+  `WebGPUExecutionProvider`
+- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
+- Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
+- Network access for installation and first model/execution-provider preparation
+- Several GB of free disk space for dependencies and model assets
+- No minimum RAM value has been established by testing
+- A microphone is needed only for voice-path testing; typed and scripted flows remain available
+  without one
+
+## Validated configuration
+
+Formal app validation and current E2E evidence for this release were executed with Node
+`26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon
+860M identifies the evidence machine; it is not a minimum or required adapter. The product
+requirement is a WebGPU-capable graphics adapter/driver for the current layout model configuration.
+Foundry Local's broader public platform and hardware support is separate, and other app environments
+must not be presented as having equivalent evidence until tested to the same depth.
 
 ## Fresh clone, install, and launch
 
