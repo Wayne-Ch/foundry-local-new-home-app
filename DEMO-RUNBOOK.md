@@ -1,4 +1,4 @@
-# Enhanced New Home App demo runbook
+# Enhanced New Home App runbook
 
 > For a top-to-bottom first-time playtest with the full A/B/C/D/E story and adjacent stop gates, use
 > [PLAYTEST.md](PLAYTEST.md). This runbook remains the full stage choreography.
@@ -40,7 +40,7 @@ npm run start:built
 ```
 
 First preparation downloads local model and execution-provider assets, so stay online and keep
-Enhanced New Home App open until the required ready states appear; later demo actions can run
+Enhanced New Home App open until the required ready states appear; later app actions can run
 offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration

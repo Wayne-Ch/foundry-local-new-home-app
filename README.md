@@ -117,7 +117,7 @@ npm run start:built
 ```
 
 First preparation downloads local model and execution-provider assets, so stay online and keep
-Enhanced New Home App open until the required ready states appear; later demo actions can run
+Enhanced New Home App open until the required ready states appear; later app actions can run
 offline.
 
 The normal setup control is determined only by `readiness.modelCached`:

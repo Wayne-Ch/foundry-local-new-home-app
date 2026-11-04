@@ -64,7 +64,7 @@ recording actions remain unavailable until a room is activated.
 ### Prepare the required local models
 
 First preparation downloads local model and execution-provider assets, so stay online and keep
-Enhanced New Home App open until the required ready states appear; later demo actions can run
+Enhanced New Home App open until the required ready states appear; later app actions can run
 offline.
 
 When step 3 reaches layout-model setup, the normal button is determined only by
