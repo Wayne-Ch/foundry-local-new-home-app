@@ -95,13 +95,13 @@ assert.match(
   /prepareButton\.textContent = readiness\.target\.stageValidated \? "Local model ready" : "Override ready";/u,
 );
 
-const requiredDocText = [
-  nodeRange,
-  `Node \`${validatedNode}\``,
-  npmRange,
-  `npm \`${validatedNpm}\``,
-  ...readinessMatrix.map((entry) => entry.state),
+const commonRequiredDocText = [nodeRange, npmRange];
+const testGuideRequiredText = [
+  ...commonRequiredDocText,
+  ...new Set(readinessMatrix.map((entry) => entry.expected)),
 ];
+const validatedEnvironmentNote =
+  "Note: This guide was validated on Windows 11 x64 with Node.js 26.13.0 and npm 11.20.0. Other environments have not yet been validated.";
 const forbiddenDocText = [
   "model or execution provider is not prepared",
   "layout model or webgpu execution provider is not prepared",
@@ -109,7 +109,10 @@ const forbiddenDocText = [
   "known local state is prepared but not loaded",
 ];
 
-for (const path of ["README.md", "PLAYTEST.md"]) {
+for (const [path, requiredDocText] of [
+  ["README.md", commonRequiredDocText],
+  ["TEST-GUIDE.md", testGuideRequiredText],
+]) {
   const normalized = readText(path).replace(/\s+/gu, " ");
   const normalizedLower = normalized.toLowerCase();
   for (const required of requiredDocText) {
@@ -119,6 +122,11 @@ for (const path of ["README.md", "PLAYTEST.md"]) {
     assert.ok(!normalizedLower.includes(forbidden), `${path} retains contradictory wording: ${forbidden}`);
   }
 }
+
+assert.ok(
+  readText("TEST-GUIDE.md").includes(validatedEnvironmentNote),
+  "TEST-GUIDE.md is missing the validated environment note.",
+);
 
 console.log(`Supported Node range: ${nodeRange}`);
 console.log(`Validated environment: Node ${validatedNode} / npm ${validatedNpm}`);
