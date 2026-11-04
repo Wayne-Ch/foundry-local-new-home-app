@@ -1,6 +1,6 @@
 # 15-minute demo runbook
 
-> For a concise colleague playtest with explicit pass/stop gates, use
+> For a top-to-bottom first-time playtest with the full A/B/C/D/E story and adjacent stop gates, use
 > [PLAYTEST.md](PLAYTEST.md). This runbook remains the full stage choreography.
 
 ## Preflight (before entering the room)

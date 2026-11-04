@@ -7,9 +7,9 @@ room plan.
 
 ![Stage UI](docs/screenshots/stage-ui.png)
 
-> **Playtest the Enhanced New Home flow:** use the concise, tester-ready
-> [PLAYTEST.md](PLAYTEST.md). It identifies the required feature branch, exact fixture boundary,
-> A/B/C/E story, visible pass evidence, and stop conditions. `main` is not the enhanced flow.
+> **Playtest the Enhanced New Home flow:** follow the top-to-bottom
+> [PLAYTEST.md](PLAYTEST.md) for the exact fixture boundary, full A/B/C/D/E story, visible
+> checkpoints, and adjacent stop conditions. `main` is not the enhanced flow.
 
 ## What is real
 
