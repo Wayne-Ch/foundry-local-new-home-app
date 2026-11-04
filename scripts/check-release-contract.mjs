@@ -109,7 +109,7 @@ const forbiddenDocText = [
   "known local state is prepared but not loaded",
 ];
 
-for (const path of ["README.md", "DEMO-GUIDE.md"]) {
+for (const path of ["README.md", "PLAYTEST.md"]) {
   const normalized = readText(path).replace(/\s+/gu, " ");
   const normalizedLower = normalized.toLowerCase();
   for (const required of requiredDocText) {
