@@ -294,14 +294,14 @@ Expected live result:
 - compact desk and baby bed retained;
 - two bounded alternatives evaluated;
 - no feasible option;
-- the main canvas remains on the accepted Queen + compact desk + baby bed layout and stays
-  adjustable;
-- the rejected-option evidence remains visible with
+- the rejected east option is displayed automatically with
   `King bed ↔ Compact desk: 70 mm / required 250 mm` and
   `King bed ↔ Baby bed: 170 mm / required 250 mm`;
-- **Inspect rejected option** shows the east option with dimension lines at the exact gaps, only its
-  own furniture-clearance failures, and the door-open check at `PASS`;
-- **Show accepted layout** returns to the active Queen Turn C layout without rerunning a turn;
+- that rejected preview shows dimension lines at the exact gaps, only its own furniture-clearance
+  failures, the door-open check at `PASS`, and non-interactive furniture;
+- **Show accepted layout** reveals the preserved Queen Turn C layout, which remains adjustable;
+- **Inspect rejected option** returns to the same rejected east evidence;
+- both switches are immediate and do not rerun a turn;
 - Developer trace separately labels aggregate reasons across both rejected alternatives, including
   the south option's door-swing conflict;
 - response asks which preference may change.
@@ -367,7 +367,7 @@ alone—is the offline readiness gate.
 |---|---|
 | Model unavailable | Show the red runtime state; select **Load local model** once. If still unavailable, explain that the demo intentionally has no cloud fallback and move to the saved screenshot plus code. |
 | Invalid intent delta | The app retries up to three times. If all fail, show the trace error; do not claim geometry ran. |
-| No feasible layout in Beat E | This is the controlled failure. Point to the retained accepted layout and exact shortfalls in the evidence column. Use **Inspect rejected option** for the callouts and **Show accepted layout** to return; do not fabricate a fit. |
+| No feasible layout in Beat E | This is the controlled failure. The rejected option appears automatically; verify its exact callouts and non-interactive furniture. Select **Show accepted layout** to verify the retained adjustable layout, then **Inspect rejected option** to return. Neither switch reruns inference; do not fabricate a fit. |
 | Missing dimensions | The app returns clarification required; geometry does not run. |
 | UI launch problem | Run `npm run start:built` again. The local integration artifact remains evidence, but do not present it as a live turn. |
 | GPU/EP issue | Only use a pretested alternate by setting both exact `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`. The badge will identify it as an override and, unless it is the exact default pair, as not stage-validated. Do not improvise a new target on stage. |

@@ -77,9 +77,9 @@ recording actions remain unavailable until a room is activated.
    - **Stop if:** The turn rejects, different furniture is accepted, geometry appears before model and application validation finish, or the Buyer request is duplicated in **Application evidence**.
 
 5. **B — Imported King conflict (model turn plus rejected/accepted inspection)**
-   - **Action:** Select **B · Imported King conflict**. After the rejection appears, select **Inspect rejected option**, confirm the preview is non-interactive, and then select **Show accepted layout**.
-   - **Expected:** The King replacement is rejected with the exact `70 mm / required 250 mm` furniture-clearance evidence. The accepted Queen + standard desk layout remains preserved. Both view switches are immediate and do not start another inference turn.
-   - **Stop if:** B is feasible, the King replaces the accepted Queen layout, rejected furniture can be dragged or keyboard-moved, **Apply** can accept rejected furniture, or either view switch reruns inference.
+   - **Action:** Select **B · Imported King conflict**. The failure opens with the rejected option already visible: verify the exact `70 mm / required 250 mm` measurement, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + standard desk layout is preserved and adjustable. Select **Inspect rejected option** to return to the rejected evidence.
+   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved Queen + standard desk layout, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another inference turn.
+   - **Stop if:** B is feasible, the failure does not initially show the rejected option, its measurement/checks/conflicts do not agree, rejected furniture can be dragged or keyboard-moved, **Apply** can accept rejected furniture, the prior accepted layout is missing or not adjustable, or either switch reruns inference.
 
 6. **C — Imported Queen + desk + baby bed (model turn)**
    - **Action:** Select **C · Imported Queen + desk + baby bed** and wait for the model turn to finish.
@@ -92,9 +92,9 @@ recording actions remain unavailable until a room is activated.
    - **Stop if:** A scripted D model button appears, any accepted furniture type cannot be dragged or keyboard-moved, a rejected-option preview is editable, an Arrow key moves by a value other than `50 mm`, **Apply** is enabled for an invalid preview, or manual adjustment starts model inference.
 
 8. **E — Imported King failure (model turn plus preserved accepted layout)**
-   - **Action:** Select **E · Imported King failure**. After the controlled failure appears, select **Inspect rejected option**, then select **Show accepted layout**.
-   - **Expected:** King + compact desk + baby bed has no feasible bounded option. The rejected east option shows `70 / 250 mm` and `170 / 250 mm` gaps. The accepted Queen + compact desk + baby bed layout, including any D adjustment that was applied, remains active and adjustable. The view switches do not rerun inference.
-   - **Stop if:** E becomes feasible, the rejected King layout becomes accepted, the D-adjusted accepted state is lost, the exact gaps are absent, rejected furniture is interactive, or either view switch starts another model turn.
+   - **Action:** Select **E · Imported King failure**. The failure opens with the rejected east option already visible: verify the `70 / 250 mm` and `170 / 250 mm` measurements, its checks and conflicts, and that rejected furniture is non-interactive. Select **Show accepted layout** and verify the prior Queen + compact desk + baby bed layout, including any applied D adjustment, is preserved and adjustable. Select **Inspect rejected option** to return to the rejected evidence.
+   - **Expected:** The initial post-turn view is the rejected King option, not the accepted canvas. **Show accepted layout** reveals the preserved C/D accepted state, **Inspect rejected option** returns to the same rejected evidence, and both switches are immediate without another inference turn.
+   - **Stop if:** E becomes feasible, the failure does not initially show the rejected east option, its exact measurements/checks/conflicts do not agree, rejected furniture is interactive, the D-adjusted accepted state is lost or not adjustable, the rejected King layout becomes accepted, or either switch starts another model turn.
 
 9. **Confirm the evidence boundary**
    - **Action:** Review the conversation, **Application evidence**, and **Developer trace** after A through E.
@@ -178,7 +178,9 @@ Record a pass only when all of these are visible:
 - A and C feasible; B and E rejected;
 - D completed through direct manipulation with no scripted D button and no inference;
 - accepted layout preserved across B and E, including an applied D adjustment;
-- accepted/rejected views switch without inference and rejected furniture remains non-interactive;
+- B and E initially display their rejected option; **Show accepted layout** reveals the preserved,
+  adjustable layout and **Inspect rejected option** returns without inference;
+- rejected furniture remains non-interactive;
 - accepted bed, compact desk, and baby bed all support drag plus `50 mm` Arrow-key previews;
 - **Apply** creates an accepted application layout version and **Revert** discards a preview;
 - Buyer request appears once, **Application evidence** is conclusion-only, and
