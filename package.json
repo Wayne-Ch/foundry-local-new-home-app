@@ -53,5 +53,8 @@
     "esbuild@0.28.2": true,
     "foundry-local-sdk@2.2.1": true,
     "electron@42.11.18": true
+  },
+  "overrides": {
+    "@electron-internal/extract-zip": "1.0.6"
   }
 }
