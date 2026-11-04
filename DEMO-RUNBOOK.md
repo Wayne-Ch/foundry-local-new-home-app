@@ -53,10 +53,16 @@ requested candidate misses a required semantic scenario or if no passing selecti
 
 In the app:
 
-1. Select **Load local model**.
-2. Confirm the green badge reads
+1. Confirm the fresh state says **Choose a room to begin** and **Room required**. Activate a room
+   before using recording, typed, or scripted controls: either select **Load sample floor plan**,
+   confirm preview-only state, and complete **Analyze layout**, or explicitly select
+   **Use default room**.
+2. Select **Prepare offline** when the exact layout model or WebGPU execution provider is not
+   prepared, or **Load local model** when the known local state is prepared but not loaded. If the
+   control already says **Local model ready**, do not select it again.
+3. Confirm the green badge reads
    `qwen3-0.6b · GPU · WebGPUExecutionProvider`.
-3. Open **Developer trace** and confirm:
+4. Open **Developer trace** and confirm:
    - SDK `2.2.1`;
    - exact model ID `qwen3-0.6b-generic-gpu:2`;
    - `WebGPUExecutionProvider`;
@@ -64,15 +70,15 @@ In the app:
    - model cached, EP registered, local inference ready;
    - external endpoint used: `false`;
    - planning mode: runtime-guided intent-delta JSON Schema to app-derived tool invocation.
-4. Select **Prepare Nemotron live** and confirm the separate voice badge shows the exact
+5. Select **Prepare Nemotron live** and confirm the separate voice badge shows the exact
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
    Confirm the separately labeled Whisper Tiny record-then-transcribe fallback is visible, but do
    not select it for the default stage flow.
-5. In **Runtime + locked state**, confirm audio readiness identifies
+6. In **Runtime + locked state**, confirm audio readiness identifies
    `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, streaming PCM `ItemQueue`,
    and no external endpoint. The **Speech-to-text** pane remains empty until a final voice turn is
    produced; live revisions remain in the explicitly labeled draft panel.
-6. Select **Reset**, then load both models again. Reset returns the enhanced flow to the fresh
+7. Select **Reset**, then load both models again. Reset returns the enhanced flow to the fresh
    no-room intake state and clears the editable/submitted prompt,
    transcript trace, pending/applied suggestion and undo provenance, manual preview/drag state, and
    recording timers while immediately advancing renderer and controller generation. Select
@@ -83,8 +89,8 @@ In the app:
    tracked Whisper fallback captures. If native work exceeds the reset bound, the same v0 generation
    stays quarantined until automatic session replacement succeeds or a later explicit Reset starts
    a newer v0 generation.
-7. Close the trace for the opening shot.
-8. Run one focused real-microphone Turn C buyer-request gate with:
+8. Close the trace for the opening shot.
+9. Run one focused real-microphone Turn C buyer-request gate with:
 
    > Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed.
    > Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.
@@ -353,13 +359,14 @@ Do this only as a manual rehearsal step:
 1. Complete online preflight and close the app.
 2. In Windows Quick Settings, disconnect Wi-Fi/Ethernet. Do not change global firewall policy.
 3. Run `npm run start:built`.
-4. Select **Load local model**.
-5. Select **Prepare Nemotron live**.
-6. Confirm both the layout badge and voice badge are ready before claiming offline voice readiness.
-7. Record one short Queen + desk request, stop, review the transcript, and send it.
-8. Run the typed controlled-failure turn.
-9. Confirm both traces show exact cached models and `externalEndpointUsed: false`.
-10. Close the app and restore network connectivity.
+4. Select **Use default room** so recording, typed input, and scripted controls become available.
+5. Select **Load local model** when the cached model is not already loaded.
+6. Select **Prepare Nemotron live**.
+7. Confirm both the layout badge and voice badge are ready before claiming offline voice readiness.
+8. Record one short Queen + desk request, stop, review the transcript, and send it.
+9. Run the typed controlled-failure turn.
+10. Confirm both traces show exact cached models and `externalEndpointUsed: false`.
+11. Close the app and restore network connectivity.
 
 If catalog initialization requires a refresh after a clean profile, reconnect, run
 `npm run probe:foundry`, load the model once, then repeat. Model and EP presence—not catalog metadata
