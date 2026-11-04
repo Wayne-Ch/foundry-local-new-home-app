@@ -20,7 +20,14 @@ execution provider. Complete the guided flow in order; do not skip from C to E.
 
 Open PowerShell in the parent folder where `enhanced-new-home-app` should be created:
 
+Required toolchain:
+
+- Node.js `>=22.12.0`; validated with Node `26.13.0`
+- npm `>=11.18.0`; validated with npm `11.20.0`, and required for `npm install-scripts`
+
 ```powershell
+node --version
+npm --version
 git clone --branch enhanced-new-home-app --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git enhanced-new-home-app
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
@@ -97,10 +104,24 @@ recording actions remain unavailable until a room is activated.
     - **Action:** Select **Use default room**.
     - **Expected:** The original verified built-in bedroom becomes active without VLM analysis. Developer trace identifies the default-room source; no imported-room or successful floor-plan-analysis claim appears.
     - **Stop if:** The fixture preview or imported NARA geometry returns, a VLM request starts, or default geometry is labeled as an imported result.
-    - **Action:** Select **Reset** again.
-    - **Expected:** The app returns to the fresh no-room intake state.
 
-12. **Shut down cleanly**
+12. **Exercise typed input only after room activation**
+    - **Action:** In **Manual prompt**, enter `Can a Queen-size bed and a desk fit here without blocking the closet or the door?`, then select **Send**.
+    - **Expected:** The exact prompt appears once and follows the same local planning, application validation, and deterministic geometry path against the active default room.
+    - **Stop if:** The prompt is changed, duplicated, submitted while no room is active, or bypasses local planning.
+
+13. **Exercise voice input only after room activation**
+    - **Action:** Select **Prepare Nemotron live** and wait for `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, and **LIVE** mode. Select **Start recording**, speak a request, then select **Stop**.
+    - **Expected:** The final transcript enters **Manual prompt** without being submitted. Review the raw text and use **Apply suggested furniture corrections**, **Dismiss**, or **Undo suggestions** only when those exact controls are shown, then select **Send**.
+    - **Stop if:** Recording is available before a room is active, Stop submits automatically, a suggestion changes text without explicit action, Whisper activates silently, or an online speech service is used.
+    - **Fallback:** If Nemotron deterministically fails, use **Whisper Tiny fallback (record then transcribe)** only when the explicit action is visible and intentionally selected.
+
+14. **Reset back to no-room intake**
+    - **Action:** Select **Reset**.
+    - **Expected:** The app returns to **Choose a room to begin** and **Room required**; recording, typed input, and scripted controls are unavailable again.
+    - **Stop if:** A room, prompt, transcript, accepted/rejected evidence, or enabled conversation control remains.
+
+15. **Shut down cleanly**
     - **Action:** Close the Electron window and wait for `npm run start:built` to return to the PowerShell prompt.
     - **Expected:** The window closes, active sessions and owned resources are disposed, and the launch command exits without a cleanup error.
     - **Stop if:** The launch command does not return, a cleanup error is reported, or a recording/import operation remains visibly active during close.
@@ -135,24 +156,12 @@ The fixture is derived from a NARA-held U.S. federal record. Wikimedia Commons m
 rights in their territory. See the
 [full provenance record](docs/asset-provenance/sample-master-bedroom.md).
 
-## Optional voice check
-
-Run this only after the main linear flow:
-
-- Select **Prepare Nemotron live** and confirm
-  `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, CPU EP, English, and **LIVE** mode.
-- Select **Start recording**, speak a request, and select **Stop**.
-- Confirm the final transcript enters **Manual prompt** without being submitted.
-- Review the raw text. Use **Apply suggested furniture corrections**, **Dismiss**, or
-  **Undo suggestions** when those exact controls are shown, then select **Send**.
-- If Nemotron fails, keep typed input unless the explicit
-  **Use Whisper Tiny fallback (record then transcribe)** action is visible and the fallback is
-  intentionally selected. The app must never silently choose Whisper or an online speech service.
-
 ## Troubleshooting
 
 | Symptom | Action |
 |---|---|
+| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 | Wrong UI or an old room is visible | Confirm the package and window title are **Enhanced New Home App**, select **Reset**, and relaunch only if the no-room checkpoint still fails. |
 | Layout model will not prepare | Connect for first preparation, clear unintended `FOUNDRY_MODEL_ALIAS`, `FOUNDRY_MODEL_ID`, or `FOUNDRY_EXECUTION_PROVIDER` variables, then select **Retry local setup**. Use `npm run probe:foundry` for a focused runtime check. |
 | Floor-plan analysis rejects | Use only the committed PNG or a byte-identical copy. Read `floorPlanVision.attempts[].rawOutput` in **Developer trace**. Retry **Analyze layout** or explicitly select **Use default room**; never relabel fallback geometry as imported geometry. |
@@ -180,6 +189,7 @@ Record a pass only when all of these are visible:
 - Buyer request appears once, **Application evidence** is conclusion-only, and
   **Developer trace** retains exact request/model/application evidence;
 - explicit **Use default room** activates only the built-in room and is never labeled as an import;
+- typed and voice controls are exercised only after a room is active, and Stop never submits;
 - **Reset** returns to no-room intake and the Electron window closes cleanly.
 
 Stop and record a failure if the fixture identity or analysis gate fails, default geometry appears

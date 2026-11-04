@@ -220,11 +220,14 @@ Prerequisites:
   `WebGPUExecutionProvider`. Foundry Local v2.2.1 itself supports additional platforms and
   hardware, but Enhanced New Home App makes no equivalent validation claim for other Windows
   hardware, Windows Arm64, Linux, macOS, or other execution providers.
-- Node.js 20 or newer. The validated machine used Node `26.13.0`.
-- npm with install scripts approved for `foundry-local-sdk` and `esbuild`.
+- Node.js `>=22.12.0`; the validated machine used Node `26.13.0`.
+- npm `>=11.18.0`; the validated machine used npm `11.20.0`, and this minimum is required for
+  `npm install-scripts`.
 - Network access and sufficient disk space for first exact-model/EP preparation.
 
 ```powershell
+node --version
+npm --version
 git clone --branch enhanced-new-home-app --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git enhanced-new-home-app
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
@@ -239,40 +242,41 @@ package `postinstall` script. `npm run setup:native` is the reproducible repair/
 it materializes `node_modules/electron/path.txt`, then rebuilds esbuild and the Foundry Local native
 binding. A missing Electron binary is an installation failure; the app does not mask it.
 
-In the app:
+In the app, complete this sequence from top to bottom:
 
-1. Select **Load local model**.
-2. Wait for the green local-runtime badge. The app turns ready only after the exact configured model
-   and configured EP are loaded and registered.
-3. Select **Prepare Nemotron live**. The separate badge shows the exact
-   `nemotron-speech-streaming-en-0.6b-generic-cpu:3` ID and **LIVE** mode.
-4. Select **Start recording** and speak for at most 20 seconds. The **Live draft — not sent** panel
-   revises while speech is arriving and the timer remains visible.
-5. Select **Stop**. The final aggregate transcript is placed into **Manual prompt**.
-6. Review the visible speech suggestions, if any. The Manual prompt initially contains the exact raw
-   transcript. Select **Apply suggested furniture corrections**, **Dismiss**, edit the raw text, or
-   apply and then **Undo suggestions**. Select **Send** only after review. Stop never submits
-   automatically; Send changes the draft label to submitted/processing and shows the exact edited
-   prompt.
-7. If Nemotron deterministically fails, the UI exposes
-   **Whisper Tiny fallback (record then transcribe)**. Selecting it is an explicit model switch;
-   record again, wait for the final Whisper transcript, then review and click **Send**.
-8. Existing typed and scripted controls remain available as the stage fallback. After a feasible
-   result, drag furniture in the SVG or use its arrow-key controls; Apply/Revert remains app-owned
-   and does not invoke Qwen.
-9. Open **Developer trace** to distinguish the raw ASR transcript and visible suggestion layer from the
-   complete layout-model plan, validation, and geometry evidence.
-
-Optional image-intake beat:
-
-1. Select **Load sample floor plan**.
-2. Confirm the `1020 x 1080` PNG preview appears while the room canvas remains empty, then select
-   **Analyze layout**.
-3. Confirm the exact CPU VLM identity in Developer trace and categorical evidence:
-   `roomShape=rectangle` and room label/door/window `present`.
-4. Load the normal layout model, then run the imported Queen -> King conflict -> new Queen + desk +
-   baby-bed request story. **Use default room** is always available as an explicit fallback;
-   **Reset** clears the import and returns to the fresh no-room intake state.
+1. Confirm the fresh state says **Choose a room to begin** and **Room required**. Recording, typed
+   input, and scripted controls must remain unavailable while no room is active.
+2. Select **Load sample floor plan**. Confirm the `1020 x 1080` PNG preview appears while the room
+   canvas still has no geometry, then select **Analyze layout**.
+3. Wait for successful analysis. Confirm the exact CPU VLM identity in **Developer trace** and the
+   independent categorical evidence: `roomShape=rectangle` and room label/door/window `present`.
+   Only then may imported NARA room geometry appear. If analysis cannot be completed, select
+   **Use default room** explicitly before continuing; default geometry must never be reported as a
+   successful import.
+4. Select **Prepare offline** when the exact layout model or WebGPU execution provider is not
+   prepared, or **Load local model** when the known local state is prepared but not loaded. If the
+   control already says **Local model ready**, do not select it again. Wait for the exact
+   `qwen3-0.6b-generic-gpu:2` / `WebGPUExecutionProvider` ready state.
+5. Run the imported A, B, and C scripted turns in order; perform D through direct furniture
+   manipulation with **Apply** and **Revert**; then run E. Rejected B/E options must preserve the
+   accepted layout, and D must not invoke Qwen.
+6. Select **Reset**, then select **Use default room**. Confirm the original built-in bedroom is
+   active and is labeled as a default-room source before using typed or recording controls.
+7. Enter a typed Queen + desk request in **Manual prompt**, then select **Send**. The exact prompt
+   must follow the same local planning and validation path.
+8. Select **Prepare Nemotron live** and wait for
+   `nemotron-speech-streaming-en-0.6b-generic-cpu:3` in **LIVE** mode. Select **Start recording**,
+   speak for at most 20 seconds, then select **Stop**. Review the final draft and any visible
+   suggestion; edit, apply, dismiss, or undo explicitly before selecting **Send**. Stop must never
+   submit automatically.
+9. If Nemotron deterministically fails, use
+   **Whisper Tiny fallback (record then transcribe)** only when that explicit action is visible.
+   Record again, review the final transcript, and select **Send**; no online speech service or
+   silent fallback is allowed.
+10. Open **Developer trace** to distinguish the raw ASR transcript and visible suggestion layer
+    from the complete layout-model plan, application validation, and geometry evidence. Select
+    **Reset** to return to no-room intake, then close the Electron window and wait for the launch
+    command to exit cleanly.
 
 The validated stage configuration needs no model environment variable. `prepareOffline` resolves the
 exact default from the public catalog and can download it into an empty cache.
@@ -291,6 +295,16 @@ locally ready, but it is never presented as the validated Ignite configuration.
 Incomplete or rejected overrides are shown as **Invalid environment override** and stop before any
 catalog lookup or default-model load; the app never silently falls back to the built-in target.
 Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
+
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
+| Layout model will not prepare | Connect for first preparation, clear unintended `FOUNDRY_MODEL_ALIAS`, `FOUNDRY_MODEL_ID`, or `FOUNDRY_EXECUTION_PROVIDER` variables, then select **Retry local setup**. Use `npm run probe:foundry` for a focused runtime check. |
+| Floor-plan analysis rejects | Use only the committed PNG or a byte-identical copy. Read `floorPlanVision.attempts[].rawOutput` in **Developer trace**. Retry **Analyze layout** or explicitly select **Use default room**; never relabel fallback geometry as imported geometry. |
+| Electron binary or native binding is missing | Confirm `node_modules\electron\path.txt` exists. Run `npm run setup:native`, then `npm run build` and `npm run start:built`. |
 
 ## Verification commands
 
