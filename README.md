@@ -2,8 +2,8 @@
 
 Enhanced New Home App extends the standard New Home App planning flow with:
 
-- a fresh no-room intake state;
-- exact sample floor-plan preview and identity checking;
+- a clear no-room start state;
+- preview and verification of the included sample floor plan;
 - local floor-plan analysis before imported geometry appears;
 - imported-room `A -> B -> C -> D -> E` planning;
 - an explicit **Use default room** fallback that is not reported as a successful import.
@@ -30,7 +30,7 @@ Use `public/assets/floor-plan/sample-master-bedroom.png` or a renamed byte-for-b
 - `194,686` bytes.
 - SHA-256 `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587`.
 
-Modified, re-encoded, or arbitrary drawings reject before imported geometry appears. Select
+Modified, re-encoded, or arbitrary drawings are rejected before imported geometry appears. Select
 **Use default room** when you want the original verified bedroom instead of the imported-room
 flow.
 
@@ -44,16 +44,10 @@ transformation, checksum, and review.
 - Git for Windows.
 - Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported.
 - npm `>=11.18.0`, required for `npm install-scripts`.
-- Internet access for installation and first model/execution-provider preparation.
+- Internet access for installation and first model/runtime preparation.
 - Several GB of free disk space for dependencies and model assets.
 - A WebGPU-capable graphics adapter with a current driver for the layout model.
 - A microphone only for voice-path testing; typed and guided flows work without one.
-
-## Tested configuration
-
-This guide was tested with Node `26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon
-860M and 64 GB RAM. The layout model requires a WebGPU-capable graphics adapter with a current
-driver, and the floor-plan model runs on CPU.
 
 ## Clone, install, build, and launch
 
@@ -67,14 +61,9 @@ npm run build
 npm run start:built
 ```
 
-First preparation may download uncached assets. Stay online, use the visible setup controls, and
-keep Enhanced New Home App open until the required ready states appear. Later app actions can run
-offline.
-
-A **Cold, empty shared model cache** shows **Prepare offline**. A
-**Warm shared cache with a fresh product root** or
-**Model cached; product-specific WebGPU provider registration still needed** shows
-**Load local model**. The **Loaded READY state** shows **Local model ready**.
+First preparation may download local assets. Stay online, select **Prepare offline** or
+**Load local model** when shown, and keep Enhanced New Home App open until
+**Local model ready** appears. Later app actions can run offline.
 
 ## Troubleshooting
 
@@ -83,14 +72,14 @@ A **Cold, empty shared model cache** shows **Prepare offline**. A
 | npm rejects the Node.js or npm version | Install a supported Node.js version and npm `>=11.18.0`, then confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | Upgrade npm, rerun `npm ci --no-audit --no-fund`, then approve Electron, esbuild, and Foundry Local SDK. |
 | The layout model does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Local model ready**. |
-| Floor-plan analysis rejects | Use the committed PNG or a byte-identical copy, retry **Analyze layout**, or select **Use default room**. Report the visible error if it persists. |
+| Floor-plan analysis rejects | Use the included PNG or a byte-identical copy, retry **Analyze layout**, or select **Use default room**. |
 | Drag or Arrow keys do nothing | Select **Show accepted layout**, confirm the app is idle, and use an accepted layout. Rejected furniture is read-only. |
 | Nemotron does not prepare or stream | Retry **Prepare Nemotron live** while connected, use the explicit Whisper Tiny fallback when available, or use typed input. |
 | Electron or the native runtime is missing | Run `npm run setup:native`, `npm run build`, and `npm run start:built` again. |
 
 ## Scope and limitations
 
-- The floor-plan flow accepts only the committed fixture or a byte-identical copy, not arbitrary
+- The floor-plan flow accepts only the included fixture or a byte-identical copy, not arbitrary
   floor plans or CAD drawings.
 - Footprint and clearance planning is not infant-safety advice, structural review, accessibility
   certification, or global optimization.
