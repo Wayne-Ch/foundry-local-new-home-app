@@ -1,102 +1,66 @@
 # New Home App
 
-New Home App is a Windows Electron demonstration that combines local intent extraction with
-application-owned deterministic room geometry. It starts with one verified built-in bedroom active;
-there is no setup or room-selection step.
+New Home App is the Standard Windows Electron demonstration for Foundry Local. The `main` branch is
+the Standard lineage: one verified built-in bedroom, local intent extraction, deterministic
+application-owned geometry, and no cloud inference fallback.
 
-## Product contract
+The app uses Foundry Local SDK 2.2.1 for local inference.
 
-- Product name: **New Home App**
+## Key behavior
+
 - Layout model: `qwen3-0.6b-generic-gpu:2`
 - Layout execution provider: `WebGPUExecutionProvider`
-- Voice preference: Nemotron streaming captions
-- Voice fallback control: **Use Whisper Tiny fallback (record then transcribe)**
-- Network contract: no cloud inference fallback
-- Geometry contract: the model interprets the buyer request; the application owns catalog IDs,
-  retained state, measurements, placements, validation, and verdicts
+- Voice model: `nemotron-speech-streaming-en-0.6b-generic-cpu:3`
+- Explicit voice fallback: `openai-whisper-tiny-generic-cpu:4`
+- Room: one verified built-in `4200 x 3600` mm bedroom
 
-The visible story is linear:
+The layout model emits compact furniture-intent changes. Application code derives catalog IDs,
+retained furniture, state references, dimensions, constraints, and the complete tool input.
+Deterministic geometry checks room bounds, the door swing, closet and window clearances, furniture
+collisions, and the 250 mm minimum furniture gap. The model never decides whether a layout fits.
 
-| Step | Buyer or application action | Expected result |
+The built-in story is:
+
+| Step | Action | Result |
 |---|---|---|
 | A | Queen bed + standard desk | Accepted |
-| B | Replace Queen with King | Rejected preview appears automatically; A remains accepted |
-| C | Queen bed + desk + baby bed; compact desk allowed | Accepted |
-| D | Drag or use arrow keys on accepted furniture | App-owned 50 mm preview with Apply/Revert; no model inference |
-| E | Replace Queen with King while retaining compact desk and baby bed | Rejected preview appears automatically; C remains accepted |
+| B | Replace Queen with King | Rejected preview; A remains accepted |
+| C | Queen bed + compact desk + baby bed | Accepted |
+| D | Drag or use arrow keys on accepted furniture | App-owned 50 mm preview with Apply/Revert |
+| E | Replace Queen with King while retaining the compact desk and baby bed | Rejected preview; C/D remains accepted |
 
-At B and E, **Show accepted layout** and **Inspect rejected option** switch already-computed
-evidence. Neither control submits a request or reruns inference. Rejected furniture is rendered as
-evidence only and cannot be dragged, focused, applied, or reverted.
+Rejected previews are diagnostic views. They do not replace the accepted layout and cannot be
+focused, dragged, or applied. Manual placement uses the same deterministic geometry checks and does
+not invoke the model.
 
-## Evidence contract
+Optional voice input produces an editable draft. Nemotron partials are display-only, suggestions
+require explicit Apply or Dismiss action, and the user must select **Send** before the transcript
+becomes a layout request.
 
-- A buyer request appears once, in the Buyer message.
-- Application evidence contains only the deterministic conclusion.
-- Developer Trace retains the exact request, model intent delta, app-derived validated input,
-  request preflight, performance, and geometry result.
-- Accepted Queen/King bed instances, desks, and the baby bed use the same pointer and keyboard
-  interaction contract when present in an accepted layout.
-- Arrow keys move a focused item by exactly 50 mm. Enter applies a valid preview; Escape reverts.
-
-## Reset and lifecycle contract
-
-Reset immediately establishes a new generation-tagged v0 conversation while retaining the verified
-built-in room and safely prepared model state. It clears:
-
-- conversation messages and trace;
-- accepted layout and rejected evidence;
-- manual previews, drag state, and focus state;
-- editable prompt, live transcript, speech suggestions, and provenance;
-- active audio capture, native stream ownership, and stale async results.
-
-Reload, window close, and shutdown revoke renderer-owned audio streams. Temporary microphone WAV
-files are scoped to this product, cleaned after success and failure, and recovered only from this
-product's owned directory.
-
-## Product isolation
-
-App-owned writable state uses the standard-only identity `FoundryLocalNewHomeAppStandard`:
-
-- Electron profile: `electron-profile`
-- Electron session data and Chromium journals: `electron-session`
-- Electron logs: `electron-logs`
-- Electron temporary files: a standard-only OS temp directory
-- Foundry application state: `foundry-app-data`
-- Foundry logs: `foundry-logs`
-- Audio captures: a standard-only OS temp directory
-
-`NEW_HOME_STANDARD_APP_DATA_DIR` can override the standard product root. A shared immutable Foundry
-model cache is allowed through `FOUNDRY_MODEL_CACHE_DIR`; app cleanup never removes that cache.
+Reset keeps the built-in room and prepared model while clearing the conversation, accepted and
+rejected layouts, manual previews, prompt, transcript, suggestions, and active recording.
 
 ## Requirements
 
 - Windows 11 x64
 - Git for Windows
-- Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
-- Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
+- Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
+- npm `>=11.18.0`, required for `npm install-scripts`
 - Internet access for installation and first model/execution-provider preparation
 - Several GB of free disk space for dependencies and model assets
-- A WebGPU-capable graphics adapter with a current driver; the layout model uses
-  `WebGPUExecutionProvider`
-- An optional microphone for voice-path testing; typed and scripted flows do not require one
+- A WebGPU-capable graphics adapter with a current driver
+- An optional microphone for voice input
 
-## Validated configuration and current limits
+Known-good toolchain versions are Node `26.13.0` and npm `11.20.0`.
 
-Formal app validation and current E2E evidence for this release were executed with Node
-`26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon
-860M and 64 GB RAM describe the evidence machine, not product minimums; no minimum RAM value has
-been established by testing. The product requirement is a WebGPU-capable graphics adapter with a
-current driver for the layout model. Foundry Local's broader public platform and hardware support
-is separate, and other app environments do not have equivalent app evidence until tested to the
-same depth.
+## Quick start
 
-## Fresh clone, install, and launch
-
-Clone the repository URL supplied for the validation build:
+Open PowerShell in the folder where the repository should be created:
 
 ```powershell
-git clone https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
+node --version
+npm --version
+git clone --branch main --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
 Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
@@ -106,57 +70,59 @@ npm run build
 npm run start:built
 ```
 
-First model and execution-provider preparation can take several minutes while assets download.
-Stay online and keep New Home App open until the green **Local model ready** state appears; later
-app actions can run offline.
+Use the fresh clone with its own `node_modules`, Electron profile, and app data.
 
-The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
-does not select the wording:
+## First preparation
 
-| Normal setup state | `modelCached` | Exact control | Operator action |
-|---|---:|---|---|
-| Cold, empty shared model cache | `false` | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
-| Warm shared cache with a fresh product root | `true` | **Load local model** | Select it; the shared model is present even though this product has not loaded it. |
-| Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
-| Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
+First model and execution-provider preparation can take several minutes while assets download. Stay
+online and keep New Home App open until the green **Local model ready** state appears; later app
+actions can run offline.
 
-On a cold run, select **Prepare offline**. If the operation finishes without reaching READY and the
-button now says **Load local model**, select that exact control. Keep the app open and online until
-the green **Local model ready** state appears.
+The visible setup control follows `readiness.modelCached`:
 
-Follow [PLAYTEST.md](PLAYTEST.md) from top to bottom for the complete built-in-room A through E
-story, all-furniture manual controls, typed and voice input, Reset, and clean shutdown. No
-branch-switch, copied dependency folder, shared app profile, or other workaround is part of the
-supported route.
+| State | Control | Action |
+|---|---|---|
+| Cold, empty shared model cache | **Prepare offline** | Select it while online to download the exact model and prepare local runtime assets. |
+| Warm shared cache with a fresh product root | **Load local model** | Select it to load the cached model for this product. |
+| Model cached; product-specific WebGPU provider registration still needed | **Load local model** | Select it; provider registration does not change the label. |
+| Loaded READY state | **Local model ready** | Continue when the green ready state and exact model/provider are visible. |
 
-## Validation commands
+On a cold cache, select **Prepare offline**. If the operation finishes without reaching READY and
+the control changes to **Load local model**, select it. Continue only when the app identifies
+`qwen3-0.6b-generic-gpu:2` with `WebGPUExecutionProvider`.
+
+## Development checks
 
 ```powershell
+npm run check:release-contract
 npm run lint
 npm run typecheck
-npm run check:release-contract
 npm test
 npm run build
-npm audit
-npm run test:integration
-npm run test:nemotron-integration
-npm run test:audio-integration
-npm run probe:furniture-controls
-npm run probe:microphone-permission
-npm run probe:reset
-npm run probe:stream-owner
-npm run smoke:electron
-npm run capture:ui
 ```
 
-## Troubleshooting
+See [DEMO-GUIDE.md](DEMO-GUIDE.md) for the complete manual test, stage sequence, voice path,
+recovery steps, and optional presenter pacing.
 
-| Symptom | Action |
-|---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
-| `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
-| A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
-| A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |
-| The control shows **Local model ready** | The runtime is already loaded and READY. Do not select the disabled control; continue with the test guide. |
+## Product limitations
 
-Use `PLAYTEST.md` for the complete test guide and `DEMO-RUNBOOK.md` for live delivery.
+- The app uses one verified built-in room and a bounded set of known furniture options. It does not
+  optimize arbitrary rooms or furniture catalogs.
+- The Standard layout path requires the exact Qwen model and WebGPU provider shown above; it does
+  not select a best-cached alternative.
+- macOS packaging, model selection, execution-provider registration, layout fidelity, and
+  performance have not been tested.
+- The default voice model is English-focused. Multilingual and Chinese behavior has not been tested.
+- Voice capture is limited to 20 seconds per recording.
+- There is no cloud inference fallback.
+
+App-owned writable state uses the `FoundryLocalNewHomeAppStandard` identity. A shared immutable
+Foundry model cache may be supplied through `FOUNDRY_MODEL_CACHE_DIR`; app cleanup does not remove
+that cache.
+
+## Fixture provenance
+
+The tracked `tests\fixtures\queen-desk.wav` voice fixture is 5,530 ms and has SHA-256
+`6F97777AED3E622F16FB5EAD34795FD5FD886055B9D20FF12ADA3DC99F142A9B`. Its source carries a PD-US
+designation: it is in the public domain in the United States but may remain copyrighted elsewhere.
+Reuse outside the United States requires a separate rights determination.
