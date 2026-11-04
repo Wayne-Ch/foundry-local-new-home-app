@@ -24,7 +24,7 @@ The committed fixture is `public/assets/floor-plan/sample-master-bedroom.png`.
 3. Resize to `1020 x 1080` with Lanczos resampling.
 4. Increase contrast by a factor of `1.35`.
 5. Apply one Pillow `ImageFilter.SHARPEN` pass.
-6. Save as PNG.
+6. Save as PNG with Pillow's PNG encoder using `compress_level=9`.
 
 The recipe was run with Pillow `12.3.0`. No annotation, inpainting, geometry change, or other architectural-content edit was applied.
 
