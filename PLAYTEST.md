@@ -16,7 +16,7 @@ provider.
 Open PowerShell in the parent folder where `new-home-app` should be created:
 
 ```powershell
-git clone --branch feature/new-home-ux-parity --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-demo.git new-home-app
+git clone https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
 Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk

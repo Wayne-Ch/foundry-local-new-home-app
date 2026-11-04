@@ -29,7 +29,7 @@
 | Reset | Pass; two live Nemotron sessions, 6 ms cancellation each, tracks stopped, ownership released, State v0, fresh lease |
 | Reload/close ownership | Pass; reload cancellation 6 ms, close cancellation 26 ms, stale routing false, zero destroyed-object/unhandled errors |
 | Electron smoke | Pass |
-| UI capture | Pass; `docs\screenshots\stage-ui.png`, 421,963 bytes, SHA-256 `EDEDE06FF34A52DED956240BCB57AB584B94CFD1FE1D2C2D127B0A78B5872C9B` |
+| UI capture | Pass; `docs\screenshots\stage-ui.png`, 421,582 bytes, SHA-256 `FD55587C44678FB6FCA4D3C23C045CE24FB159386015A49DB7363013EA04B5DA` |
 
 Real layout-model evidence:
 
@@ -144,10 +144,9 @@ Before commit:
 ```powershell
 git status --short
 git diff --check
-git diff --name-status 8c2af819872ca3ce73beaf1688fb699319a9b682...HEAD
 git rev-parse origin/main
-git rev-parse origin/feature/enhanced-new-home
+git rev-parse origin/enhanced-new-home-app
 ```
 
-The base and Enhanced remote refs must remain unchanged. Only
-`feature/new-home-ux-parity` may be committed and pushed.
+Canonical Standard changes belong on `main`. Enhanced-only changes belong on
+`enhanced-new-home-app`.

@@ -18,7 +18,7 @@ describe("New Home App product identity", () => {
     expect(NEW_HOME_PRODUCT_NAME).toBe("New Home App");
     expect(NEW_HOME_APP_ID).toContain(".standard");
     expect(NEW_HOME_FOUNDRY_APP_NAME).toBe("FoundryLocalNewHomeAppStandard");
-    expect(NEW_HOME_PRODUCT_DIRECTORY).not.toBe("FoundryLocalNewHomeLayoutDemo");
+    expect(NEW_HOME_PRODUCT_DIRECTORY).not.toContain("LayoutDemo");
   });
 
   it("keeps every app-owned writable path under the standard-only root", () => {
@@ -40,7 +40,7 @@ describe("New Home App product identity", () => {
     expect(new Set(ownedPaths).size).toBe(ownedPaths.length);
     for (const ownedPath of ownedPaths) {
       expect(ownedPath.startsWith(root)).toBe(true);
-      expect(ownedPath).not.toContain("FoundryLocalNewHomeLayoutDemo");
+      expect(ownedPath).not.toContain("LayoutDemo");
     }
     expect(paths.audioTempDir).toContain(NEW_HOME_PRODUCT_DIRECTORY);
     expect(paths.electronTempDir).toContain(NEW_HOME_PRODUCT_DIRECTORY);

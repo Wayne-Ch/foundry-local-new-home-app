@@ -4,6 +4,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "New Home App with a verified built-in bedroom and fully local layout planning.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wayne-Ch/foundry-local-new-home-app.git"
+  },
+  "homepage": "https://github.com/Wayne-Ch/foundry-local-new-home-app#readme",
   "main": "dist/main/main.mjs",
   "type": "module",
   "scripts": {
