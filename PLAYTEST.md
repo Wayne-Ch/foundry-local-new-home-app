@@ -8,13 +8,10 @@ explicit default-room fallback.
 This is the complete first-time tester route for Enhanced New Home App. Complete the guided flow in
 order; do not skip from C to E.
 
-First preparation can take several minutes while model and execution-provider assets are
-downloaded. Stay online and keep Enhanced New Home App open until the required local setup is ready;
-later demo actions can run offline.
-
 ## Requirements
 
-- Windows 11 x64
+- Windows 11 x64 for the currently validated setup and playtest route; other app environments do
+  not yet have equivalent validation evidence
 - Git
 - A WebGPU-capable graphics adapter and current driver; the layout model uses
   `WebGPUExecutionProvider`
@@ -65,6 +62,12 @@ recording actions remain unavailable until a room is activated.
 > application-owned **D · App-owned manual adjustment** beat, performed directly on accepted
 > furniture with drag, keyboard, **Apply**, and **Revert**. There is intentionally no scripted D
 > button and no model inference in D, but D is a required step in this guide.
+
+### Prepare the required local models
+
+First local model and execution-provider preparation can take several minutes while assets
+download. Stay online and keep Enhanced New Home App open until the required local ready states
+appear; later demo actions can run offline.
 
 When step 3 reaches layout-model setup, the normal button is determined only by
 `readiness.modelCached`; WebGPU provider registration does not select the wording:

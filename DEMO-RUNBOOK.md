@@ -39,9 +39,9 @@ npm run capture:ui
 npm run start:built
 ```
 
-First model and execution-provider preparation can take several minutes and requires substantial
-downloads and disk allocation. Remain online, keep Enhanced New Home App open, and wait for every
-required ready state. Subsequent demo actions may run offline.
+First local model and execution-provider preparation can take several minutes while assets
+download. Stay online and keep Enhanced New Home App open until the required local ready states
+appear; later demo actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:

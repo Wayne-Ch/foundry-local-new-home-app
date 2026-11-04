@@ -6,12 +6,18 @@
 
 **Device:** HP EliteBook 8 G1a, AMD Ryzen AI 7 PRO 350, Radeon 860M, 64 GB RAM
 
+These platform and hardware values describe the current evidence machine, not product minimums or
+its only target. The current layout model requires a WebGPU-capable graphics adapter/driver, the
+floor-plan VLM remains on CPU, no minimum RAM has been established, and other app environments do
+not yet have equivalent validation evidence.
+
 ## Selected runtime
 
 | Item | Validated value |
 |---|---|
 | SDK | `foundry-local-sdk@2.2.1` |
 | Node | `26.13.0` |
+| npm | `11.20.0` |
 | Electron | `42.11.18` |
 | Model alias | `qwen3-0.6b` |
 | Exact model ID | `qwen3-0.6b-generic-gpu:2` |

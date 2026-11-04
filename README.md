@@ -12,10 +12,6 @@ Reset lifecycle while adding these Enhanced-only capabilities:
 - imported-room A/B/C/D/E planning with door, window, closet, and clearance constraints;
 - an explicit **Use default room** fallback that is never reported as a successful import.
 
-First preparation can take several minutes while model and execution-provider assets are
-downloaded. Stay online and keep Enhanced New Home App open until the required local setup is ready;
-later demo actions can run offline.
-
 ![Stage UI](docs/screenshots/stage-ui.png)
 
 > **Playtest Enhanced New Home App:** follow the top-to-bottom
@@ -213,7 +209,8 @@ native function-call marker.
 
 ### Requirements
 
-- Windows 11 x64
+- Windows 11 x64 for the currently validated setup and playtest route; other app environments do
+  not yet have equivalent validation evidence
 - Git
 - A WebGPU-capable graphics adapter and current driver; the layout model uses
   `WebGPUExecutionProvider`
@@ -248,6 +245,10 @@ npm run check:release-contract
 npm run build
 npm run start:built
 ```
+
+First local model and execution-provider preparation can take several minutes while assets
+download. Stay online and keep Enhanced New Home App open until the required local ready states
+appear; later demo actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:
