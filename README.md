@@ -1,48 +1,63 @@
 # Enhanced New Home App
 
-Enhanced New Home App extends
-[New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-app/tree/main) with an exact sample
-floor-plan workflow, local vision analysis, imported-room planning, direct furniture adjustment,
-and optional local speech input. All model inference runs through Foundry Local in the Electron
-application; deterministic application code owns measurements, placement checks, and fit results.
+Enhanced New Home App extends the standard New Home App planning flow with:
 
-![Enhanced New Home App](docs/screenshots/stage-ui.png)
+- a fresh no-room intake state;
+- exact sample floor-plan preview and identity checking;
+- local floor-plan analysis before imported geometry appears;
+- imported-room `A -> B -> C -> D -> E` planning;
+- an explicit **Use default room** fallback that is not reported as a successful import.
 
-Use [DEMO-GUIDE.md](DEMO-GUIDE.md) for the complete manual test and presentation flow.
+For the complete first-time route, follow [PLAYTEST.md](PLAYTEST.md).
 
-## What it does
+## Exact local models
 
-- Starts with no active room.
-- Loads the packaged floor-plan fixture as a preview, then analyzes its visible room topology with a
-  local VLM before activating imported geometry.
-- Provides an explicit **Use default room** path that remains separate from floor-plan analysis.
-- Runs the guided `A -> B -> C -> D -> E` layout story with accepted and rejected options.
-- Preserves the accepted layout when a later request has no feasible option.
-- Lets users adjust accepted furniture on a `50 mm` grid with pointer or keyboard input.
-- Accepts typed prompts or reviewed local speech transcripts.
-- Returns to the no-room state through **Reset**.
+| Responsibility | Model | Execution provider |
+|---|---|---|
+| Layout intent | `qwen3-0.6b-generic-gpu:2` | `WebGPUExecutionProvider` |
+| Floor-plan analysis | `qwen3.5-0.8b-generic-cpu:3` | `CPUExecutionProvider` |
+| Live voice captions | `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | `CPUExecutionProvider` |
+| Explicit record-then-transcribe fallback | `openai-whisper-tiny-generic-cpu:4` | `CPUExecutionProvider` |
+
+The app pins `foundry-local-sdk@2.2.1`. Model inference and speech processing run locally without a
+cloud inference or speech endpoint.
+
+## Floor-plan fixture
+
+Use `public/assets/floor-plan/sample-master-bedroom.png` or a renamed byte-for-byte copy:
+
+- PNG, `1020 x 1080`.
+- `194,686` bytes.
+- SHA-256 `02c90be495d1f64e8adb57c4d00eb81f09fbeb80e885a0066f692026d2145587`.
+
+Modified, re-encoded, or arbitrary drawings reject before imported geometry appears. Select
+**Use default room** when you want the original verified bedroom instead of the imported-room
+flow.
+
+The fixture comes from a NARA-held U.S. federal record. See the
+[full provenance record](docs/asset-provenance/sample-master-bedroom.md) for the source, license,
+transformation, checksum, and review.
 
 ## Requirements
 
-- Windows 11 x64
-- Git for Windows
-- Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
-- npm `>=11.18.0`, required for `npm install-scripts`
-- Internet access for installation and first model/runtime preparation
-- Several GB of free disk space for dependencies and model assets
-- A WebGPU-capable graphics adapter with a current driver for the layout model
-- A microphone only for voice-path testing; typed and scripted flows work without one
+- Windows 11 x64.
+- Git for Windows.
+- Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported.
+- npm `>=11.18.0`, required for `npm install-scripts`.
+- Internet access for installation and first model/execution-provider preparation.
+- Several GB of free disk space for dependencies and model assets.
+- A WebGPU-capable graphics adapter with a current driver for the layout model.
+- A microphone only for voice-path testing; typed and guided flows work without one.
 
-Known-good toolchain versions are Node `26.13.0` and npm `11.20.0`. The floor-plan VLM runs on
-`CPUExecutionProvider`.
+## Tested configuration
 
-## Quick start
+This guide was tested with Node `26.13.0` and npm `11.20.0` on Windows 11 x64 with an AMD Radeon
+860M and 64 GB RAM. The layout model requires a WebGPU-capable graphics adapter with a current
+driver, and the floor-plan model runs on CPU.
 
-Open PowerShell in the parent folder where the checkout should be created:
+## Clone, install, build, and launch
 
 ```powershell
-node --version
-npm --version
 git clone --branch enhanced-new-home-app --single-branch https://github.com/Wayne-Ch/foundry-local-new-home-app.git enhanced-new-home-app
 Set-Location -LiteralPath '.\enhanced-new-home-app'
 npm ci --no-audit --no-fund
@@ -52,82 +67,32 @@ npm run build
 npm run start:built
 ```
 
-First preparation downloads local model and execution-provider assets. Stay online and keep the app
-open until the selected setup operation finishes. Later layout and speech turns can run from the
-local cache.
+First preparation may download uncached assets. Stay online, use the visible setup controls, and
+keep Enhanced New Home App open until the required ready states appear. Later app actions can run
+offline.
 
-### Layout-model setup controls
+A **Cold, empty shared model cache** shows **Prepare offline**. A
+**Warm shared cache with a fresh product root** or
+**Model cached; product-specific WebGPU provider registration still needed** shows
+**Load local model**. The **Loaded READY state** shows **Local model ready**.
 
-| Setup state | Visible control | Action |
-|---|---|---|
-| Cold, empty shared model cache | **Prepare offline** | Select it while online and wait for preparation to finish. |
-| Warm shared cache with a fresh product root | **Load local model** | Select it to load the cached model for this app. |
-| Model cached; product-specific WebGPU provider registration still needed | **Load local model** | Select it; provider registration does not change the label. |
-| Loaded READY state | **Local model ready** | Continue when the green ready state is visible. |
+## Troubleshooting
 
-After the layout model is ready, either:
+| Symptom | Action |
+|---|---|
+| npm rejects the Node.js or npm version | Install a supported Node.js version and npm `>=11.18.0`, then confirm with `node --version` and `npm --version`. |
+| `npm install-scripts` is unavailable | Upgrade npm, rerun `npm ci --no-audit --no-fund`, then approve Electron, esbuild, and Foundry Local SDK. |
+| The layout model does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Local model ready**. |
+| Floor-plan analysis rejects | Use the committed PNG or a byte-identical copy, retry **Analyze layout**, or select **Use default room**. Report the visible error if it persists. |
+| Drag or Arrow keys do nothing | Select **Show accepted layout**, confirm the app is idle, and use an accepted layout. Rejected furniture is read-only. |
+| Nemotron does not prepare or stream | Retry **Prepare Nemotron live** while connected, use the explicit Whisper Tiny fallback when available, or use typed input. |
+| Electron or the native runtime is missing | Run `npm run setup:native`, `npm run build`, and `npm run start:built` again. |
 
-1. Select **Load sample floor plan**, confirm the preview-only state, and select **Analyze layout**;
-   or
-2. Select **Use default room** to activate the built-in bedroom directly.
+## Scope and limitations
 
-## Key behavior
-
-- **Floor-plan fixture:** The app accepts only
-  [`public/assets/floor-plan/sample-master-bedroom.png`](public/assets/floor-plan/sample-master-bedroom.png)
-  or a renamed byte-for-byte copy. Modified, re-encoded, or arbitrary images are rejected.
-- **Imported room:** The VLM identifies a rectangular room, printed room label, door opening, and
-  window opening. The application applies the documented `3650 x 3950 mm` scale and canonical
-  door, window, closet, and clearance geometry.
-- **Accepted and rejected layouts:** A and C produce accepted layouts. B and E open their rejected
-  options while keeping the previous accepted layout available through **Show accepted layout**.
-  **Inspect rejected option** returns to the same rejected result without starting another turn.
-- **Manual adjustment:** D uses direct manipulation only. A valid **Apply** creates a new accepted
-  application layout version; **Revert** discards the current preview.
-- **Speech input:** Nemotron live speech displays partial text as a draft. **Stop** places the final
-  transcript in **Manual prompt** without submitting it. Suggestions require explicit action, and
-  **Send** remains separate.
-- **Reset:** **Reset** clears the active room, prompt, transcript, layout, preview, and manual
-  adjustment state and returns to **Choose a room to begin**.
-
-## Runtime and architecture
-
-- `foundry-local-sdk@2.2.1` runs in process; the app does not start a cloud, loopback, or CLI
-  inference endpoint.
-- The layout target is `qwen3-0.6b-generic-gpu:2` on `WebGPUExecutionProvider`.
-- The optional floor-plan VLM is `qwen3.5-0.8b-generic-cpu:3` on
-  `CPUExecutionProvider`.
-- The live English speech model is
-  `nemotron-speech-streaming-en-0.6b-generic-cpu:3`.
-- **Use Whisper Tiny fallback (record then transcribe)** explicitly selects
-  `openai-whisper-tiny-generic-cpu:4`.
-- Models produce bounded semantic or topology output. Application code derives catalog IDs, state,
-  dimensions, placements, checks, and final layout results.
-
-## Development checks
-
-Run the checks relevant to your change:
-
-```powershell
-npm run typecheck
-npm run lint
-npm run check:release-contract
-npm test
-npm run build
-```
-
-## Limitations
-
-- The documented setup is Windows 11 x64. macOS packaging, model selection, rendering, and
-  performance are untested.
-- Floor-plan import supports only the exact packaged fixture or a byte-identical renamed copy. It is
-  not general floor-plan or CAD ingestion.
-- The layout engine evaluates bounded known options rather than arbitrary global optimization.
-- Audio input is English only. Multilingual ASR, TTS, and online speech services are not supported.
-- The app plans furniture footprints and clearances. It does not provide structural,
-  accessibility-certification, clinical, or infant-safety advice.
-
-## Documentation
-
-- [Demo and test guide](DEMO-GUIDE.md)
-- [Sample floor-plan provenance and derivation](docs/asset-provenance/sample-master-bedroom.md)
+- The floor-plan flow accepts only the committed fixture or a byte-identical copy, not arbitrary
+  floor plans or CAD drawings.
+- Footprint and clearance planning is not infant-safety advice, structural review, accessibility
+  certification, or global optimization.
+- Exact room measurements come from the fixture and app data, not from image-estimated dimensions.
+- Audio is English only. Nemotron provides live captions; Whisper Tiny is an explicit fallback.
