@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "vite";
+import { removeCaptureProfile, runWithCaptureCleanup, stopChildProcess } from "./capture-ui-cleanup.mjs";
 
 function findBrowserExecutable() {
   const override = process.env.BROWSER_EXECUTABLE?.trim();
@@ -33,56 +34,64 @@ if (!browserExecutable) {
 
 const screenshotPath = path.join(process.cwd(), "docs", "screenshots", "stage-ui.png");
 const profilePath = path.join(os.tmpdir(), `new-home-layout-browser-${process.pid}`);
-await Promise.all([
-  mkdir(path.dirname(screenshotPath), { recursive: true }),
-  mkdir(profilePath, { recursive: true }),
-]);
+let browserProcess;
+let server;
 
-const server = await createServer({
-  root: process.cwd(),
-  logLevel: "error",
-  server: {
-    host: "127.0.0.1",
-    port: 0,
+await runWithCaptureCleanup({
+  capture: async () => {
+    await Promise.all([
+      mkdir(path.dirname(screenshotPath), { recursive: true }),
+      mkdir(profilePath, { recursive: true }),
+    ]);
+
+    server = await createServer({
+      root: process.cwd(),
+      logLevel: "error",
+      server: {
+        host: "127.0.0.1",
+        port: 0,
+      },
+    });
+    await server.listen();
+
+    const address = server.httpServer?.address();
+    if (address === null || address === undefined || typeof address === "string") {
+      throw new Error("Vite did not expose a TCP port.");
+    }
+    browserProcess = spawn(
+      browserExecutable,
+      [
+        "--headless=new",
+        ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--window-size=1600,900",
+        `--user-data-dir=${profilePath}`,
+        `--screenshot=${screenshotPath}`,
+        `http://127.0.0.1:${address.port}/?preview=1&step=request`,
+      ],
+      {
+        cwd: process.cwd(),
+        stdio: "inherit",
+      },
+    );
+    const exitCode = await new Promise((resolve, reject) => {
+      browserProcess.once("error", reject);
+      browserProcess.once("exit", (code) => resolve(code ?? 1));
+    });
+    if (exitCode !== 0 || !existsSync(screenshotPath)) {
+      throw new Error(`Browser screenshot capture exited with code ${exitCode}.`);
+    }
   },
+  closeBrowser: () => stopChildProcess(browserProcess),
+  stopServer: async () => {
+    await server?.close();
+  },
+  removeProfile: () => removeCaptureProfile(profilePath),
 });
-await server.listen();
-
-try {
-  const address = server.httpServer?.address();
-  if (address === null || address === undefined || typeof address === "string") {
-    throw new Error("Vite did not expose a TCP port.");
-  }
-  const child = spawn(
-    browserExecutable,
-    [
-      "--headless=new",
-      ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
-      "--disable-gpu",
-      "--hide-scrollbars",
-      "--disable-background-networking",
-      "--disable-sync",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--window-size=1600,900",
-      `--user-data-dir=${profilePath}`,
-      `--screenshot=${screenshotPath}`,
-      `http://127.0.0.1:${address.port}/?preview=1&step=request`,
-    ],
-    {
-      cwd: process.cwd(),
-      stdio: "inherit",
-    },
-  );
-  const exitCode = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code ?? 1));
-  });
-  if (exitCode !== 0 || !existsSync(screenshotPath)) {
-    throw new Error(`Browser screenshot capture exited with code ${exitCode}.`);
-  }
-} finally {
-  await server.close();
-}
 
 console.log(`Captured Enhanced New Home App labeled visual preview: ${screenshotPath}`);
