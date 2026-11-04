@@ -173,7 +173,7 @@ app.setPath("logs", productPaths.electronLogsDir);
 app.setPath("temp", productPaths.electronTempDir);
 app.setPath("crashDumps", productPaths.crashDumpsDir);
 
-if (process.env.DEMO_CAPTURE_PATH?.trim()) {
+if (process.env.DEMO_CAPTURE_PATH?.trim() || floorPlanUiProbeEnabled) {
   app.disableHardwareAcceleration();
 }
 if (microphonePermissionProbeEnabled) {
@@ -1045,7 +1045,7 @@ async function waitForFloorPlanUi(
 }
 
 async function captureFloorPlanUi(webContents: WebContents, fileName: string): Promise<string> {
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   const captureDirectory =
     process.env.DEMO_FLOOR_PLAN_UI_PROBE_CAPTURE_DIR?.trim() ||
     path.resolve("artifacts", "floor-plan-ui-probe");
