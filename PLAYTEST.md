@@ -1,4 +1,4 @@
-# Enhanced New Home App playtest
+# Enhanced New Home App Test Guide
 
 Enhanced New Home App extends
 [New Home App](https://github.com/Wayne-Ch/foundry-local-new-home-app)
