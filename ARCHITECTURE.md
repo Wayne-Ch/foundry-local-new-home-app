@@ -6,7 +6,7 @@
 flowchart LR
   MIC[Optional microphone] --> R[Electron renderer<br/>permission + PCM conversion]
   R --> ASR[Foundry Local AudioSession<br/>Nemotron live PCM ItemQueue]
-  R -. explicit fallback .-> W[Whisper Tiny<br/>record then transcribe]
+  R -. explicit fallback .-> W[Use Whisper Tiny fallback<br/>(record then transcribe)]
   ASR --> D[Editable transcript draft]
   W --> D
   D --> U[User review/edit + Send]

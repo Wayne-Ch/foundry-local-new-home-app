@@ -53,7 +53,7 @@ Voice evidence:
 | Mode | Result |
 |---|---|
 | Nemotron streaming | Pass on controlled retry; 5,530 ms fixture, 31 partials, first partial 1,296 ms, finalization 216 ms, total 6,234 ms, keyword recall 1.0, external endpoint false |
-| Whisper Tiny fallback | Pass; preparation 1,742 ms, transcription 2,713 ms, keyword recall 1.0, external endpoint false, temp files empty before and after |
+| Use Whisper Tiny fallback (record then transcribe) | Pass; preparation 1,742 ms, transcription 2,713 ms, keyword recall 1.0, external endpoint false, temp files empty before and after |
 
 One cold Nemotron attempt reached the existing bounded backpressure guard before partial output; the
 immediate controlled retry passed with the metrics above. The queue bound was not weakened.
