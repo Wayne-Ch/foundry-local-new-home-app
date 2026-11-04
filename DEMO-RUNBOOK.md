@@ -62,10 +62,11 @@ writes `artifacts/floor-plan-integration-failure.json`.
 After `npm ci`, verify `node_modules\electron\path.txt` exists. If it does not, stop and run
 `npm run setup:native`; do not continue with a partially materialized Electron package.
 
-For a benchmark refresh rather than routine stage preflight, run `npm run benchmark:layout`. It
-isolates each exact cached candidate in a fresh process, never downloads a model, and rewrites the
-ignored evidence file `artifacts/layout-model-benchmark.json`. The command exits nonzero if any
-requested candidate misses a required semantic scenario or if no passing selection is produced.
+For an optional developer-only benchmark refresh - not colleague setup, playtest, release
+acceptance, or routine stage preflight - run `npm run benchmark:layout`. It isolates each exact
+cached candidate in a fresh process, never downloads a model, and rewrites the ignored evidence file
+`artifacts/layout-model-benchmark.json`. The command exits nonzero if any requested candidate misses
+a required semantic scenario or if no passing selection is produced.
 
 In the app:
 

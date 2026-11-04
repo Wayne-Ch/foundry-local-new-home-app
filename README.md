@@ -326,7 +326,6 @@ Use `FOUNDRY_MODEL_CACHE_DIR` only to override the shared cache directory.
 
 ```powershell
 npm run probe:foundry
-npm run benchmark:layout
 npm run check:release-contract
 npm run typecheck
 npm run lint
@@ -346,6 +345,10 @@ npm run probe:stream-owner
 npm run probe:microphone-permission
 npm run capture:ui
 ```
+
+`npm run benchmark:layout` is an optional developer-only benchmark refresh. It runs all cached
+candidate models and is not required for colleague setup, playtest, release acceptance, stage
+preflight, or the validated product flow.
 
 `npm run test:floor-plan-integration` is a Windows-native gate. It requires the exact packaged
 fixture identity, runs it through the exact VLM, requires the non-forced
