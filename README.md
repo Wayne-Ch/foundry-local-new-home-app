@@ -79,7 +79,7 @@ downstream users must assess rights in their territory. See the
 
 ## Requirements
 
-- Windows 11 x64 for the currently validated setup and playtest route
+- Windows 11 x64 for the currently validated setup and test flow
 - Git for Windows
 - Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
 - npm `>=11.18.0`, required for `npm install-scripts`

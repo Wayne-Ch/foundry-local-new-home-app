@@ -5,12 +5,12 @@ Enhanced New Home App extends
 with exact-fixture image preview, local VLM topology analysis, imported-room planning, and an
 explicit default-room fallback.
 
-This is the complete first-time tester route for Enhanced New Home App. Complete the guided flow in
+This is the complete first-time test flow for Enhanced New Home App. Complete the guided flow in
 the required `A -> B -> C -> D -> E` order; do not skip from C to E.
 
 ## Requirements
 
-- Windows 11 x64 for the currently validated setup and playtest route; other app environments do
+- Windows 11 x64 for the currently validated setup and test flow; other app environments do
   not yet have equivalent validation evidence
 - Git for Windows
 - Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
@@ -23,7 +23,7 @@ the required `A -> B -> C -> D -> E` order; do not skip from C to E.
 
 ## Validated configuration and current limits
 
-This playtest's current E2E evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows
+Current E2E evidence for this test guide was collected with Node `26.13.0` and npm `11.20.0` on Windows
 11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon 860M identifies the evidence machine; it is
 not a minimum or required adapter. The product requirement is a WebGPU-capable graphics
 adapter/driver for the current layout model configuration. No minimum RAM value has been
@@ -54,7 +54,7 @@ must show **Choose a room to begin**, **Room required**, **Load sample floor pla
 **Choose exact fixture copy**, **Analyze layout**, and **Use default room**. Conversation and
 recording actions remain unavailable until a room is activated.
 
-## Quick guided playtest
+## Quick guided test
 
 > **Why the UI has A/B/C/E buttons:** A, B, C, and E are scripted Qwen model turns. D is the
 > application-owned **D · App-owned manual adjustment** beat, performed directly on accepted

@@ -1,6 +1,6 @@
 # Enhanced New Home App runbook
 
-> For a top-to-bottom first-time playtest with the full A/B/C/D/E story and adjacent stop gates, use
+> For a top-to-bottom first-time test with the full A/B/C/D/E story and adjacent stop gates, use
 > [PLAYTEST.md](PLAYTEST.md). This runbook remains the full stage choreography.
 
 ## Preflight (before entering the room)
@@ -62,7 +62,7 @@ writes `artifacts/floor-plan-integration-failure.json`.
 After `npm ci`, verify `node_modules\electron\path.txt` exists. If it does not, stop and run
 `npm run setup:native`; do not continue with a partially materialized Electron package.
 
-For an optional developer-only benchmark refresh - not colleague setup, playtest, release
+For an optional developer-only benchmark refresh - not normal setup, testing, release
 acceptance, or routine stage preflight - run `npm run benchmark:layout`. It isolates each exact
 cached candidate in a fresh process, never downloads a model, and rewrites the ignored evidence file
 `artifacts/layout-model-benchmark.json`. The command exits nonzero if any requested candidate misses
