@@ -85,7 +85,9 @@ Arm64, Linux, macOS, or other execution providers.
 Requirements for the validated flow:
 
 - Windows 11 x64
-- Node.js 22 or newer
+- Node.js `>=22.12.0`; the validated machine used Node `26.13.0`
+- npm `>=11.18.0`; the validated machine used npm `11.20.0`, and this minimum is required for
+  `npm install-scripts`
 - AMD Radeon 860M with a current WebGPU-capable driver
 - Network and sufficient disk space for first model and execution-provider preparation
 
@@ -129,5 +131,12 @@ npm run probe:stream-owner
 npm run smoke:electron
 npm run capture:ui
 ```
+
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 
 Use `PLAYTEST.md` for the strict operator walkthrough and `DEMO-RUNBOOK.md` for live delivery.

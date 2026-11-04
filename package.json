@@ -3,6 +3,23 @@
   "productName": "New Home App",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@11.20.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=11.18.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=22.12.0",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.18.0",
+      "onFail": "error"
+    }
+  },
   "description": "New Home App with a verified built-in bedroom and fully local layout planning.",
   "repository": {
     "type": "git",

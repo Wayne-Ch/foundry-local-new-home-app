@@ -15,7 +15,14 @@ provider.
 
 Open PowerShell in the parent folder where `new-home-app` should be created:
 
+Required toolchain:
+
+- Node.js `>=22.12.0`; validated with Node `26.13.0`
+- npm `>=11.18.0`; validated with npm `11.20.0`, and required for `npm install-scripts`
+
 ```powershell
+node --version
+npm --version
 git clone https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
 Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
@@ -128,6 +135,13 @@ manual adjustment, **E** King controlled failure.
 
 If Nemotron deterministically fails and the UI exposes **Whisper Tiny fallback (record then
 transcribe)**, selecting it is an explicit fallback check. It must never activate silently.
+
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| npm rejects the Node.js or npm version before install or a script run | Install Node.js `>=22.12.0` and npm `>=11.18.0`. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 
 ## Clean shutdown
 
