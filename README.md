@@ -96,7 +96,7 @@ same depth.
 Clone the repository URL supplied for the validation build:
 
 ```powershell
-git clone '<repository-url>' new-home-app
+git clone https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
 Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
