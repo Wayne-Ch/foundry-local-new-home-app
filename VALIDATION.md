@@ -58,6 +58,11 @@ Voice evidence:
 One cold Nemotron attempt reached the existing bounded backpressure guard before partial output; the
 immediate controlled retry passed with the metrics above. The queue bound was not weakened.
 
+The tracked `tests\fixtures\queen-desk.wav` voice fixture (5,530 ms) has SHA-256
+`6F97777AED3E622F16FB5EAD34795FD5FD886055B9D20FF12ADA3DC99F142A9B`. Its source carries a
+PD-US designation: it is in the public domain in the United States, but may remain copyrighted
+elsewhere; reuse outside the United States requires a separate rights determination.
+
 ## Static and unit gates
 
 ```powershell
@@ -102,13 +107,12 @@ Record:
 Do not change the standard layout model when this bounded validation passes. If it fails, stop and
 diagnose the exact model/runtime failure before considering any model change.
 
-## Electron package decision
+## Electron package evidence
 
-The branch started on main's Electron 42.3.3. `npm audit --audit-level=low` reported two
-high-severity dependency findings and identified 42.11.18 as the supported fix. The package was
-therefore upgraded only to that audited patch release, after which `npm audit` reported zero
-vulnerabilities. All static, unit, build, Electron, microphone, Reset, stream-owner, smoke, and UI
-capture gates must be rerun on 42.11.18.
+Electron 42.11.18 is the validated package. The prior 42.3.3 baseline produced two high-severity
+dependency findings under `npm audit --audit-level=low`; 42.11.18 was the supported patch release
+that resolved them, and the current audit reports zero vulnerabilities. The static, unit, build,
+Electron, microphone, Reset, stream-owner, smoke, and UI capture gates were rerun on 42.11.18.
 
 ## Renderer and Electron gates
 

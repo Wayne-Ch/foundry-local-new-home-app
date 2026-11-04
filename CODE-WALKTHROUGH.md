@@ -62,7 +62,8 @@ Put on screen:
 - exact raw text first, with explicit **Apply suggested furniture corrections**, **Dismiss**, and
   post-Apply **Undo suggestions** controls;
 - Send transition to the exact edited submitted prompt and submitted/processing label;
-- explicit Whisper Tiny record-then-transcribe fallback with owner-only temporary WAV cleanup.
+- explicit **Use Whisper Tiny fallback (record then transcribe)** control with owner-only temporary
+  WAV cleanup.
 
 Message:
 
@@ -185,7 +186,7 @@ Show only:
 - no-feasible assertion;
 - negation/correction assertion;
 - exact default model-ID and WebGPU-EP assertions;
-- corrected isolated benchmark with unrestricted intent enums, independently authored expectations,
+- isolated benchmark with unrestricted intent enums, independently authored expectations,
   A/B/C/failure/correction, four clarification cases, stale/invented guards, and nine paraphrases;
 - exact Nemotron ID/CPU-EP assertion, changing partials, first-partial/final timing, and transcript
   recall;
@@ -193,10 +194,11 @@ Show only:
 - temporary WAV cleanup assertion;
 - `externalEndpointUsed === false`.
 
-The final checkpoint is recorded in `VALIDATION.md`. The real audio
-fixture produced 31 Nemotron revisions (first partial 1,304 ms, stop-to-final 91 ms, 6,102 ms cached
-prepare) and the explicit Whisper fallback prepared in 4,094 ms and transcribed in 213 ms.
+The current release checkpoint is recorded in [VALIDATION.md](VALIDATION.md). In the walkthrough's
+separate fixture run, the real audio fixture produced 31 Nemotron revisions (first partial 1,304 ms,
+stop-to-final 91 ms, 6,102 ms cached prepare), and the explicit Whisper fallback prepared in
+4,094 ms and transcribed in 213 ms.
 
-Then return to the app for the single fresh offline controlled-failure input. The corrected selected
-default measured 2.451–8.924 seconds in the thirteen-turn real integration and 5.711 seconds median /
-10.908 seconds max in the unrestricted semantic benchmark.
+Then return to the app for the single fresh offline controlled-failure input. The selected default
+measured 2.451–8.924 seconds in the thirteen-turn real integration, with a 5.711-second median and
+10.908-second maximum in the unrestricted semantic benchmark.

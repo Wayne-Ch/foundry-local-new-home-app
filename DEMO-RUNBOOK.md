@@ -1,4 +1,4 @@
-# New Home App demo runbook
+# New Home App runbook
 
 ## Before the session
 
@@ -43,7 +43,7 @@
 
 First model and execution-provider preparation can take several minutes while assets download.
 Stay online and keep New Home App open until the green **Local model ready** state appears; later
-demo actions can run offline.
+app actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:
@@ -115,7 +115,8 @@ active, or another product's profile/log path is shown.
 3. Confirm live text is an editable draft and is not submitted automatically.
 4. Apply or dismiss any furniture correction suggestions.
 5. Select **Send**.
-6. If Nemotron is unavailable, explicitly select **Use Whisper Tiny fallback**.
+6. If Nemotron is unavailable, explicitly select
+   **Use Whisper Tiny fallback (record then transcribe)**.
 
 Stop if a transcript submits automatically, a suggestion edits the prompt without explicit action,
 or the app reports any external endpoint use.
@@ -140,7 +141,7 @@ npm run start:built
 
 | Symptom | Action |
 |---|---|
-| npm rejects the runtime before install or a script run | Use Node.js `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are excluded; the validated pair is Node `26.13.0` with npm `11.20.0`. |
+| npm rejects the runtime before install or a script run | Use Node.js `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are excluded; the validated pair is Node `26.13.0` with npm `11.20.0`. |
 | A cold empty cache shows **Prepare offline** | Select it while online. Do not expect **Load local model** until `modelCached` becomes `true`. |
 | A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | Select it. This exact label is correct whenever `modelCached=true` and the runtime is not READY. |
 | The control shows **Local model ready** | Do not select it. Continue only after confirming the green ready badge and exact model/provider identity. |

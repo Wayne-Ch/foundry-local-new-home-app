@@ -1,30 +1,27 @@
 # New Home App playtest
 
-This is the complete first-time colleague route for New Home App.
+This is the complete first-time manual-validation route for New Home App.
 
 ## Requirements
 
-- Windows 11 x64 for the currently validated setup and playtest route; other app environments do
-  not yet have equivalent validation evidence
-- Git
-- A WebGPU-capable graphics adapter and current driver; the layout model uses
-  `WebGPUExecutionProvider`
+- Windows 11 x64
+- Git for Windows
 - Supported Node.js range: `^22.12.0 || ^24.0.0 || >=26.0.0`; Node 23.x and 25.x are not supported
 - Supported npm minimum: `>=11.18.0`; this is required for `npm install-scripts`
-- Internet access for installation and first preparation
+- Internet access for installation and first model/execution-provider preparation
 - Several GB of free disk space for dependencies and model assets
-- No minimum RAM value has been established by testing
-- A microphone is needed only for voice-path testing; typed and scripted flows remain available
-  without one
+- A WebGPU-capable graphics adapter with a current driver; the layout model uses
+  `WebGPUExecutionProvider`
+- An optional microphone for voice-path testing; typed and scripted flows do not require one
 
-## Validated configuration
+## Validated configuration and current limits
 
 This playtest's current E2E evidence was collected with Node `26.13.0` and npm `11.20.0` on Windows
-11 x64 with an AMD Radeon 860M and 64 GB RAM. AMD Radeon 860M identifies the evidence machine; it is
-not a minimum or required adapter. The product requirement is a WebGPU-capable graphics
-adapter/driver for the current layout model configuration. Foundry Local's broader public platform
-and hardware support is separate, and other app environments must not be presented as having
-equivalent evidence until tested to the same depth.
+11 x64 with an AMD Radeon 860M and 64 GB RAM. Those hardware values describe the evidence machine,
+not product minimums; no minimum RAM value has been established by testing. The product requirement
+is a WebGPU-capable graphics adapter with a current driver for the layout model. Foundry Local's
+broader public platform and hardware support is separate, and other app environments do not have
+equivalent app evidence until tested to the same depth.
 
 ## Fresh clone, install, build, and launch
 
@@ -33,7 +30,7 @@ Open PowerShell in the parent folder where `new-home-app` should be created:
 ```powershell
 node --version
 npm --version
-git clone https://github.com/Wayne-Ch/foundry-local-new-home-app.git new-home-app
+git clone '<repository-url>' new-home-app
 Set-Location -LiteralPath '.\new-home-app'
 npm ci --no-audit --no-fund
 npm install-scripts approve electron esbuild foundry-local-sdk
@@ -50,7 +47,7 @@ temporary files.
 
 First model and execution-provider preparation can take several minutes while assets download.
 Stay online and keep New Home App open until the green **Local model ready** state appears; later
-demo actions can run offline.
+app actions can run offline.
 
 The normal setup button is determined only by `readiness.modelCached`; WebGPU provider registration
 does not select the wording:
@@ -62,10 +59,10 @@ does not select the wording:
 | Model cached; product-specific WebGPU provider registration still needed | `true` | **Load local model** | Select it. Provider registration does not change the label. |
 | Loaded READY state | `true` | **Local model ready** | Do not select it; continue only when the green ready state is visible. |
 
-1. **Action:** Confirm the window, page heading, and package product are **New Home App** and the
-   verified built-in bedroom is already active.
-   **Expected:** No setup, room-selection, or floor-plan import screen appears.
-   **Stop if:** The title differs, the room is absent, or an intake screen appears.
+1. **Action:** Confirm the window, page heading, and package product are **New Home App**.
+   **Expected:** The verified built-in bedroom is already active; there is no room setup or
+   selection screen.
+   **Stop if:** The title differs or the verified built-in bedroom is absent.
 
 2. **Action:** Follow the table using the exact visible control. On a cold cache, select
    **Prepare offline**. When the model is already cached but the runtime is not READY - including
@@ -160,14 +157,14 @@ manual adjustment, **E** King controlled failure.
     **Expected:** A new stream lease succeeds and the editable transcript remains unsent.
     **Stop if:** The old stream is reused or the transcript auto-submits.
 
-If Nemotron deterministically fails and the UI exposes **Whisper Tiny fallback (record then
+If Nemotron deterministically fails and the UI exposes **Use Whisper Tiny fallback (record then
 transcribe)**, selecting it is an explicit fallback check. It must never activate silently.
 
 ## Troubleshooting
 
 | Symptom | Action |
 |---|---|
-| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 || ^24.0.0 || >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
+| npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are intentionally excluded. The validated pair is Node `26.13.0` with npm `11.20.0`; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | The npm version is below the supported minimum. Upgrade to npm `>=11.18.0` (validated: `11.20.0`), rerun `npm ci --no-audit --no-fund`, then approve the three pinned install scripts. |
 | A cold empty cache shows **Prepare offline** | This is the expected `modelCached=false` label. Stay online, select it, and wait for the operation to finish. |
 | A warm shared cache, fresh product root, or pending product-specific WebGPU registration shows **Load local model** | This is the expected `modelCached=true` label. Select **Load local model**; do not look for **Prepare offline** based on provider state. |

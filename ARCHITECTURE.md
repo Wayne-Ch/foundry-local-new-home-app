@@ -84,7 +84,7 @@ sequenceDiagram
   U->>T: Review/edit, then click Send
 
   opt Explicit fallback after deterministic Nemotron failure/user action
-    U->>R: Choose Whisper Tiny fallback
+    U->>R: Select Use Whisper Tiny fallback (record then transcribe)
     R->>R: Record PCM locally
     R->>M: One bounded final capture
     M->>M: Write owner-only tracked WAV
@@ -134,16 +134,20 @@ explicit recovery selection.
 
 ### ASR candidate evidence
 
-| Model | Catalog status before evaluation | Size / device / EP | v2.2.1 API path | Measured result |
+| Model | Validated role | Size / device / EP | v2.2.1 API path | Measured result |
 |---|---|---|---|---|
-| `openai-whisper-tiny-generic-cpu:4` | Cached explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 4.035 s; transcription 221 ms |
-| `openai-whisper-base-generic-cpu:3` | Cached | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
-| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Cached stage default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.248 s; stop-to-final 205 ms; cached prepare 5.482 s; exact words |
-| `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Uncached, not downloaded | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
+| `openai-whisper-tiny-generic-cpu:4` | Explicit fallback | 131 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; cached prepare 4.035 s; transcription 221 ms |
+| `openai-whisper-base-generic-cpu:3` | Evaluated candidate | 205 MB / CPU / CPU EP | `AudioSession` file URI | Exact text; 362–427 ms |
+| `nemotron-speech-streaming-en-0.6b-generic-cpu:3` | Default | 696 MB / CPU / CPU EP | v2.2.1 `AudioSession` PCM `ItemQueue` | 31 revisions; first partial 1.248 s; stop-to-final 205 ms; cached prepare 5.482 s; exact words |
+| `nemotron-3.5-asr-streaming-0.6b-generic-cpu:3` | Not evaluated | 756 MB / CPU / CPU EP | Pinned live PCM path | Not tested; multilingual/Chinese not claimed |
 
-Nemotron is selected because the stage UI now renders its revising partials. Whisper Tiny remains
+These are candidate-evaluation measurements from their recorded runs; the current release
+checkpoint is in [VALIDATION.md](VALIDATION.md).
+
+Nemotron is the default because the stage UI renders its revising partials. Whisper Tiny remains
 available for its smaller footprint and fast final-only transcription, but switching requires the
-visible fallback control. No code path silently substitutes it.
+visible **Use Whisper Tiny fallback (record then transcribe)** control. No code path silently
+substitutes it.
 
 Current validation covers worklet startup cleanup, generation-tagged renderer/main state-v0 reset,
 renderer reset concurrency, active-stream ownership revocation, cancellation failure/timeout
@@ -284,13 +288,12 @@ The application first implemented the v2.2.1 native function-tool API:
 - `parallel_tool_calls=false`;
 - typed `ToolCallItem` and `ToolResultItem`.
 
-The full-input/native-call experiments were slow or unreliable because small models had to repeat
+The full-input/native-call path was slow or unreliable because small models had to repeat
 state references, versions, catalog IDs, and constraint fields. The compact contract removes those
-application-owned fields from model generation. Under the corrected unrestricted-enum gate,
+application-owned fields from model generation. Under the unrestricted-enum gate,
 `qwen3-0.6b-generic-gpu:2` passed all 18 required semantic scenarios, including baby-bed aliases,
-negated transitions, and unsupported California King, twin-bed, and moon-pod requests, and remains the stage-validated
-built-in default. Other candidate claims were not carried forward without this final corrected-gate
-rerun.
+negated transitions, and unsupported California King, twin-bed, and moon-pod requests, and remains
+the stage-validated built-in default. No other candidate has equivalent gate evidence.
 
 The chosen fallback still uses the current `ChatSession` API and runtime grammar, but the model emits
 the argument object as JSON rather than a native tool marker. The app invokes the tool explicitly and
@@ -325,6 +328,6 @@ left discoverable for next-launch recovery rather than reported as clean.
 The code uses Electron, Node paths, and the cross-platform JavaScript SDK. The built-in stage target
 is exact and has no best-cached fallback. Alternate targets require both an exact
 `FOUNDRY_MODEL_ID` and `FOUNDRY_EXECUTION_PROVIDER`; readiness and the UI identify them as
-environment overrides and do not imply stage validation. No Apple-silicon Mac was available, so
-macOS packaging, model variant selection, EP registration, layout fidelity, and performance remain
-unvalidated.
+environment overrides and do not imply stage validation. macOS packaging, model variant selection,
+EP registration, layout fidelity, and performance remain unvalidated; no Apple-silicon evidence is
+recorded.
