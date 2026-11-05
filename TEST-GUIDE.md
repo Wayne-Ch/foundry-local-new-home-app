@@ -27,77 +27,73 @@ Do not switch branches or reuse another checkout's `node_modules`.
 First preparation may download model files and supporting assets. Stay online and keep New Home App
 open until the green **Local model ready** state appears; later app actions can run offline.
 
-1. **Action:** Confirm the window title and page heading both say **New Home App**.
-   **Expected:** The verified built-in bedroom is already active; there is no room setup or
-   selection screen.
-
-2. **Action:** Select **Prepare offline** or **Load local model**, whichever is visible. Keep the
-   app open and online.
-   **Expected:** The green badge reaches **Local model ready** and identifies
-   `qwen3-0.6b-generic-gpu:2` with `WebGPUExecutionProvider`.
+**Action:** Select **Prepare offline** or **Load local model**, whichever is visible. Keep the
+app open and online.
+**Expected:** The green badge reaches **Local model ready** and identifies
+`qwen3-0.6b-generic-gpu:2` with `WebGPUExecutionProvider`.
 
 ## A through E
 
 Mapping: **A** Queen + desk, **B** King conflict, **C** Queen + desk + baby bed, **D** manual
 adjustment, **E** King controlled failure.
 
-3. **Action (A):** Select **Run next: A · Queen + desk**.
+1. **Action (A):** Select **Run next: A · Queen + desk**.
    **Expected:** Queen + rotated standard desk is accepted; the Buyer request appears once, and
    the response shows the conclusion without repeating the request.
 
-4. **Action (B):** Select **Run next: B · King conflict**.
+2. **Action (B):** Select **Run next: B · King conflict**.
    **Expected:** A King rejected preview appears automatically with **Rejected preview · not
    accepted**; A remains accepted and rejected furniture is not interactive.
 
-5. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
+3. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
    **Expected:** The preserved A layout and the same B details alternate without adding a message
    or rerunning the request.
 
-6. **Action (C):** Select **Run next: C · Queen + desk + baby bed**.
+4. **Action (C):** Select **Run next: C · Queen + desk + baby bed**.
    **Expected:** Queen + compact desk + baby bed is accepted and E becomes the next guided action.
 
-7. **Action (D):** For each accepted item - Queen bed, compact desk, and baby bed - drag it one
+5. **Action (D):** For each accepted item - Queen bed, compact desk, and baby bed - drag it one
    50 mm grid step to the right, verify the valid preview, then select **Revert**.
    **Expected:** Every furniture type supports pointer adjustment; Revert restores the accepted
    coordinates, and no new Buyer request or response appears.
 
-8. **Action (D):** Focus each accepted item and press Right Arrow once. Revert the Queen and
+6. **Action (D):** Focus each accepted item and press Right Arrow once. Revert the Queen and
    baby bed previews; select **Apply** for the compact desk preview.
    **Expected:** Every furniture type supports a 50 mm keyboard preview. Apply updates the accepted
    layout, Revert preserves the prior accepted layout, and no new Buyer request or response appears.
 
-9. **Action (E):** Select **Run next: E · King controlled failure**.
+7. **Action (E):** Select **Run next: E · King controlled failure**.
    **Expected:** A King rejected preview appears automatically; C/D remains accepted and rejected
    furniture is non-interactive.
 
-10. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
+8. **Action:** Select **Show accepted layout**, then **Inspect rejected option**.
     **Expected:** The existing C/D state and the same E details alternate without adding a message
     or rerunning the request.
 
 ## Typed input, voice input, and Reset
 
-11. **Action:** Select **Reset**. In **Manual prompt**, enter
+9. **Action:** Select **Reset**. In **Manual prompt**, enter
     `Can a Queen-size bed and a desk fit here without blocking the closet or the door?`, then select
     **Send**.
     **Expected:** The built-in room remains active; the exact typed request appears once and the
     accepted Queen + desk result appears.
 
-12. **Action:** Select **Reset**, then **Prepare Nemotron live**. Keep the app online and open until
+10. **Action:** Select **Reset**, then **Prepare Nemotron live**. Keep the app online and open until
     the audio badge reports the exact
     `nemotron-speech-streaming-en-0.6b-generic-cpu:3` model in **LIVE** mode.
     **Expected:** Nemotron is the visible default voice model; Whisper does not activate unless its
     fallback control is explicitly selected.
 
-13. **Action:** Select **Start recording**, speak a Queen + desk request, then select **Stop**.
+11. **Action:** Select **Start recording**, speak a Queen + desk request, then select **Stop**.
     Review the editable transcript and any visible correction suggestion before selecting **Send**.
     **Expected:** Live text remains an unsent draft until Send; the exact edited text appears once
     in the conversation, and the resulting layout is shown.
 
-14. **Action:** Start another recording, then select **Reset** while recording.
+12. **Action:** Start another recording, then select **Reset** while recording.
     **Expected:** Recording stops; the prompt, transcript, suggestions, and any manual-adjustment
     preview clear; and the built-in room remains active.
 
-15. **Action:** Start a fresh recording after Reset, then stop it without sending.
+13. **Action:** Start a fresh recording after Reset, then stop it without sending.
     **Expected:** Recording starts normally and the editable transcript remains unsent.
 
 If Nemotron fails and the UI exposes **Use Whisper Tiny fallback (record then transcribe)**, select
@@ -116,7 +112,7 @@ it only to test the record-then-transcribe fallback. It must never activate on i
 
 ## Clean shutdown
 
-16. **Action:** Close the New Home App window and wait for `npm run start:built` to return to the
+14. **Action:** Close the New Home App window and wait for `npm run start:built` to return to the
     PowerShell prompt.
     **Expected:** The window closes without a visible cleanup error and the launch command returns
     to the prompt.
