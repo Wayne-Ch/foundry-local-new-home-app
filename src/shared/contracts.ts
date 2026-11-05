@@ -179,6 +179,7 @@ export interface FloorPlanLoadResponse {
 
 export interface PrepareOfflineResponse {
   readonly readiness: RuntimeReadiness;
+  readonly visionReadiness: FloorPlanVisionReadiness;
   readonly model: ModelIdentity | null;
 }
 

@@ -157,6 +157,20 @@ try {
     "rectangle-only-control.png",
   );
 
+  const visionReadiness = await service.prepareFloorPlanVision((detail) => {
+    console.log(`[floor-plan:prepare] ${detail}`);
+  });
+  assert(visionReadiness.modelCached, "The exact floor-plan vision model is not cached.");
+  assert(visionReadiness.localInferenceReady, "The exact floor-plan vision model is not loaded.");
+  assert(
+    visionReadiness.model?.id === "qwen3.5-0.8b-generic-cpu:3",
+    `Unexpected prepared vision model ${visionReadiness.model?.id ?? "<none>"}.`,
+  );
+  assert(
+    visionReadiness.model.executionProvider === "CPUExecutionProvider",
+    `Unexpected prepared vision provider ${visionReadiness.model.executionProvider}.`,
+  );
+
   const positive = await runVisionCase("exact-nara-positive", fixturePath, true);
   assert(positive.accepted, "The exact NARA fixture failed the visible-evidence contract.");
   assert(positive.evidence.sha256 === FLOOR_PLAN_FIXTURE_SHA256, "Exact fixture SHA-256 changed.");
@@ -265,6 +279,7 @@ try {
 
   successEvidence = {
     marker: successMarker,
+    readiness: visionReadiness,
     validatorCases: visionCases,
     model: positive.outcome.model,
     recognition: positive.outcome.recognition,

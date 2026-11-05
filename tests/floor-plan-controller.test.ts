@@ -37,16 +37,23 @@ const readiness: RuntimeReadiness = {
     source: "built_in_default",
     stageValidated: true,
   },
-  model: null,
-  modelCached: false,
+  model: {
+    alias: "qwen3-0.6b",
+    id: "qwen3-0.6b-generic-gpu:2",
+    deviceType: "GPU",
+    executionProvider: "WebGPUExecutionProvider",
+    supportsToolCalling: true,
+    fileSizeMb: 529,
+  },
+  modelCached: true,
   executionProviderRegistered: true,
-  localInferenceReady: false,
+  localInferenceReady: true,
   externalEndpointUsed: false,
   nonessentialTelemetryDisabled: true,
   cachePath: "<test>",
   appDataPath: "<test>",
-  status: "preparation_required",
-  detail: "Not loaded.",
+  status: "ready",
+  detail: "Ready.",
 };
 
 const audioReadiness: AudioReadiness = {
@@ -77,10 +84,35 @@ const visionReadiness: FloorPlanVisionReadiness = {
     task: "vision-language-chat",
     stageValidated: true,
   },
+  model: {
+    alias: "qwen3.5-0.8b",
+    id: "qwen3.5-0.8b-generic-cpu:3",
+    deviceType: "CPU",
+    executionProvider: "CPUExecutionProvider",
+    supportsToolCalling: false,
+    fileSizeMb: 900,
+  },
+  modelCached: true,
+  localInferenceReady: true,
+  externalEndpointUsed: false,
+  status: "ready",
+  detail: "Ready.",
+};
+
+const coldReadiness: RuntimeReadiness = {
+  ...readiness,
   model: null,
   modelCached: false,
   localInferenceReady: false,
-  externalEndpointUsed: false,
+  status: "preparation_required",
+  detail: "Not loaded.",
+};
+
+const coldVisionReadiness: FloorPlanVisionReadiness = {
+  ...visionReadiness,
+  model: null,
+  modelCached: false,
+  localInferenceReady: false,
   status: "not_initialized",
   detail: "Not prepared.",
 };
@@ -131,11 +163,21 @@ function unused(): never {
 
 type TestFoundry = NonNullable<DemoControllerOptions["foundry"]>;
 
-function createFoundry(overrides: Partial<TestFoundry> = {}): TestFoundry {
+function createFoundry(
+  overrides: Partial<TestFoundry> = {},
+  state: {
+    readonly readiness?: () => RuntimeReadiness;
+    readonly visionReadiness?: () => FloorPlanVisionReadiness;
+  } = {},
+): TestFoundry {
   return {
-    readiness,
+    get readiness() {
+      return state.readiness?.() ?? readiness;
+    },
     audioReadiness,
-    visionReadiness,
+    get visionReadiness() {
+      return state.visionReadiness?.() ?? visionReadiness;
+    },
     initialize: async () => readiness,
     prepareOffline: async () => readiness,
     prepareAudioOffline: async () => unused(),
@@ -257,6 +299,117 @@ function deferred<T>() {
 }
 
 describe("floor-plan controller lifecycle", () => {
+  it("prepares both exact core models through one setup action and reports 2/2 only after both finish", async () => {
+    let currentReadiness = coldReadiness;
+    let currentVisionReadiness = coldVisionReadiness;
+    const calls: string[] = [];
+    const prepareOffline = vi.fn(async (onProgress?: (detail: string) => void) => {
+      calls.push("layout");
+      onProgress?.("Layout model download 100.0%");
+      currentReadiness = readiness;
+      return currentReadiness;
+    });
+    const prepareFloorPlanVision = vi.fn(async (onProgress?: (detail: string) => void) => {
+      calls.push("vision");
+      onProgress?.("Vision model download 100.0%");
+      currentVisionReadiness = visionReadiness;
+      return currentVisionReadiness;
+    });
+    const controller = new DemoController({
+      foundry: createFoundry(
+        { prepareOffline, prepareFloorPlanVision },
+        {
+          readiness: () => currentReadiness,
+          visionReadiness: () => currentVisionReadiness,
+        },
+      ),
+    });
+    const progress: string[] = [];
+
+    const response = await controller.prepareOffline((event) => progress.push(event.detail));
+
+    expect(calls).toEqual(["layout", "vision"]);
+    expect(prepareOffline).toHaveBeenCalledOnce();
+    expect(prepareFloorPlanVision).toHaveBeenCalledOnce();
+    expect(response).toMatchObject({
+      readiness: {
+        model: {
+          id: "qwen3-0.6b-generic-gpu:2",
+          executionProvider: "WebGPUExecutionProvider",
+        },
+        localInferenceReady: true,
+      },
+      visionReadiness: {
+        model: {
+          id: "qwen3.5-0.8b-generic-cpu:3",
+          executionProvider: "CPUExecutionProvider",
+        },
+        localInferenceReady: true,
+      },
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Local model 1/2 · Layout planning"),
+        expect.stringContaining("Local model 2/2 · Floor-plan vision"),
+        "Offline ready · 2/2 local models",
+      ]),
+    );
+  });
+
+  it("blocks Analyze layout before core readiness without preparing or acquiring a model", async () => {
+    const analyzeFloorPlan = vi.fn(async () => outcome());
+    const prepareOffline = vi.fn(async () => readiness);
+    const prepareFloorPlanVision = vi.fn(async () => visionReadiness);
+    const controller = new DemoController({
+      foundry: createFoundry(
+        { analyzeFloorPlan, prepareOffline, prepareFloorPlanVision },
+        {
+          readiness: () => coldReadiness,
+          visionReadiness: () => coldVisionReadiness,
+        },
+      ),
+    });
+    await controller.loadFloorPlanImage(sample, "sample", "sample");
+
+    await expect(controller.analyzeFloorPlan()).rejects.toThrow("Offline ready · 2/2 local models");
+
+    expect(analyzeFloorPlan).not.toHaveBeenCalled();
+    expect(prepareOffline).not.toHaveBeenCalled();
+    expect(prepareFloorPlanVision).not.toHaveBeenCalled();
+    expect(controller.bootstrap().floorPlanImport.status).toBe("image_ready");
+  });
+
+  it("runs Analyze layout as inference-only after the one setup action", async () => {
+    let currentReadiness = coldReadiness;
+    let currentVisionReadiness = coldVisionReadiness;
+    const prepareOffline = vi.fn(async () => {
+      currentReadiness = readiness;
+      return currentReadiness;
+    });
+    const prepareFloorPlanVision = vi.fn(async () => {
+      currentVisionReadiness = visionReadiness;
+      return currentVisionReadiness;
+    });
+    const analyzeFloorPlan = vi.fn(async () => outcome());
+    const controller = new DemoController({
+      foundry: createFoundry(
+        { analyzeFloorPlan, prepareOffline, prepareFloorPlanVision },
+        {
+          readiness: () => currentReadiness,
+          visionReadiness: () => currentVisionReadiness,
+        },
+      ),
+    });
+
+    await controller.prepareOffline();
+    await controller.loadFloorPlanImage(sample, "sample", "sample");
+    await controller.analyzeFloorPlan();
+
+    expect(prepareOffline).toHaveBeenCalledOnce();
+    expect(prepareFloorPlanVision).toHaveBeenCalledOnce();
+    expect(analyzeFloorPlan).toHaveBeenCalledOnce();
+  });
+
   it("starts with no active room or geometry and blocks layout operations", async () => {
     const controller = new DemoController({ foundry: createFoundry() });
 

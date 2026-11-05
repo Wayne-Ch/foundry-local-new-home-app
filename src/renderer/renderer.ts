@@ -36,6 +36,7 @@ import type {
   ResolvedPlacement,
   RuntimeReadiness,
 } from "../domain/types";
+import { deriveCoreModelReadiness, OFFLINE_CORE_READY_TEXT } from "../foundry/core-model-readiness";
 import { nextPendingStageTurnIndex } from "../foundry/prompt";
 import type {
   AudioTranscriptionResponse,
@@ -81,7 +82,7 @@ import {
   resetRendererTransientState,
 } from "./reset-state";
 import { type ActiveRoomView, getActiveRoomView } from "./room-state";
-import { runtimeBadgeLabel } from "./runtime-presentation";
+import { type CoreModelStatusLine, coreModelStatusLines, runtimeBadgeLabel } from "./runtime-presentation";
 import { applySpeechCorrectionSuggestions } from "./speech-correction";
 import {
   applySpeechSuggestion,
@@ -126,6 +127,7 @@ let layoutEvidenceView: LayoutEvidenceView = "accepted";
 let focusedPlacementInstanceId: string | null = null;
 let speechCorrection: SpeechSuggestionState | null = null;
 let speechCorrectionProvenance: SpeechCorrectionProvenance | null = null;
+let corePreparationStatus: Partial<Record<"layout" | "vision", CoreModelStatusLine["state"]>> | null = null;
 
 interface PlacementDragState {
   readonly pointerId: number;
@@ -138,6 +140,8 @@ let placementDrag: PlacementDragState | null = null;
 
 const runtimeBadge = requiredElement("runtimeBadge");
 const runtimeLabel = requiredElement("runtimeLabel");
+const layoutCoreModelStatus = requiredElement("layoutCoreModelStatus");
+const visionCoreModelStatus = requiredElement("visionCoreModelStatus");
 const prepareButton = requiredButton("prepareButton");
 const audioBadge = requiredElement("audioBadge");
 const audioLabel = requiredElement("audioLabel");
@@ -283,6 +287,7 @@ prepareButton.addEventListener("click", async () => {
     return;
   }
   const lifecycleGeneration = operationBarrier.beginOperation();
+  corePreparationStatus = { layout: "checking" };
   setBusy(true);
   try {
     if (demoApi === null) {
@@ -292,14 +297,26 @@ prepareButton.addEventListener("click", async () => {
     if (!operationBarrier.isCurrentOperation(lifecycleGeneration)) {
       return;
     }
-    viewState = { ...viewState, readiness: response.readiness };
-    renderRuntime(response.readiness);
+    viewState = {
+      ...viewState,
+      readiness: response.readiness,
+      visionReadiness: response.visionReadiness,
+    };
+    renderAll();
   } catch (error) {
     if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
-      showRuntimeError(error);
+      try {
+        const bootstrap = await demoApi.getBootstrap();
+        if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+          applyBootstrap(bootstrap);
+        }
+      } catch {
+        showRuntimeError(error);
+      }
     }
   } finally {
     if (operationBarrier.isCurrentOperation(lifecycleGeneration)) {
+      corePreparationStatus = null;
       setBusy(false);
     }
   }
@@ -792,14 +809,16 @@ function renderFloorPlanImport(): void {
   }
 
   const vision = viewState.visionReadiness;
+  const coreReadiness = deriveCoreModelReadiness(viewState.readiness, vision);
   if (imported.status === "idle") {
     floorPlanImportStatus.textContent =
       viewState.roomMode === "default"
         ? "Verified default room is active. Load the packaged NARA PNG to begin a new import."
         : "No room is active. Load the packaged NARA PNG or choose an exact byte-for-byte copy, then Analyze layout; Use default room is an explicit fallback.";
   } else if (imported.status === "image_ready") {
-    floorPlanImportStatus.textContent =
-      "Preview only: exact NARA fixture identity passed PNG, 1020 x 1080, byte-length, and SHA-256 checks. No room geometry is active until Analyze layout succeeds.";
+    floorPlanImportStatus.textContent = coreReadiness.allReady
+      ? "Preview only: exact NARA fixture identity passed PNG, 1020 x 1080, byte-length, and SHA-256 checks. No room geometry is active until Analyze layout succeeds."
+      : `Preview only: exact NARA fixture identity passed. Select the setup control and wait for ${OFFLINE_CORE_READY_TEXT} before Analyze layout.`;
   } else if (imported.status === "analyzing") {
     floorPlanImportStatus.textContent = `Analyzing locally with ${vision.target.modelId}; no cloud endpoint or canned fallback.`;
   } else if (imported.status === "imported") {
@@ -814,7 +833,10 @@ function renderFloorPlanImport(): void {
   loadSampleFloorPlanButton.disabled = controlsBlocked;
   chooseFloorPlanButton.disabled = controlsBlocked;
   analyzeFloorPlanButton.disabled =
-    controlsBlocked || preview === null || !["image_ready", "error"].includes(imported.status);
+    controlsBlocked ||
+    !coreReadiness.allReady ||
+    preview === null ||
+    !["image_ready", "error"].includes(imported.status);
   useDefaultRoomButton.disabled = controlsBlocked || (viewState.roomMode === "default" && preview === null);
 }
 
@@ -824,7 +846,19 @@ function nextStageTurnIndex(): number {
 
 function renderRuntime(readiness: RuntimeReadiness): void {
   const roomActive = activeRoomView() !== null;
+  const coreReadiness = deriveCoreModelReadiness(readiness, viewState.visionReadiness);
+  const modelStatuses = coreModelStatusLines(readiness, viewState.visionReadiness);
+  const visionFailed = ["error", "model_unavailable"].includes(viewState.visionReadiness.status);
   runtimeBadge.className = "runtime-badge";
+  runtimeBadge.title = `${runtimeBadgeLabel(readiness)}. ${readiness.detail} Floor-plan vision: ${viewState.visionReadiness.detail}`;
+  renderCoreModelStatus(
+    layoutCoreModelStatus,
+    overrideCoreModelStatus(modelStatuses.layout, corePreparationStatus?.layout),
+  );
+  renderCoreModelStatus(
+    visionCoreModelStatus,
+    overrideCoreModelStatus(modelStatuses.vision, corePreparationStatus?.vision),
+  );
   if (readiness.status === "configuration_invalid") {
     runtimeBadge.classList.add("is-error");
     runtimeLabel.textContent = runtimeBadgeLabel(readiness);
@@ -836,25 +870,26 @@ function renderRuntime(readiness: RuntimeReadiness): void {
       readiness.status === "recovering" ? "Reset recovery in progress" : "Reset recovery required";
     prepareButton.textContent = "Runtime quarantined";
     prepareButton.disabled = true;
-  } else if (readiness.localInferenceReady) {
+  } else if (coreReadiness.allReady) {
     runtimeBadge.classList.add("is-ready");
-    if (!readiness.target.stageValidated) {
-      runtimeBadge.classList.add("is-override");
-    }
-    runtimeLabel.textContent = runtimeBadgeLabel(readiness);
-    prepareButton.textContent = readiness.target.stageValidated ? "Local model ready" : "Override ready";
+    runtimeLabel.textContent = OFFLINE_CORE_READY_TEXT;
+    prepareButton.textContent = "Local models ready";
     prepareButton.disabled = true;
-  } else if (readiness.status === "error" || readiness.status === "model_unavailable") {
+  } else if (readiness.localInferenceReady && !readiness.target.stageValidated) {
+    runtimeBadge.classList.add("is-ready", "is-override");
+    runtimeLabel.textContent = runtimeBadgeLabel(readiness);
+    prepareButton.textContent = "Override ready";
+    prepareButton.disabled = true;
+  } else if (readiness.status === "error" || readiness.status === "model_unavailable" || visionFailed) {
     runtimeBadge.classList.add("is-error");
-    runtimeLabel.textContent = readiness.target.stageValidated
-      ? "Configured local model unavailable"
-      : "Runtime override unavailable";
+    runtimeLabel.textContent = `Offline setup failed · ${coreReadiness.readyCount}/2 local models`;
     prepareButton.textContent = "Retry local setup";
     prepareButton.disabled = isBusy || operationBarrier.operationsBlocked;
   } else {
     runtimeBadge.classList.add("is-checking");
-    runtimeLabel.textContent = `${runtimeBadgeLabel(readiness)} · ${readiness.status.replaceAll("_", " ")}`;
-    prepareButton.textContent = readiness.modelCached ? "Load local model" : "Prepare offline";
+    runtimeLabel.textContent = `Offline setup · ${coreReadiness.readyCount}/2 local models`;
+    prepareButton.textContent =
+      coreReadiness.readyCount === 0 && readiness.modelCached ? "Load local model" : "Prepare offline";
     prepareButton.disabled = isBusy || operationBarrier.operationsBlocked;
   }
 
@@ -871,6 +906,27 @@ function renderRuntime(readiness: RuntimeReadiness): void {
     audioRecorderState.status === "transcribing" ||
     !readiness.localInferenceReady;
   renderTrace();
+}
+
+function renderCoreModelStatus(element: HTMLElement, status: CoreModelStatusLine): void {
+  element.className = `core-model-status is-${status.state}`;
+  element.textContent = status.text;
+  element.title = status.title;
+}
+
+function overrideCoreModelStatus(
+  status: CoreModelStatusLine,
+  state: CoreModelStatusLine["state"] | undefined,
+): CoreModelStatusLine {
+  if (state === undefined) {
+    return status;
+  }
+  const separator = status.text.lastIndexOf(" · ");
+  return {
+    ...status,
+    state,
+    text: `${status.text.slice(0, separator)} · ${state}`,
+  };
 }
 
 function renderAudio(): void {
@@ -1044,6 +1100,7 @@ function resetRendererTransientUi(): void {
   audioNotice = resetState.audioNotice;
   speechCorrection = resetState.speechCorrection;
   speechCorrectionProvenance = resetState.speechCorrectionProvenance;
+  corePreparationStatus = null;
   viewState = { ...viewState, trace: resetState.trace };
   manualPreview = resetState.manualPreview;
   manualPreviewOrigin = resetState.manualPreviewOrigin;
@@ -1920,6 +1977,21 @@ function lastTracePayload(kind: TraceEntry["kind"]): unknown {
 }
 
 function renderProgress(event: ProgressEvent): void {
+  if (corePreparationStatus !== null && event.phase === "model-planning") {
+    corePreparationStatus = {
+      layout: event.detail.toLowerCase().includes("preparing") ? "checking" : "loading",
+    };
+    renderRuntime(viewState.readiness);
+  } else if (corePreparationStatus !== null && event.phase === "vision-preparing") {
+    corePreparationStatus = {
+      layout: "ready",
+      vision: event.detail.toLowerCase().includes("preparing") ? "checking" : "loading",
+    };
+    renderRuntime(viewState.readiness);
+  } else if (event.phase === "complete" && corePreparationStatus !== null) {
+    corePreparationStatus = { layout: "ready", vision: "ready" };
+    renderRuntime(viewState.readiness);
+  }
   if (event.phase === "complete") {
     progressBar.hidden = true;
     return;
@@ -1952,6 +2024,7 @@ function handleAudioPartial(event: AudioPartialTranscriptEvent): void {
 
 function setBusy(value: boolean): void {
   const roomActive = activeRoomView() !== null;
+  const coreReadiness = deriveCoreModelReadiness(viewState.readiness, viewState.visionReadiness);
   isBusy = value;
   sendButton.disabled =
     !roomActive ||
@@ -1966,7 +2039,10 @@ function setBusy(value: boolean): void {
     audioRecorderState.status === "transcribing" ||
     !viewState.readiness.localInferenceReady;
   prepareButton.disabled =
-    value || operationBarrier.operationsBlocked || viewState.readiness.localInferenceReady;
+    value ||
+    operationBarrier.operationsBlocked ||
+    coreReadiness.allReady ||
+    (viewState.readiness.localInferenceReady && !viewState.readiness.target.stageValidated);
   resetButton.disabled = operationBarrier.resetInFlight;
   traceToggle.disabled = operationBarrier.operationsBlocked;
   traceClose.disabled = operationBarrier.operationsBlocked;

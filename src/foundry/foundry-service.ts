@@ -697,6 +697,7 @@ export class FoundryLayoutService {
       }
     }
 
+    onProgress?.(`Loading ${model.id} through ${this.#target.executionProvider}.`);
     await this.#loadModel();
     const readiness = await this.#refreshReadiness();
     if (!readiness.localInferenceReady) {
@@ -1488,6 +1489,16 @@ export class FoundryLayoutService {
           cause: error,
         });
       }
+      if (!model.isCached) {
+        this.#visionReadiness = {
+          ...this.#visionReadiness,
+          model: modelIdentity(model),
+          modelCached: false,
+          status: "error",
+          detail: `Vision model download completed without caching exact model ${model.id}.`,
+        };
+        throw new FoundryRuntimeError(this.#visionReadiness.detail, "MODEL_DOWNLOAD_FAILED");
+      }
     }
 
     this.#assertVisionOperationCurrent(generation);
@@ -1518,6 +1529,17 @@ export class FoundryLayoutService {
     }
 
     this.#assertVisionOperationCurrent(generation);
+    if (!model.isCached || !(await model.isLoaded())) {
+      this.#visionReadiness = {
+        ...this.#visionReadiness,
+        model: modelIdentity(model),
+        modelCached: model.isCached,
+        localInferenceReady: false,
+        status: "error",
+        detail: `Exact vision model ${model.id} did not remain cached and loaded after preparation.`,
+      };
+      throw new FoundryRuntimeError(this.#visionReadiness.detail, "MODEL_LOAD_FAILED");
+    }
     this.#visionReadiness = {
       ...this.#visionReadiness,
       model: modelIdentity(model),
@@ -1559,12 +1581,30 @@ export class FoundryLayoutService {
     onProgress?: (detail: string) => void,
   ): Promise<FoundryFloorPlanOutcome> {
     const started = performance.now();
-    if (!this.#visionReadiness.localInferenceReady) {
-      await this.prepareFloorPlanVision(onProgress);
+    if (
+      !this.#visionReadiness.localInferenceReady ||
+      !this.#visionReadiness.modelCached ||
+      this.#visionReadiness.status !== "ready"
+    ) {
+      throw new FoundryRuntimeError(
+        "Floor-plan vision is not ready. Use the app setup control before Analyze layout; analysis never downloads or loads models.",
+        "RUNTIME_NOT_READY",
+      );
     }
     this.#assertVisionOperationCurrent(generation);
     const model = this.#requireVisionModel();
     this.#assertVisionModel(model);
+    if (!model.isCached || !(await model.isLoaded())) {
+      this.#visionReadiness = {
+        ...this.#visionReadiness,
+        model: modelIdentity(model),
+        modelCached: model.isCached,
+        localInferenceReady: false,
+        status: "error",
+        detail: `Exact vision model ${model.id} is no longer cached and loaded. Run the setup control again before Analyze layout.`,
+      };
+      throw new FoundryRuntimeError(this.#visionReadiness.detail, "RUNTIME_NOT_READY");
+    }
 
     const attempts: FoundryFloorPlanAttempt[] = [];
     let totalPreflightMs = 0;

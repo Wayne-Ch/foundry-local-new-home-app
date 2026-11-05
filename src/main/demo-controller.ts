@@ -31,6 +31,7 @@ import {
   resetRoomSessionState,
 } from "../domain/room-session";
 import type { EvaluatedLayoutOption } from "../domain/types";
+import { deriveCoreModelReadiness, OFFLINE_CORE_READY_TEXT } from "../foundry/core-model-readiness";
 import {
   FoundryFloorPlanVisionError,
   FoundryLayoutService,
@@ -191,14 +192,46 @@ export class DemoController {
 
   async prepareOffline(onProgress?: (event: ProgressEvent) => void): Promise<PrepareOfflineResponse> {
     const generation = this.#beginOperation();
+    onProgress?.({
+      phase: "model-planning",
+      detail: "Local model 1/2 · Layout planning · Preparing the exact local model.",
+    });
     const readiness = await this.#foundry.prepareOffline((detail) => {
       if (this.#isOperationCurrent(generation)) {
-        onProgress?.({ phase: "model-planning", detail });
+        onProgress?.({
+          phase: "model-planning",
+          detail: `Local model 1/2 · Layout planning · ${detail}`,
+        });
       }
     });
     this.#assertOperationCurrent(generation);
-    this.#pushTrace("runtime", "Offline readiness prepared", readiness);
-    return { readiness, model: readiness.model };
+    onProgress?.({
+      phase: "vision-preparing",
+      detail: "Local model 2/2 · Floor-plan vision · Preparing the exact local model.",
+    });
+    const visionReadiness = await this.#foundry.prepareFloorPlanVision((detail) => {
+      if (this.#isOperationCurrent(generation)) {
+        onProgress?.({
+          phase: "vision-preparing",
+          detail: `Local model 2/2 · Floor-plan vision · ${detail}`,
+        });
+      }
+    });
+    this.#assertOperationCurrent(generation);
+    const coreReadiness = deriveCoreModelReadiness(readiness, visionReadiness);
+    if (!coreReadiness.allReady) {
+      throw new Error(
+        `Local model preparation completed without reaching 2/2 readiness (${coreReadiness.readyCount}/2 ready).`,
+      );
+    }
+    this.#pushTrace("runtime", "Offline local-model readiness prepared", {
+      coreReadiness,
+      layout: readiness,
+      floorPlanVision: visionReadiness,
+      externalEndpointUsed: false,
+    });
+    onProgress?.({ phase: "complete", detail: OFFLINE_CORE_READY_TEXT });
+    return { readiness, visionReadiness, model: readiness.model };
   }
 
   async prepareAudio(
@@ -265,21 +298,21 @@ export class DemoController {
   }
 
   async analyzeFloorPlan(onProgress?: (event: ProgressEvent) => void): Promise<BootstrapPayload> {
-    const generation = this.#beginOperation();
     const preview = this.#floorPlanImages.preview;
     if (preview === null) {
       throw new Error("Load the packaged sample or choose an exact copy of that fixture before analysis.");
     }
+    const coreReadiness = deriveCoreModelReadiness(this.#foundry.readiness, this.#foundry.visionReadiness);
+    if (!coreReadiness.allReady) {
+      throw new Error(`Use the setup control and wait for ${OFFLINE_CORE_READY_TEXT} before Analyze layout.`);
+    }
+    const generation = this.#beginOperation();
     this.#floorPlanImport = {
       ...this.#floorPlanImport,
       status: "analyzing",
       error: null,
     };
     try {
-      onProgress?.({
-        phase: "vision-preparing",
-        detail: `Preparing exact CPU vision model for ${preview.displayName}.`,
-      });
       const outcome = await this.#foundry.analyzeFloorPlan(
         this.#floorPlanImages.format,
         this.#floorPlanImages.borrowBytes(),

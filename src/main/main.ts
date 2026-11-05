@@ -843,6 +843,15 @@ async function waitForRendererControls(webContents: WebContents): Promise<void> 
 }
 
 interface FloorPlanUiSnapshot {
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+  readonly runtimeLabel: string;
+  readonly prepareText: string;
+  readonly prepareDisabled: boolean;
+  readonly layoutCoreModelStatus: string;
+  readonly visionCoreModelStatus: string;
+  readonly runtimeStripContained: boolean;
+  readonly runtimeSummaryReadable: boolean;
   readonly roomMode: string;
   readonly roomPlanId: string;
   readonly roomSvgHidden: boolean;
@@ -871,6 +880,8 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
     const fresh = await waitForFloorPlanUi(
       webContents,
       (value) =>
+        value.runtimeLabel === "Offline setup · 1/2 local models" &&
+        !value.prepareDisabled &&
         value.roomMode === "none" &&
         value.roomPlanId === "" &&
         value.roomSvgHidden &&
@@ -885,6 +896,44 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
       "fresh no-room intake UI",
     );
     captures.push(await captureFloorPlanUi(webContents, "01-fresh-blank.png"));
+
+    await clickRendererButton(webContents, "#prepareButton");
+    const coreReady = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.runtimeLabel === "Offline ready · 2/2 local models" &&
+        value.prepareText === "Local models ready" &&
+        value.prepareDisabled &&
+        value.layoutCoreModelStatus === "Layout planning · Qwen3 0.6B · GPU · ready" &&
+        value.visionCoreModelStatus === "Floor-plan vision · Qwen3.5 0.8B · CPU · ready" &&
+        value.runtimeStripContained &&
+        value.runtimeSummaryReadable,
+      "both local models to reach visible 2/2 readiness",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "02-core-models-ready.png"));
+
+    window.setContentSize(1280, 720);
+    const compactCoreReady = await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.viewportWidth === 1280 &&
+        value.viewportHeight === 720 &&
+        value.runtimeLabel === "Offline ready · 2/2 local models" &&
+        value.layoutCoreModelStatus === "Layout planning · Qwen3 0.6B · GPU · ready" &&
+        value.visionCoreModelStatus === "Floor-plan vision · Qwen3.5 0.8B · CPU · ready" &&
+        value.runtimeStripContained &&
+        value.runtimeSummaryReadable,
+      "the compact core-model status area to remain readable at 1280 x 720",
+    );
+    captures.push(await captureFloorPlanUi(webContents, "03-core-models-ready-1280x720.png"));
+
+    window.setContentSize(coreReady.viewportWidth, coreReady.viewportHeight);
+    await waitForFloorPlanUi(
+      webContents,
+      (value) =>
+        value.viewportWidth === coreReady.viewportWidth && value.viewportHeight === coreReady.viewportHeight,
+      "the default viewport to be restored after the compact-header check",
+    );
 
     await clickRendererButton(webContents, "#loadSampleFloorPlanButton");
     const preview = await waitForFloorPlanUi(
@@ -903,7 +952,7 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
         value.statusText.startsWith("Preview only:"),
       "sample preview without room geometry",
     );
-    captures.push(await captureFloorPlanUi(webContents, "02-sample-preview.png"));
+    captures.push(await captureFloorPlanUi(webContents, "04-sample-preview.png"));
 
     await clickRendererButton(webContents, "#analyzeFloorPlanButton");
     const imported = await waitForFloorPlanUi(
@@ -920,7 +969,7 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
         value.statusText.startsWith("VLM visible-topology recognition passed."),
       "successful analysis to activate imported NARA geometry",
     );
-    captures.push(await captureFloorPlanUi(webContents, "03-imported-room.png"));
+    captures.push(await captureFloorPlanUi(webContents, "05-imported-room.png"));
 
     await clickRendererButton(webContents, "#useDefaultRoomButton");
     const fallback = await waitForFloorPlanUi(
@@ -938,7 +987,7 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
         value.statusText.startsWith("Verified default room is active."),
       "explicit default-room fallback geometry",
     );
-    captures.push(await captureFloorPlanUi(webContents, "04-default-room.png"));
+    captures.push(await captureFloorPlanUi(webContents, "06-default-room.png"));
 
     await clickRendererButton(webContents, "#loadSampleFloorPlanButton");
     await waitForRendererButton(webContents, "#analyzeFloorPlanButton");
@@ -960,7 +1009,7 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
         value.statusText.includes("retry Analyze layout"),
       "failed analysis to retain preview without silent default geometry",
     );
-    captures.push(await captureFloorPlanUi(webContents, "05-analysis-failure.png"));
+    captures.push(await captureFloorPlanUi(webContents, "07-analysis-failure.png"));
 
     await clickRendererButton(webContents, "#resetButton");
     const reset = await waitForFloorPlanUi(
@@ -979,13 +1028,15 @@ async function runFloorPlanUiProbe(window: BrowserWindow, webContents: WebConten
         value.statusText.startsWith("No room is active."),
       "Reset to restore fresh no-room intake UI",
     );
-    captures.push(await captureFloorPlanUi(webContents, "06-reset-blank.png"));
+    captures.push(await captureFloorPlanUi(webContents, "08-reset-blank.png"));
     assertNoRendererLifecycleProbeErrors();
 
     console.log(
       `ELECTRON_FLOOR_PLAN_UI_PROBE_OK ${JSON.stringify({
-        path: "fresh blank -> sample preview -> imported geometry -> explicit default -> failed analysis -> reset blank",
+        path: "fresh blank -> prepare 2/2 local models -> sample preview -> imported geometry -> explicit default -> failed analysis -> reset blank",
         fresh,
+        coreReady,
+        compactCoreReady,
         preview,
         imported,
         fallback,
@@ -1006,6 +1057,11 @@ async function readFloorPlanUi(webContents: WebContents): Promise<FloorPlanUiSna
   return (await webContents.executeJavaScript(
     `(() => {
       const roomCard = document.querySelector("#roomCard");
+      const brand = document.querySelector(".brand");
+      const runtimeStrip = document.querySelector(".runtime-strip");
+      const runtimeSummary = document.querySelector(".runtime-summary");
+      const layoutCoreModelStatus = document.querySelector("#layoutCoreModelStatus");
+      const visionCoreModelStatus = document.querySelector("#visionCoreModelStatus");
       const roomSvg = document.querySelector("#roomSvg");
       const emptyState = document.querySelector("#roomEmptyState");
       const previewFrame = document.querySelector("#floorPlanPreviewFrame");
@@ -1014,7 +1070,41 @@ async function readFloorPlanUi(webContents: WebContents): Promise<FloorPlanUiSna
       const nextTurn = document.querySelector("#nextTurnButton");
       const analyze = document.querySelector("#analyzeFloorPlanButton");
       const useDefault = document.querySelector("#useDefaultRoomButton");
+      const withinViewport = (element) => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+      };
+      const statusReadable = (element) =>
+        element instanceof HTMLElement &&
+        element.offsetWidth > 0 &&
+        element.offsetHeight > 0 &&
+        element.scrollWidth <= element.clientWidth;
+      const brandRect = brand instanceof HTMLElement ? brand.getBoundingClientRect() : null;
+      const runtimeRect =
+        runtimeStrip instanceof HTMLElement ? runtimeStrip.getBoundingClientRect() : null;
       return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        runtimeLabel: document.querySelector("#runtimeLabel")?.textContent?.trim() ?? "",
+        prepareText: document.querySelector("#prepareButton")?.textContent?.trim() ?? "",
+        prepareDisabled:
+          document.querySelector("#prepareButton") instanceof HTMLButtonElement
+            ? document.querySelector("#prepareButton").disabled
+            : false,
+        layoutCoreModelStatus: layoutCoreModelStatus?.textContent?.trim() ?? "",
+        visionCoreModelStatus: visionCoreModelStatus?.textContent?.trim() ?? "",
+        runtimeStripContained:
+          withinViewport(runtimeStrip) &&
+          brandRect !== null &&
+          runtimeRect !== null &&
+          brandRect.right <= runtimeRect.left,
+        runtimeSummaryReadable:
+          withinViewport(runtimeSummary) &&
+          statusReadable(layoutCoreModelStatus) &&
+          statusReadable(visionCoreModelStatus),
         roomMode: roomCard?.dataset.roomMode ?? "",
         roomPlanId: roomCard?.dataset.roomPlanId ?? "",
         roomSvgHidden: roomSvg?.hasAttribute("hidden") === true,

@@ -290,6 +290,29 @@ function requestMessageText(request: Request, index: number): string {
 }
 
 describe("Foundry floor-plan vision slot", () => {
+  it("rejects analysis before readiness without resolving, downloading, or loading a model", async () => {
+    const { layout, vision } = models();
+    const manager = new FakeManager([layout, vision]);
+    const service = new FoundryLayoutService({
+      resolvePaths: async () => fakePaths,
+      createManager: () => manager,
+      createVisionSession: () => new VisionSession(),
+    });
+
+    await expect(service.analyzeFloorPlan("png", new Uint8Array(128).fill(5))).rejects.toMatchObject<
+      Partial<FoundryRuntimeError>
+    >({
+      code: "RUNTIME_NOT_READY",
+      message: expect.stringContaining("analysis never downloads or loads models"),
+    });
+    expect(manager.lookups).toEqual([]);
+    expect(layout.downloadCalls).toBe(0);
+    expect(layout.loadCalls).toBe(0);
+    expect(vision.downloadCalls).toBe(0);
+    expect(vision.loadCalls).toBe(0);
+    await service.shutdown();
+  });
+
   it("shares one manager, uses exact CPU VLM bytes, zero-fills the request copy, and reports no endpoint", async () => {
     const { layout, vision } = models();
     const manager = new FakeManager([layout, vision]);
@@ -309,10 +332,19 @@ describe("Foundry floor-plan vision slot", () => {
     });
     const input = new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...new Uint8Array(64).fill(7)]);
 
+    await service.prepareFloorPlanVision();
+    const preparationCalls = {
+      lookups: [...manager.lookups],
+      downloads: vision.downloadCalls,
+      loads: vision.loadCalls,
+    };
     const outcome = await service.analyzeFloorPlan("png", input);
 
     expect(managerCreates).toBe(1);
     expect(manager.lookups).toEqual([VALIDATED_MODEL_ID, FLOOR_PLAN_VISION_MODEL_ID]);
+    expect(manager.lookups).toEqual(preparationCalls.lookups);
+    expect(vision.downloadCalls).toBe(preparationCalls.downloads);
+    expect(vision.loadCalls).toBe(preparationCalls.loads);
     const parsed = parseFloorPlanRecognition(validRecognition);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) {
@@ -382,6 +414,7 @@ describe("Foundry floor-plan vision slot", () => {
     });
     const input = new Uint8Array(128).fill(9);
 
+    await service.prepareFloorPlanVision();
     const analysis = service.analyzeFloorPlan("png", input);
     await started.promise;
     const cancellation = service.cancelFloorPlanAnalysis();
@@ -419,6 +452,7 @@ describe("Foundry floor-plan vision slot", () => {
       onVisionBufferZeroed: (bytes) => zeroedBuffers.push(bytes),
     });
 
+    await service.prepareFloorPlanVision();
     const outcome = await service.analyzeFloorPlan("png", new Uint8Array(128).fill(5));
 
     expect(outcome.attempts).toHaveLength(2);

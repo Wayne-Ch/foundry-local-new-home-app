@@ -18,6 +18,7 @@ import { evaluateManualPlacement } from "../domain/manual-placement";
 import { ROOM_INTAKE_MESSAGE } from "../domain/room-session";
 import { createToolInputForTests, preferredLayoutIntentDelta } from "../domain/tool-contract";
 import type { DemoState, FloorPlanVisionReadiness, PlanningFixture, RuntimeReadiness } from "../domain/types";
+import { deriveCoreModelReadiness, OFFLINE_CORE_READY_TEXT } from "../foundry/core-model-readiness";
 import { stageTurnsForMode } from "../foundry/prompt";
 import type { BootstrapPayload, DemoApi, PrepareOfflineResponse, RunTurnResponse } from "../shared/contracts";
 
@@ -93,6 +94,22 @@ const visionReadiness: FloorPlanVisionReadiness = {
   externalEndpointUsed: false,
   status: "not_initialized",
   detail: "Visual preview only; no vision inference is running.",
+};
+
+const readyVisionReadiness: FloorPlanVisionReadiness = {
+  ...visionReadiness,
+  model: {
+    alias: "qwen3.5-0.8b",
+    id: "qwen3.5-0.8b-generic-cpu:3",
+    deviceType: "CPU",
+    executionProvider: "CPUExecutionProvider",
+    supportsToolCalling: false,
+    fileSizeMb: 900,
+  },
+  modelCached: true,
+  localInferenceReady: true,
+  status: "ready",
+  detail: "Visual preview of the prepared exact floor-plan vision model.",
 };
 
 const previewRecognition: FloorPlanRecognition = {
@@ -447,16 +464,28 @@ function buildActiveRoomResetPreview(
 
 export function createPreviewApi(): DemoApi {
   let planningFixture = requestedPlanningFixture();
-  let bootstrap = planningFixture === null ? buildInactivePreview(0) : buildPreview(0, planningFixture);
+  let currentVisionReadiness = planningFixture?.mode === "imported" ? readyVisionReadiness : visionReadiness;
+  const withCurrentCoreReadiness = (next: BootstrapPayload): BootstrapPayload => ({
+    ...next,
+    visionReadiness: currentVisionReadiness,
+  });
+  let bootstrap = withCurrentCoreReadiness(
+    planningFixture === null ? buildInactivePreview(0) : buildPreview(0, planningFixture),
+  );
   let analysisAttempts = 0;
   const flowProbe = isFlowProbeScenario();
   return {
     getBootstrap: async () => bootstrap,
     initializeRuntime: async () => readiness,
-    prepareOffline: async (): Promise<PrepareOfflineResponse> => ({
-      readiness,
-      model: readiness.model,
-    }),
+    prepareOffline: async (): Promise<PrepareOfflineResponse> => {
+      currentVisionReadiness = readyVisionReadiness;
+      bootstrap = withCurrentCoreReadiness(bootstrap);
+      return {
+        readiness,
+        visionReadiness: currentVisionReadiness,
+        model: readiness.model,
+      };
+    },
     prepareAudio: async () => ({ readiness: audioReadiness }),
     authorizeMicrophone: async () => {
       throw new Error("Microphone capture is unavailable in the visual-only browser preview.");
@@ -476,13 +505,15 @@ export function createPreviewApi(): DemoApi {
     cancelAudioStream: async () => {},
     loadSampleFloorPlan: async () => {
       planningFixture = null;
-      bootstrap = buildInactivePreview(bootstrap.conversationGeneration + 1, {
-        status: "image_ready",
-        preview: sampleFloorPlanPreview,
-        recognition: null,
-        recognizedFacts: [],
-        error: null,
-      });
+      bootstrap = withCurrentCoreReadiness(
+        buildInactivePreview(bootstrap.conversationGeneration + 1, {
+          status: "image_ready",
+          preview: sampleFloorPlanPreview,
+          recognition: null,
+          recognizedFacts: [],
+          error: null,
+        }),
+      );
       return { cancelled: false, bootstrap };
     },
     chooseFloorPlan: async () => ({ cancelled: true, bootstrap }),
@@ -491,26 +522,35 @@ export function createPreviewApi(): DemoApi {
       if (preview === null) {
         throw new Error("Load the packaged sample before analysis.");
       }
+      if (!deriveCoreModelReadiness(readiness, currentVisionReadiness).allReady) {
+        throw new Error(`Use the setup control and wait for ${OFFLINE_CORE_READY_TEXT}.`);
+      }
       analysisAttempts += 1;
       if (flowProbe && analysisAttempts > 1) {
         const detail = "Probe-forced vision analysis failure.";
         planningFixture = null;
-        bootstrap = buildInactivePreview(bootstrap.conversationGeneration, {
-          status: "error",
-          preview,
-          recognition: null,
-          recognizedFacts: [],
-          error: detail,
-        });
+        bootstrap = withCurrentCoreReadiness(
+          buildInactivePreview(bootstrap.conversationGeneration, {
+            status: "error",
+            preview,
+            recognition: null,
+            recognizedFacts: [],
+            error: detail,
+          }),
+        );
         throw new Error(detail);
       }
       planningFixture = createImportedPlanningFixture(previewRecognition);
-      bootstrap = buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture, preview);
+      bootstrap = withCurrentCoreReadiness(
+        buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture, preview),
+      );
       return bootstrap;
     },
     useDefaultRoom: async () => {
       planningFixture = defaultPlanningFixture;
-      bootstrap = buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture);
+      bootstrap = withCurrentCoreReadiness(
+        buildActiveRoomResetPreview(bootstrap.conversationGeneration + 1, planningFixture),
+      );
       return bootstrap;
     },
     runTurn: async (): Promise<RunTurnResponse> => {
@@ -581,7 +621,8 @@ export function createPreviewApi(): DemoApi {
     },
     resetConversation: async () => {
       planningFixture = null;
-      bootstrap = buildInactivePreview(bootstrap.conversationGeneration + 1);
+      currentVisionReadiness = visionReadiness;
+      bootstrap = withCurrentCoreReadiness(buildInactivePreview(bootstrap.conversationGeneration + 1));
       return bootstrap;
     },
     onProgress: () => () => {},

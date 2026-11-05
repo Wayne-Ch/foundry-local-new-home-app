@@ -23,9 +23,27 @@
           </div>
         </div>
         <div class="runtime-strip">
-          <div id="runtimeBadge" class="runtime-badge is-checking">
-            <span class="status-dot"></span>
-            <span id="runtimeLabel">Checking local runtime</span>
+          <div class="runtime-summary">
+            <div id="runtimeBadge" class="runtime-badge is-checking">
+              <span class="status-dot"></span>
+              <span id="runtimeLabel">Offline setup · 0/2 local models</span>
+            </div>
+            <fieldset class="core-model-status-list" aria-label="Local model readiness">
+              <div
+                id="layoutCoreModelStatus"
+                class="core-model-status is-checking"
+                title="qwen3-0.6b-generic-gpu:2 · WebGPUExecutionProvider"
+              >
+                Layout planning · Qwen3 0.6B · GPU · checking
+              </div>
+              <div
+                id="visionCoreModelStatus"
+                class="core-model-status is-checking"
+                title="qwen3.5-0.8b-generic-cpu:3 · CPUExecutionProvider"
+              >
+                Floor-plan vision · Qwen3.5 0.8B · CPU · checking
+              </div>
+            </fieldset>
           </div>
           <button id="prepareButton" class="button button-primary" type="button">Load local model</button>
           <button id="traceToggle" class="button button-secondary" type="button" aria-expanded="false">

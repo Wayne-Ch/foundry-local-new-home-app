@@ -41,27 +41,26 @@ directly on accepted furniture with drag, keyboard, **Apply**, and **Revert**.
 ### Prepare the required local models
 
 First preparation downloads local model and runtime assets, so stay online and keep
-Enhanced New Home App open. Select the setup control shown in step 3 and continue only when
-**Local model ready** appears; later app actions can run offline.
+Enhanced New Home App open. Select the setup control shown in step 1 and continue only when
+**Offline ready · 2/2 local models** appears; later app actions can run offline.
 
-1. **Load the exact floor-plan fixture**
+1. **Prepare both local models**
+   - **Action:** Select **Prepare offline** or **Load local model**, whichever is shown. If the
+     button already says **Local models ready**, continue without selecting it.
+   - **Expected:** The visible status reads **Offline ready · 2/2 local models**.
+
+2. **Load the exact floor-plan fixture**
    - **Action:** Select **Load sample floor plan** once.
    - **Expected:** A `1020 x 1080` preview appears. The status begins with `Preview only`,
      **Analyze layout** becomes available, and the room canvas still has no walls, reserved zones,
      or furniture.
 
-2. **Analyze and activate the imported room**
+3. **Analyze and activate the imported room**
    - **Action:** Select **Analyze layout**, wait for completion, then open **Developer trace**.
    - **Expected:** The trace identifies `qwen3.5-0.8b-generic-cpu:3` with
      `CPUExecutionProvider` and reports `"roomShape": "rectangle"` plus the room label, door
      opening, and window opening as present. Imported room geometry then appears with the documented
      `3650 x 3950 mm` scale and door, window, closet, and clearance geometry.
-
-3. **Prepare the layout model**
-   - **Action:** Select **Prepare offline** or **Load local model**, whichever is shown. If the
-     button already says **Local model ready**, continue without selecting it.
-   - **Expected:** The green badge reads `qwen3-0.6b · GPU · WebGPUExecutionProvider`. The
-     next request control reads **Run next: A · Imported Queen + desk**.
 
 4. **A — Imported Queen + desk**
    - **Action:** Select **Run next: A · Imported Queen + desk** and wait for the request to finish.
@@ -167,7 +166,7 @@ license, transformation, checksum, and review.
 |---|---|
 | npm rejects the Node.js or npm version before install or a script run | Install a supported Node.js version matching `^22.12.0 \|\| ^24.0.0 \|\| >=26.0.0` and npm `>=11.18.0`. Node 23.x and 25.x are excluded; confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | Upgrade to npm `>=11.18.0`, rerun `npm ci --no-audit --no-fund`, then approve Electron, esbuild, and Foundry Local SDK. |
-| **Prepare offline** or **Load local model** does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Local model ready**. |
+| **Prepare offline** or **Load local model** does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Offline ready · 2/2 local models**. |
 | Wrong UI or an old room is visible | Confirm the window title and page heading say **Enhanced New Home App**, select **Reset**, and relaunch if the no-room state still does not appear. |
 | Floor-plan analysis rejects | Use only the included PNG or a byte-identical copy. Retry **Analyze layout** or select **Use default room**. |
 | Drag or Arrow keys do nothing | Confirm **Show accepted layout** is active, the app is not busy, and a feasible accepted layout is displayed. |

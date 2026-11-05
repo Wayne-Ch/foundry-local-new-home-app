@@ -63,7 +63,7 @@ npm run start:built
 
 First preparation may download local assets. Stay online, select **Prepare offline** or
 **Load local model** when shown, and keep Enhanced New Home App open until
-**Local model ready** appears. Later app actions can run offline.
+**Offline ready · 2/2 local models** appears. Later app actions can run offline.
 
 ## Troubleshooting
 
@@ -71,7 +71,7 @@ First preparation may download local assets. Stay online, select **Prepare offli
 |---|---|
 | npm rejects the Node.js or npm version | Install a supported Node.js version and npm `>=11.18.0`, then confirm with `node --version` and `npm --version`. |
 | `npm install-scripts` is unavailable | Upgrade npm, rerun `npm ci --no-audit --no-fund`, then approve Electron, esbuild, and Foundry Local SDK. |
-| The layout model does not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Local model ready**. |
+| The local models do not reach ready | Stay online, relaunch with `npm run start:built`, select the visible setup control once, and wait for **Offline ready · 2/2 local models**. |
 | Floor-plan analysis rejects | Use the included PNG or a byte-identical copy, retry **Analyze layout**, or select **Use default room**. |
 | Drag or Arrow keys do nothing | Select **Show accepted layout**, confirm the app is idle, and use an accepted layout. Rejected furniture is read-only. |
 | Nemotron does not prepare or stream | Retry **Prepare Nemotron live** while connected, use the explicit Whisper Tiny fallback when available, or use typed input. |

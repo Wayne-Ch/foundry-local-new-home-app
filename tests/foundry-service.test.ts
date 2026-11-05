@@ -554,7 +554,8 @@ describe("Foundry offline preparation", () => {
     expect(initial.model?.id).toBe(VALIDATED_MODEL_ID);
     expect(initial.modelCached).toBe(false);
 
-    const readiness = await service.prepareOffline();
+    const progress: string[] = [];
+    const readiness = await service.prepareOffline((detail) => progress.push(detail));
     expect(model.downloadCalls).toBe(1);
     expect(model.loadCalls).toBe(1);
     expect(manager.registrationRequests).toEqual([["WebGpuExecutionProvider"]]);
@@ -562,6 +563,7 @@ describe("Foundry offline preparation", () => {
     expect(readiness.model?.id).toBe(VALIDATED_MODEL_ID);
     expect(readiness.model?.executionProvider).toBe(VALIDATED_EXECUTION_PROVIDER);
     expect(readiness.target.stageValidated).toBe(true);
+    expect(progress).toContain(`Loading ${VALIDATED_MODEL_ID} through ${VALIDATED_EXECUTION_PROVIDER}.`);
     await service.shutdown();
   });
 

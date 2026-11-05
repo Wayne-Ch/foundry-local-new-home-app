@@ -24,6 +24,10 @@ describe("renderer preview scenarios", () => {
     vi.stubGlobal("window", { location: { search: "?preview=1&scenario=flow-probe" } });
     const api = createPreviewApi();
 
+    await expect(api.prepareOffline()).resolves.toMatchObject({
+      readiness: { model: { id: "qwen3-0.6b-generic-gpu:2" } },
+      visionReadiness: { model: { id: "qwen3.5-0.8b-generic-cpu:3" } },
+    });
     const preview = await api.loadSampleFloorPlan();
     expect(preview.bootstrap).toMatchObject({
       roomMode: "none",
