@@ -30,6 +30,8 @@ export function coreModelStatusLines(
 } {
   const layoutState = layoutStatus(layout);
   const visionState = visionStatus(vision);
+  const visionLabel =
+    vision.status === "not_initialized" && visionState === "checking" ? "not initialized" : visionState;
   return {
     layout: {
       text: `Layout planning · Qwen3 0.6B · GPU · ${layoutState}`,
@@ -37,7 +39,7 @@ export function coreModelStatusLines(
       title: `${layout.target.modelId} · ${layout.target.executionProvider} · ${layout.detail}`,
     },
     vision: {
-      text: `Floor-plan vision · Qwen3.5 0.8B · CPU · ${visionState}`,
+      text: `Floor-plan vision · Qwen3.5 0.8B · CPU · ${visionLabel}`,
       state: visionState,
       title: `${vision.target.modelId} · ${vision.target.executionProvider} · ${vision.detail}`,
     },

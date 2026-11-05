@@ -120,7 +120,7 @@ assert.ok(
 const html = readText("index.html");
 for (const statusText of [
   "Layout planning · Qwen3 0.6B · GPU · checking",
-  "Floor-plan vision · Qwen3.5 0.8B · CPU · checking",
+  "Floor-plan vision · Qwen3.5 0.8B · CPU · not initialized",
 ]) {
   assert.ok(html.includes(statusText), `index.html is missing compact core status: ${statusText}`);
 }

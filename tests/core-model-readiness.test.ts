@@ -126,4 +126,75 @@ describe("combined core-model readiness", () => {
       vision: { state: "error", text: expect.stringContaining("· error") },
     });
   });
+
+  it.each([
+    {
+      name: "initial",
+      readiness: {
+        ...visionReady,
+        model: null,
+        modelCached: false,
+        localInferenceReady: false,
+        status: "not_initialized",
+      } satisfies FloorPlanVisionReadiness,
+      expectedLabel: "not initialized",
+      expectedState: "checking",
+    },
+    {
+      name: "checking",
+      readiness: {
+        ...visionReady,
+        model: null,
+        modelCached: false,
+        localInferenceReady: false,
+        status: "checking",
+      } satisfies FloorPlanVisionReadiness,
+      expectedLabel: "checking",
+      expectedState: "checking",
+    },
+    {
+      name: "cached",
+      readiness: {
+        ...visionReady,
+        localInferenceReady: false,
+        status: "checking",
+      } satisfies FloorPlanVisionReadiness,
+      expectedLabel: "cached",
+      expectedState: "cached",
+    },
+    {
+      name: "loading",
+      readiness: {
+        ...visionReady,
+        localInferenceReady: false,
+        status: "loading",
+      } satisfies FloorPlanVisionReadiness,
+      expectedLabel: "loading",
+      expectedState: "loading",
+    },
+    {
+      name: "ready",
+      readiness: visionReady,
+      expectedLabel: "ready",
+      expectedState: "ready",
+    },
+    {
+      name: "error",
+      readiness: {
+        ...visionReady,
+        localInferenceReady: false,
+        status: "error",
+      } satisfies FloorPlanVisionReadiness,
+      expectedLabel: "error",
+      expectedState: "error",
+    },
+  ] as const)(
+    "keeps the floor-plan vision $name label and presentation state distinct",
+    ({ readiness, expectedLabel, expectedState }) => {
+      expect(coreModelStatusLines(layoutReady, readiness).vision).toMatchObject({
+        text: `Floor-plan vision · Qwen3.5 0.8B · CPU · ${expectedLabel}`,
+        state: expectedState,
+      });
+    },
+  );
 });
