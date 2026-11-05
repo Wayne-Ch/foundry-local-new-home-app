@@ -84,7 +84,7 @@ adjustment, **E** King controlled failure.
     **Expected:** Nemotron is the visible default voice model; Whisper does not activate unless its
     fallback control is explicitly selected.
 
-11. **Action:** Select **Start recording**, speak a Queen + desk request, then select **Stop**.
+11. **Action:** Select **Start recording**, speak `Can a Queen-size bed and a desk fit here without blocking the closet or the door?`, then select **Stop**.
     Review the editable transcript and any visible correction suggestion before selecting **Send**.
     **Expected:** Live text remains an unsent draft until Send; the exact edited text appears once
     in the conversation, and the resulting layout is shown.
