@@ -27,7 +27,7 @@ Note: This guide was validated on Windows 11 x64 with Node.js 26.13.0 and npm 11
 Follow the
 [README clone, install, build, and launch instructions](README.md#clone-install-build-and-launch).
 
-Confirm the window title and page heading both say **Enhanced New Home App**. The fresh state must
+The fresh state must
 show **Choose a room to begin**,
 **Room required**, **Load sample floor plan**, **Choose exact fixture copy**, **Analyze layout**,
 and **Use default room**. Conversation and recording actions remain unavailable until a room is
