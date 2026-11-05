@@ -127,7 +127,7 @@ Enhanced New Home App open. Select the setup control shown in step 1 and continu
 12. **Exercise voice input only after room activation**
     - **Action:** Select **Prepare Nemotron live** and wait for
       `nemotron-speech-streaming-en-0.6b-generic-cpu:3`, `CPUExecutionProvider`, English, and **LIVE** mode. Select
-      **Start recording**, speak a request, then select **Stop**.
+      **Start recording**, say `Can we do a Queen bed and a desk, and also add a baby bed? A compact desk is fine if needed. Keep the door, closet, and window clear, and leave the 250 mm furniture-clearance rule locked.`, then select **Stop**.
     - **Expected:** The final transcript enters **Manual prompt** without being submitted. Review
       the text and use **Apply suggested furniture corrections**, **Dismiss**, or
       **Undo suggestions** only when those controls are shown, then select **Send**.
